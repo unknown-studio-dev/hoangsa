@@ -611,6 +611,15 @@ function copyAllFiles(src, targetDir, pathPrefix, attribution) {
     failures.push("hoangsa/workflows");
   }
 
+  // Copy worker-rules/ subdirectory (base.md + addons/) into workflows/
+  const workerRulesSrc = path.join(src, "workflows", "worker-rules");
+  const workerRulesDest = path.join(workflowsDest, "worker-rules");
+  if (fs.existsSync(workerRulesSrc)) {
+    fs.mkdirSync(path.join(workerRulesDest, "addons"), { recursive: true });
+    copyWithPathReplacement(workerRulesSrc, workerRulesDest, pathPrefix, attribution);
+    console.log(`  ${green}✓${reset} Installed hoangsa/workflows/worker-rules`);
+  }
+
   // Copy skills with path replacement
   const skillsSrc = path.join(src, "skills");
   if (fs.existsSync(skillsSrc)) {
