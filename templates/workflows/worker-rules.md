@@ -70,10 +70,12 @@ These rules are non-negotiable unless explicitly overridden by project config.
 
 If the orchestrator tells you GitNexus is available (`GITNEXUS_AVAILABLE`), use it to understand code before modifying it. GitNexus provides a pre-indexed knowledge graph of the codebase — it's faster and more accurate than grepping.
 
+The orchestrator passes `GITNEXUS_REPO` — **always include `repo: GITNEXUS_REPO`** in every GitNexus tool call. This is required because the MCP server may index multiple repositories.
+
 ### Before editing a symbol (function, class, method):
 
 ```
-gitnexus_impact({target: "symbolName", direction: "upstream"})
+gitnexus_impact({target: "symbolName", direction: "upstream", repo: GITNEXUS_REPO})
 ```
 
 Check the blast radius. If risk is HIGH or CRITICAL, report it to the orchestrator before proceeding — do not silently push through.
@@ -81,7 +83,7 @@ Check the blast radius. If risk is HIGH or CRITICAL, report it to the orchestrat
 ### When you need to understand a symbol's callers/callees:
 
 ```
-gitnexus_context({name: "symbolName"})
+gitnexus_context({name: "symbolName", repo: GITNEXUS_REPO})
 ```
 
 This gives you the full picture — who calls it, what it calls, which execution flows it participates in. Use this instead of grepping for function names.
@@ -89,7 +91,7 @@ This gives you the full picture — who calls it, what it calls, which execution
 ### When tracing a bug or finding related code:
 
 ```
-gitnexus_query({query: "description of what you're looking for"})
+gitnexus_query({query: "description of what you're looking for", repo: GITNEXUS_REPO})
 ```
 
 Returns execution flows ranked by relevance. Better than `Grep` for understanding how pieces connect.

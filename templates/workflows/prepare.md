@@ -79,6 +79,14 @@ fi
 
 Store result as `GITNEXUS_STATUS`.
 
+If `GITNEXUS_AVAILABLE` or after sync completes, resolve the repo name:
+
+```bash
+GITNEXUS_REPO=$(cat .gitnexus/meta.json 2>/dev/null | python3 -c 'import sys,json,os; m=json.load(sys.stdin); print(os.path.basename(m.get("repoPath","")))' 2>/dev/null || basename "$(pwd)")
+```
+
+Store as `GITNEXUS_REPO`. Pass both `GITNEXUS_STATUS` and `GITNEXUS_REPO` to all agent prompts.
+
 - If `GITNEXUS_AVAILABLE` → continue. Use GitNexus in Step 3 for dependency analysis.
 - If `GITNEXUS_MISSING` or `GITNEXUS_OUTDATED` → ask the user:
 
@@ -162,11 +170,11 @@ Within a phase → maximize parallel, minimize sequential chains.
 
 **If GitNexus available:** For each key symbol mentioned in the DESIGN-SPEC (types, functions, classes to create or modify):
 
-1. Run `gitnexus_context({name: "symbolName"})` to get callers, callees, and process participation
+1. Run `gitnexus_context({name: "symbolName", repo: GITNEXUS_REPO})` to get callers, callees, and process participation
 2. Use callers/callees to:
    - Identify correct `depends_on` between tasks (if task A modifies a symbol called by task B's symbol → B depends on A)
    - Generate precise `context_pointers` — include caller definitions that workers need to see
-3. Run `gitnexus_impact({target: "symbolName", direction: "upstream"})` for symbols being modified → if HIGH/CRITICAL risk, flag in the plan and consider splitting the task
+3. Run `gitnexus_impact({target: "symbolName", direction: "upstream", repo: GITNEXUS_REPO})` for symbols being modified → if HIGH/CRITICAL risk, flag in the plan and consider splitting the task
 
 **If GitNexus unavailable:** Use Grep/Glob to find references and imports. Less precise but functional.
 

@@ -37,7 +37,15 @@ fi
 
 Store result as `GITNEXUS_STATUS`.
 
-- If `GITNEXUS_AVAILABLE` → continue. Pass `GITNEXUS_STATUS` to all worker prompts so they can use GitNexus tools.
+If `GITNEXUS_AVAILABLE` or after sync completes, resolve the repo name:
+
+```bash
+GITNEXUS_REPO=$(cat .gitnexus/meta.json 2>/dev/null | python3 -c 'import sys,json,os; m=json.load(sys.stdin); print(os.path.basename(m.get("repoPath","")))' 2>/dev/null || basename "$(pwd)")
+```
+
+Store as `GITNEXUS_REPO`. Pass both `GITNEXUS_STATUS` and `GITNEXUS_REPO` to all worker prompts.
+
+- If `GITNEXUS_AVAILABLE` → continue. Pass `GITNEXUS_STATUS` and `GITNEXUS_REPO` to all worker prompts so they can use GitNexus tools.
 - If `GITNEXUS_MISSING` or `GITNEXUS_OUTDATED` → ask the user:
 
   Use AskUserQuestion:
@@ -64,8 +72,9 @@ Apply the shared task-link detection from `task-link.md`:
 
 1. Scan user input for task manager URLs (Linear, Jira, ClickUp, GitHub, Asana)
 2. If found → fetch task details via MCP → save to `EXTERNAL-TASK.md`
-3. Set task status to "In Progress" (non-blocking, best-effort)
-4. Extract from fetched task:
+3. Fetch and process attachments (see `task-link.md` Step 3b) — download to `$SESSION_DIR/attachments/`, classify by type. **Do NOT process videos here** — video analysis is deferred to Step 1b (media detection) which handles both user-provided and task-link media in one pass.
+4. Set task status to "In Progress" (non-blocking, best-effort)
+5. Extract from fetched task:
    - **Bug description** → supplement user's bug report in Step 1
    - **Labels/tags** → identify affected layer (frontend, backend, api, database, etc.)
    - **Comments** → may contain reproduction steps or prior investigation
@@ -94,18 +103,29 @@ If an external task was linked (Step 0c), merge its description and comments int
 
 ## Step 1b: Media detection (auto)
 
-Scan the user's input for media file references (paths or URLs to screenshots/videos).
+Scan **two sources** for media files:
+
+1. **User's input** — file paths or pasted screenshots/videos in the message
+2. **Task-link attachments** — files downloaded to `$SESSION_DIR/attachments/` by Step 0c
 
 **Detection patterns:**
 - File paths ending in: `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif` (images)
 - File paths ending in: `.mp4`, `.mov`, `.webm`, `.avi`, `.mkv` (videos)
 - Screenshots pasted or attached by the user
 
-**If images detected:**
+**Check task-link attachments:**
+```bash
+# If task-link downloaded attachments, scan them too
+if [ -d "$SESSION_DIR/attachments" ]; then
+  ls "$SESSION_DIR/attachments/"
+fi
+```
+
+**If images detected (from either source):**
 - Claude reads images natively — no processing needed
 - Note the image paths for reference in bug analysis
 
-**If videos detected:**
+**If videos detected (from either source):**
 1. Invoke the `visual-debug` skill for video processing:
    - Check ffmpeg availability: `hoangsa-cli media check-ffmpeg`
    - If available: `hoangsa-cli media analyze <video_path> --output-dir /tmp/hoangsa-debug-<timestamp>`
@@ -113,7 +133,7 @@ Scan the user's input for media file references (paths or URLs to screenshots/vi
    - Read the output `diff-montage.png` (red overlay showing changes between frames)
 2. Include visual analysis findings in the bug context for Step 2
 
-**If no media detected:** Skip this step, proceed to Step 2.
+**If no media detected (from either source):** Skip this step, proceed to Step 2.
 
 ---
 
@@ -305,6 +325,7 @@ Task: <task.name>
 ID: <task.id>
 Workspace: <workspace_dir>
 GitNexus: <GITNEXUS_STATUS — GITNEXUS_AVAILABLE or GITNEXUS_UNAVAILABLE>
+GitNexus Repo: <GITNEXUS_REPO — pass this as repo parameter in all gitnexus_* tool calls>
 
 Files to modify:
 <task.files — list>
@@ -320,8 +341,8 @@ Cross-layer notes:
 
 Instructions:
 1. Read all context_pointers files first
-2. Use gitnexus_context({name: "buggySymbol"}) to understand all callers and callees before fixing (if GitNexus is available)
-3. Run gitnexus_impact({target: "symbolName", direction: "upstream"}) on every symbol you modify — if HIGH/CRITICAL, report to orchestrator
+2. Use gitnexus_context({name: "buggySymbol", repo: GITNEXUS_REPO}) to understand all callers and callees before fixing (if GitNexus is available)
+3. Run gitnexus_impact({target: "symbolName", direction: "upstream", repo: GITNEXUS_REPO}) on every symbol you modify — if HIGH/CRITICAL, report to orchestrator
 4. Implement the minimal fix — do not change anything outside scope
 5. Run the acceptance command to verify: <task.acceptance>
 6. If acceptance fails, fix and retry (max 3 attempts)

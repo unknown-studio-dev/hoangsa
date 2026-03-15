@@ -37,6 +37,14 @@ fi
 
 Store result as `GITNEXUS_STATUS`.
 
+If `GITNEXUS_AVAILABLE` or after sync completes, resolve the repo name:
+
+```bash
+GITNEXUS_REPO=$(cat .gitnexus/meta.json 2>/dev/null | python3 -c 'import sys,json,os; m=json.load(sys.stdin); print(os.path.basename(m.get("repoPath","")))' 2>/dev/null || basename "$(pwd)")
+```
+
+Store as `GITNEXUS_REPO`. Pass both `GITNEXUS_STATUS` and `GITNEXUS_REPO` to all audit agent prompts.
+
 - If `GITNEXUS_AVAILABLE` → continue. Audit agents will use GitNexus for dependency graph, dead code detection, and architectural analysis.
 - If `GITNEXUS_MISSING` or `GITNEXUS_OUTDATED` → ask the user:
 
@@ -124,6 +132,42 @@ Use AskUserQuestion:
   multiSelect: false
 
 Store as `AUDIT_DEPTH`.
+
+---
+
+## Step 2e: Media detection (auto)
+
+Scan **two sources** for media files:
+
+1. **User's input** — file paths or pasted screenshots/videos in the message
+2. **Task-link attachments** — files downloaded to `$SESSION_DIR/attachments/` by task-link detection (if a task URL was provided)
+
+**Detection patterns:**
+- File paths ending in: `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif` (images)
+- File paths ending in: `.mp4`, `.mov`, `.webm`, `.avi`, `.mkv` (videos)
+- Screenshots pasted or attached by the user
+
+**Check task-link attachments:**
+```bash
+# If task-link downloaded attachments, scan them too
+if [ -d "$SESSION_DIR/attachments" ]; then
+  ls "$SESSION_DIR/attachments/"
+fi
+```
+
+**If images detected (from either source):**
+- Claude reads images natively — no processing needed
+- Note the image paths — use as visual evidence when scanning relevant dimensions (e.g., UI/UX issues, layout problems)
+
+**If videos detected (from either source):**
+1. Invoke the `visual-debug` skill for video processing:
+   - Check ffmpeg availability: `hoangsa-cli media check-ffmpeg`
+   - If available: `hoangsa-cli media analyze <video_path> --output-dir /tmp/hoangsa-audit-<timestamp>`
+   - Read the output `montage.png` (annotated frame grid with timestamps)
+   - Read the output `diff-montage.png` (red overlay showing changes between frames)
+2. Include visual analysis findings as context for dimension scanning agents
+
+**If no media detected (from either source):** Skip this step, proceed to Step 3.
 
 ---
 
@@ -229,7 +273,7 @@ Scan for:
    - Trace import graphs: A → B → C → A
    - For JS/TS: follow import/require statements across files
    - For Rust: check mod/use relationships in modules
-   - If GitNexus available: use gitnexus_cypher to query dependency cycles
+   - If GitNexus available: use gitnexus_cypher({repo: GITNEXUS_REPO}) to query dependency cycles
    - If GitNexus unavailable: use Grep to trace import/require statements across files, building a dependency graph manually. Start from high-fan-in files and follow import chains.
    - Evidence: list the cycle chain with file paths
 
@@ -292,7 +336,7 @@ Scan for:
      - Rate severity by how confusing it is for a new developer
 
 5. DEAD CODE & ZOMBIE CODE
-   - Exported symbols with zero importers (if GitNexus available: gitnexus_cypher to find orphan nodes; if GitNexus unavailable: Grep for `export` declarations, then Grep for each exported name across all files — zero matches = dead export)
+   - Exported symbols with zero importers (if GitNexus available: gitnexus_cypher({repo: GITNEXUS_REPO}) to find orphan nodes; if GitNexus unavailable: Grep for `export` declarations, then Grep for each exported name across all files — zero matches = dead export)
    - Files not imported anywhere — entire modules nobody calls
    - Functions defined but never invoked (grep for definition, then grep for usage — 0 hits = dead)
    - Feature flags that are always on/off (grep for the flag, check all branches — if only one branch ever runs, the other is dead)

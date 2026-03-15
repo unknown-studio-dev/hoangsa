@@ -37,6 +37,14 @@ fi
 
 Store result as `GITNEXUS_STATUS`.
 
+If `GITNEXUS_AVAILABLE` or after sync completes, resolve the repo name:
+
+```bash
+GITNEXUS_REPO=$(cat .gitnexus/meta.json 2>/dev/null | python3 -c 'import sys,json,os; m=json.load(sys.stdin); print(os.path.basename(m.get("repoPath","")))' 2>/dev/null || basename "$(pwd)")
+```
+
+Store as `GITNEXUS_REPO`. Pass both `GITNEXUS_STATUS` and `GITNEXUS_REPO` to all agent prompts.
+
 - If `GITNEXUS_AVAILABLE` → continue. Use GitNexus for codebase exploration during design.
 - If `GITNEXUS_MISSING` or `GITNEXUS_OUTDATED` → ask the user:
 
@@ -50,7 +58,7 @@ Store result as `GITNEXUS_STATUS`.
 
   If user chọn "Sync ngay":
     ```bash
-    npx gitnexus analyze
+    npx gitnexus analyze --embeddings
     ```
     Set `GITNEXUS_STATUS` = `GITNEXUS_AVAILABLE`.
 
@@ -204,9 +212,10 @@ Before gathering requirements, scan the user's input for task manager URLs (Line
 **If a task URL is detected:**
 
 1. Fetch task details via MCP (see `task-link.md` for detection logic and URL patterns)
-2. Set task status to "In Progress" (non-blocking, best-effort)
-3. Save to `$SESSION_DIR/EXTERNAL-TASK.md` + store reference in session state
-4. Auto-extract from the fetched task:
+2. Fetch and process attachments (see `task-link.md` Step 3b) — download to `$SESSION_DIR/attachments/`, classify by type. **Do NOT process videos here** — video analysis is deferred to Step 2e (media detection) which handles both user-provided and task-link media in one pass.
+3. Set task status to "In Progress" (non-blocking, best-effort)
+4. Save to `$SESSION_DIR/EXTERNAL-TASK.md` + store reference in session state
+5. Auto-extract from the fetched task:
    - **Task type** → infer from labels/tags (bug→fix, feature→feat, etc.) — still confirm with user in 3a
    - **Description** → use task title + body as initial description in 3c
    - **Acceptance criteria** → carry over to DESIGN-SPEC later
@@ -226,6 +235,43 @@ Before gathering requirements, scan the user's input for task manager URLs (Line
 6. Continue to Step 3 with pre-filled context — the user can still override everything.
 
 **If no task URL detected:** Skip this step, proceed to Step 3 normally.
+
+---
+
+## Step 2e: Media detection (auto)
+
+Scan **two sources** for media files:
+
+1. **User's input** — file paths or pasted screenshots/videos in the message
+2. **Task-link attachments** — files downloaded to `$SESSION_DIR/attachments/` by Step 2d
+
+**Detection patterns:**
+- File paths ending in: `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif` (images)
+- File paths ending in: `.mp4`, `.mov`, `.webm`, `.avi`, `.mkv` (videos)
+- Screenshots pasted or attached by the user
+
+**Check task-link attachments:**
+```bash
+# If task-link downloaded attachments, scan them too
+if [ -d "$SESSION_DIR/attachments" ]; then
+  ls "$SESSION_DIR/attachments/"
+fi
+```
+
+**If images detected (from either source):**
+- Claude reads images natively — no processing needed
+- Note the image paths for reference during design discussion (Step 3–5)
+- Use as visual context when generating DESIGN-SPEC (e.g., layout descriptions, component structure)
+
+**If videos detected (from either source):**
+1. Invoke the `visual-debug` skill for video processing:
+   - Check ffmpeg availability: `hoangsa-cli media check-ffmpeg`
+   - If available: `hoangsa-cli media analyze <video_path> --output-dir /tmp/hoangsa-menu-<timestamp>`
+   - Read the output `montage.png` (annotated frame grid with timestamps)
+   - Read the output `diff-montage.png` (red overlay showing changes between frames)
+2. Include visual analysis findings as design context for Step 3–5
+
+**If no media detected (from either source):** Skip this step, proceed to Step 3.
 
 ---
 
@@ -511,7 +557,7 @@ status: "draft"
 
 ### Affected Files
 
-**If GitNexus available:** Use `gitnexus_impact({target: "symbolName", direction: "upstream"})` for each symbol being modified to discover all affected files (direct callers at d=1, indirect at d=2). This prevents missing files that import or call the changed code.
+**If GitNexus available:** Use `gitnexus_impact({target: "symbolName", direction: "upstream", repo: GITNEXUS_REPO})` for each symbol being modified to discover all affected files (direct callers at d=1, indirect at d=2). This prevents missing files that import or call the changed code.
 
 | File | Action | Description | Impact |
 |------|--------|-------------|--------|

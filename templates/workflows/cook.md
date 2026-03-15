@@ -39,7 +39,15 @@ fi
 
 Store result as `GITNEXUS_STATUS`.
 
-- If `GITNEXUS_AVAILABLE` → continue. Pass `GITNEXUS_STATUS` to all worker prompts so they can use GitNexus tools.
+If `GITNEXUS_AVAILABLE` or after sync completes, resolve the repo name:
+
+```bash
+GITNEXUS_REPO=$(cat .gitnexus/meta.json 2>/dev/null | python3 -c 'import sys,json,os; m=json.load(sys.stdin); print(os.path.basename(m.get("repoPath","")))' 2>/dev/null || basename "$(pwd)")
+```
+
+Store as `GITNEXUS_REPO`. Pass both `GITNEXUS_STATUS` and `GITNEXUS_REPO` to all worker prompts.
+
+- If `GITNEXUS_AVAILABLE` → continue. Pass `GITNEXUS_STATUS` and `GITNEXUS_REPO` to all worker prompts so they can use GitNexus tools.
 - If `GITNEXUS_MISSING` or `GITNEXUS_OUTDATED` → ask the user:
 
   Use AskUserQuestion:
@@ -176,6 +184,7 @@ Task: <task.name>
 ID: <task.id>
 Workspace: <workspace_dir>
 GitNexus: <GITNEXUS_STATUS — GITNEXUS_AVAILABLE or GITNEXUS_UNAVAILABLE>
+GitNexus Repo: <GITNEXUS_REPO — pass this as repo parameter in all gitnexus_* tool calls>
 
 Files to modify:
 <task.files — list>
@@ -188,7 +197,7 @@ Requirements covered:
 
 Instructions:
 1. Read all context_pointers files first
-2. Before modifying any function/class/method, run gitnexus_impact({target: "symbolName", direction: "upstream"}) to check blast radius (if GitNexus is available)
+2. Before modifying any function/class/method, run gitnexus_impact({target: "symbolName", direction: "upstream", repo: GITNEXUS_REPO}) to check blast radius (if GitNexus is available)
 3. If impact returns HIGH or CRITICAL risk — report it, do not proceed without orchestrator acknowledgment
 4. Implement the task
 5. Run the acceptance command to verify: <task.acceptance>

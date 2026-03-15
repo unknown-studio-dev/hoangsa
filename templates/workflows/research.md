@@ -37,6 +37,14 @@ fi
 
 Store result as `GITNEXUS_STATUS`.
 
+If `GITNEXUS_AVAILABLE` or after sync completes, resolve the repo name:
+
+```bash
+GITNEXUS_REPO=$(cat .gitnexus/meta.json 2>/dev/null | python3 -c 'import sys,json,os; m=json.load(sys.stdin); print(os.path.basename(m.get("repoPath","")))' 2>/dev/null || basename "$(pwd)")
+```
+
+Store as `GITNEXUS_REPO`. Pass both `GITNEXUS_STATUS` and `GITNEXUS_REPO` to all research agent prompts.
+
 - If `GITNEXUS_AVAILABLE` → continue. Research agents will use GitNexus tools for codebase analysis.
 - If `GITNEXUS_MISSING` or `GITNEXUS_OUTDATED` → ask the user:
 
@@ -193,8 +201,8 @@ Goal: Understand how the codebase is organized relative to the research topic.
 
 ```
 If GITNEXUS_STATUS == "GITNEXUS_AVAILABLE":
-  - Run gitnexus_query({query: "<RESEARCH_TOPIC>"}) to find relevant execution flows
-  - Run gitnexus_context({name: "<key symbol found>"}) for top symbols
+  - Run gitnexus_query({query: "<RESEARCH_TOPIC>", repo: GITNEXUS_REPO}) to find relevant execution flows
+  - Run gitnexus_context({name: "<key symbol found>", repo: GITNEXUS_REPO}) for top symbols
 Else (GITNEXUS_UNAVAILABLE fallback):
   - Use Glob to find project entry points (index.*, main.*, app.*, server.*)
   - Use Grep to find files referencing the research topic keywords
@@ -212,7 +220,7 @@ Goal: Identify coding patterns and conventions used in the codebase.
 
 ```
 If GITNEXUS_STATUS == "GITNEXUS_AVAILABLE":
-  - Use gitnexus_context({name: "<relevant function or class>"}) for key symbols
+  - Use gitnexus_context({name: "<relevant function or class>", repo: GITNEXUS_REPO}) for key symbols
   - Trace callers and callees to understand patterns
 Else (GITNEXUS_UNAVAILABLE fallback):
   - Use Grep to find error handling patterns (try/catch, Result, Option, etc.)
