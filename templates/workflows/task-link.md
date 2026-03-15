@@ -40,7 +40,91 @@ app.asana.com/0/*/            → Asana
    - If not configured → run `/serve` first-time setup (Step 2 of serve workflow)
    - If configured but provider doesn't match URL → ask user if they want to add this provider
 3. Fetch task details via MCP (same as `/serve` Pull Step 4b)
-4. Store task reference in session state:
+
+### Step 3b: Fetch and process attachments
+
+After fetching task details, check if the task has attachments (from the `### Attachments` section in the fetched context).
+
+**If attachments exist:**
+
+1. Create attachments directory:
+   ```bash
+   mkdir -p "$SESSION_DIR/attachments"
+   ```
+
+2. Download each attachment:
+   - Use `WebFetch` or `curl` to download the file from its URL
+   - Save to `$SESSION_DIR/attachments/<original_filename>`
+   - Skip files larger than 50MB — note them in EXTERNAL-TASK.md but don't download
+   - If download fails → warn and continue with remaining attachments
+
+3. Classify each downloaded file by extension:
+   | Type | Extensions |
+   |------|-----------|
+   | image | .png, .jpg, .jpeg, .webp, .gif, .bmp, .svg |
+   | video | .mp4, .mov, .webm, .avi, .mkv |
+   | text | .txt, .log, .json, .csv, .md, .yaml, .yml |
+   | other | everything else |
+
+4. Process by type:
+
+   **Images:** Note the local path — Claude reads images natively. Include path in EXTERNAL-TASK.md for reference.
+
+   **Videos:** Trigger visual-debug analysis:
+   ```bash
+   hoangsa-cli media check-ffmpeg
+   # If available:
+   hoangsa-cli media analyze "$SESSION_DIR/attachments/<filename>" \
+     --output-dir "$SESSION_DIR/attachments/media-analysis"
+   ```
+   Then read `$SESSION_DIR/attachments/media-analysis/montage.png` and `diff-montage.png` for visual analysis. Include findings in bug context.
+
+   **Text files:** Read content and include in EXTERNAL-TASK.md under `### Text Attachments` as code blocks.
+
+   **Other files:** Note filename and size in EXTERNAL-TASK.md — don't attempt to read.
+
+5. Update session state to include attachments:
+   ```json
+   {
+     "external_task": {
+       ...existing fields...,
+       "attachments": [
+         {
+           "filename": "<name>",
+           "type": "<image|video|text|other>",
+           "size_bytes": 12345,
+           "local_path": "$SESSION_DIR/attachments/<name>",
+           "url": "<original URL>"
+         }
+       ]
+     }
+   }
+   ```
+
+6. Add to EXTERNAL-TASK.md:
+   ```markdown
+   ### Attachments
+   | File | Type | Size | Local Path |
+   |------|------|------|------------|
+   | screenshot.png | image | 245KB | $SESSION_DIR/attachments/screenshot.png |
+
+   ### Media Analysis
+   (If video attachments were processed)
+   - Montage: $SESSION_DIR/attachments/media-analysis/montage.png
+   - Diff: $SESSION_DIR/attachments/media-analysis/diff-montage.png
+
+   ### Text Attachments
+   #### error.log
+   ```
+   <file content>
+   ```
+   ```
+
+**If no attachments:** Skip this step entirely — no directory creation needed.
+
+**If MCP doesn't support attachments for this provider:** Skip silently — the task details without attachments are still valuable.
+
+5. Store task reference in session state:
 
 ```json
 {
@@ -57,7 +141,7 @@ app.asana.com/0/*/            → Asana
 }
 ```
 
-5. Save full context to `$SESSION_DIR/EXTERNAL-TASK.md`
+6. Save full context to `$SESSION_DIR/EXTERNAL-TASK.md`
 
 ### Show confirmation
 

@@ -156,6 +156,7 @@ Call the configured MCP server to retrieve the task:
 - Comments (recent, for context)
 - Sub-tasks (if any)
 - Parent task / epic (if any)
+- Attachments / files (URLs, filenames, sizes — if provider supports it)
 
 ### 4c. Build context summary
 
@@ -183,6 +184,13 @@ Format the fetched data into a structured context block:
 ### Sub-tasks
 - [ ] <sub-task 1>
 - [x] <sub-task 2> (done)
+
+### Attachments
+| File | Type | Size | URL |
+|------|------|------|-----|
+| <filename> | <image/video/text/other> | <size> | <download URL> |
+
+(If no attachments: omit this section)
 ```
 
 ### 4d. Save to session

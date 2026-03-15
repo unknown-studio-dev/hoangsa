@@ -36,14 +36,20 @@ For image files, Claude reads them directly (native capability) — no processin
    hoangsa-cli media install-ffmpeg
    (or show platform-specific install instructions if auto-install fails)
 
-3. Analyze the video:
-   hoangsa-cli media analyze <video_path> --output-dir /tmp/hoangsa-debug-<timestamp>
+3. Determine output directory:
+   - If inside a HOANGSA session (SESSION_DIR exists):
+     OUTPUT_DIR=$SESSION_DIR/attachments/media-analysis
+   - Otherwise:
+     OUTPUT_DIR=/tmp/hoangsa-debug-<timestamp>
 
-4. Read output files:
-   - /tmp/hoangsa-debug-<timestamp>/montage.png       → annotated grid with timestamps
-   - /tmp/hoangsa-debug-<timestamp>/diff-montage.png  → red overlay showing frame-to-frame changes
+4. Analyze the video:
+   hoangsa-cli media analyze <video_path> --output-dir $OUTPUT_DIR
 
-5. Analyze both images to identify:
+5. Read output files:
+   - $OUTPUT_DIR/montage.png       → annotated grid with timestamps
+   - $OUTPUT_DIR/diff-montage.png  → red overlay showing frame-to-frame changes
+
+6. Analyze both images to identify:
    - UI changes across frames
    - Visual regressions
    - Animation issues
