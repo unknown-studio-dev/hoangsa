@@ -6,6 +6,21 @@ You are the onboarding agent. Mission: set up HOANGSA for this project — detec
 
 ---
 
+## Preamble: Resolve install path
+
+```bash
+# Resolve HOANGSA install path (local preferred over global)
+if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
+  HOANGSA_ROOT="./.claude/hoangsa"
+else
+  HOANGSA_ROOT="$HOME/.claude/hoangsa"
+fi
+```
+
+Use `$HOANGSA_ROOT` for all references to the HOANGSA install directory throughout this workflow.
+
+---
+
 ## Step 0: Check if already initialized
 
 If `.hoangsa/config.json` exists, read `lang` from it first. If config doesn't exist or `lang` is null, default to English for this interaction.
@@ -852,7 +867,7 @@ If "Sửa ..." → jump back to the relevant step, re-run from there.
 Write `.hoangsa/config.json`:
 
 ```bash
-"~/.claude/hoangsa/bin/hoangsa-cli" config set . '<full config JSON>'
+"$HOANGSA_ROOT/bin/hoangsa-cli" config set . '<full config JSON>'
 ```
 
 After config save, verify by reading back `.hoangsa/config.json`:
@@ -977,9 +992,9 @@ If "Tuỳ chỉnh" → ask each one individually.
 Otherwise → save based on choice.
 
 ```bash
-"~/.claude/hoangsa/bin/hoangsa-cli" pref set . auto_taste true
-"~/.claude/hoangsa/bin/hoangsa-cli" pref set . auto_plate false
-"~/.claude/hoangsa/bin/hoangsa-cli" pref set . auto_serve false
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . auto_taste true
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . auto_plate false
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . auto_serve false
 ```
 
 ---

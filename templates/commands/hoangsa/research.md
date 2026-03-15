@@ -13,6 +13,7 @@ allowed-tools:
   - WebFetch
 ---
 
+<output>
 <objective>
 Research a topic deeply by combining codebase analysis with external research, producing a RESEARCH.md artifact.
 
@@ -23,9 +24,14 @@ Creates a RESEARCH.md that includes:
 </objective>
 
 <execution_context>
-@~/.claude/hoangsa/workflows/research.md
+Resolve HOANGSA install path — check local first, then global:
+1. `./.claude/hoangsa/workflows/research.md`
+2. `~/.claude/hoangsa/workflows/research.md`
+Read the first path that exists.
 </execution_context>
 
 <process>
-Follow the research workflow from `@~/.claude/hoangsa/workflows/research.md`.
+Follow the research workflow loaded above.
 </process>
+
+</output>

@@ -9,6 +9,7 @@ allowed-tools:
   - AskUserQuestion
 ---
 
+<output>
 <objective>
 Lead the user from a vague idea to a complete DESIGN-SPEC.md + TEST-SPEC.md, ready for planning.
 
@@ -22,9 +23,14 @@ Creates a session in `.hoangsa/sessions/<timestamp>/` with:
 </objective>
 
 <execution_context>
-@~/.claude/hoangsa/workflows/menu.md
+Resolve HOANGSA install path — check local first, then global:
+1. `./.claude/hoangsa/workflows/menu.md`
+2. `~/.claude/hoangsa/workflows/menu.md`
+Read the first path that exists.
 </execution_context>
 
 <process>
-Follow the menu workflow from `@~/.claude/hoangsa/workflows/menu.md`.
+Follow the menu workflow loaded above.
 </process>
+
+</output>

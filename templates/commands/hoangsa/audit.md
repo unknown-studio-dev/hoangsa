@@ -13,6 +13,7 @@ allowed-tools:
   - WebFetch
 ---
 
+<output>
 <objective>
 Perform a comprehensive audit of the current codebase, producing a detailed AUDIT-REPORT.md that covers:
 
@@ -29,9 +30,14 @@ The report is designed for teams — detailed enough that multiple developers ca
 </objective>
 
 <execution_context>
-@~/.claude/hoangsa/workflows/audit.md
+Resolve HOANGSA install path — check local first, then global:
+1. `./.claude/hoangsa/workflows/audit.md`
+2. `~/.claude/hoangsa/workflows/audit.md`
+Read the first path that exists.
 </execution_context>
 
 <process>
-Follow the audit workflow from `@~/.claude/hoangsa/workflows/audit.md`.
+Follow the audit workflow loaded above.
 </process>
+
+</output>

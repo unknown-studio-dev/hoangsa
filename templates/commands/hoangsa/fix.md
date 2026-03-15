@@ -10,6 +10,7 @@ allowed-tools:
   - AskUserQuestion
 ---
 
+<output>
 <objective>
 Analyze a bug with cross-layer root cause tracing (FE↔BE↔API↔DB), create a minimal fix plan (1–3 tasks, each <10k tokens), implement the fixes, run /simplify on changed files, then auto-chain to /hoangsa:taste.
 
@@ -21,9 +22,14 @@ Faster than the full menu → prepare → cook flow — designed for hotfixes an
 </objective>
 
 <execution_context>
-@~/.claude/hoangsa/workflows/fix.md
+Resolve HOANGSA install path — check local first, then global:
+1. `./.claude/hoangsa/workflows/fix.md`
+2. `~/.claude/hoangsa/workflows/fix.md`
+Read the first path that exists.
 </execution_context>
 
 <process>
-Follow the fix workflow from `@~/.claude/hoangsa/workflows/fix.md`.
+Follow the fix workflow loaded above.
 </process>
+
+</output>

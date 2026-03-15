@@ -9,7 +9,14 @@ Perform a comprehensive codebase audit across 8 dimensions, producing a detailed
 ## Step 0a: Language enforcement
 
 ```bash
-LANG_PREF=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . lang)
+# Resolve HOANGSA install path (local preferred over global)
+if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
+  HOANGSA_ROOT="./.claude/hoangsa"
+else
+  HOANGSA_ROOT="$HOME/.claude/hoangsa"
+fi
+
+LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
 ```
 
 All user-facing text — questions, reports, summaries, error messages — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow. Do not switch languages mid-conversation. Template examples in this workflow are illustrative — adapt them to match the user's `lang` preference.
@@ -54,7 +61,7 @@ Store result as `GITNEXUS_STATUS`.
 ## Step 1: Session & output setup
 
 ```bash
-SESSION=$("~/.claude/hoangsa/bin/hoangsa-cli" session latest 2>/dev/null || echo "")
+SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest 2>/dev/null || echo "")
 ```
 
 - If `SESSION` is non-empty → use `SESSION_DIR` as output directory.
@@ -62,7 +69,7 @@ SESSION=$("~/.claude/hoangsa/bin/hoangsa-cli" session latest 2>/dev/null || echo
 
 ```bash
 # SLUG auto-derived from scope (e.g. "full-codebase", "auth-module")
-SESSION=$("~/.claude/hoangsa/bin/hoangsa-cli" session init chore "$SLUG")
+SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session init chore "$SLUG")
 # Extract SESSION_DIR from the result
 ```
 
@@ -73,7 +80,7 @@ SESSION=$("~/.claude/hoangsa/bin/hoangsa-cli" session init chore "$SLUG")
 ### 2a. Load saved preferences
 
 ```bash
-PREFS=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . 2>/dev/null || echo "{}")
+PREFS=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . 2>/dev/null || echo "{}")
 ```
 
 ### 2b. Audit target (ask user)
@@ -204,7 +211,7 @@ Agent tool → subagent per dimension
 ### Model selection
 
 ```bash
-MODEL=$("~/.claude/hoangsa/bin/hoangsa-cli" resolve-model researcher 2>/dev/null || echo "sonnet")
+MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model researcher 2>/dev/null || echo "sonnet")
 ```
 
 Use the resolved model for all scanning agents.

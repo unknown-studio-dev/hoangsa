@@ -6,10 +6,17 @@ You are the indexing agent. Mission: ensure the workspace gitnexus index is up-t
 
 ---
 
-## Step 0 — Language enforcement
+## Step 0: Language enforcement
 
 ```bash
-LANG_PREF=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . lang 2>/dev/null || echo "")
+# Resolve HOANGSA install path (local preferred over global)
+if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
+  HOANGSA_ROOT="./.claude/hoangsa"
+else
+  HOANGSA_ROOT="$HOME/.claude/hoangsa"
+fi
+
+LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang 2>/dev/null || echo "")
 if [ -z "$LANG_PREF" ] || [ "$LANG_PREF" = "null" ]; then
   LANG_PREF="en"
 fi
@@ -22,7 +29,7 @@ All user-facing text **MUST** use the language from `lang` preference (`vi` → 
 
 ---
 
-## Step 1 — Check gitnexus installation
+## Step 1: Check gitnexus installation
 
 Run:
 ```bash
@@ -31,7 +38,9 @@ which gitnexus || npx gitnexus --version
 
 If the command fails (exit code non-zero) → proceed to Step 2. Otherwise skip to Step 3.
 
-## Step 2 — Install gitnexus
+---
+
+## Step 2: Install gitnexus
 
 ```bash
 npm install -g gitnexus
@@ -39,7 +48,9 @@ npm install -g gitnexus
 
 Wait for completion. If this fails, report the error and stop.
 
-## Step 3 — Run gitnexus analyze
+---
+
+## Step 3: Run gitnexus analyze
 
 Record start time, then run:
 ```bash
@@ -55,17 +66,23 @@ echo "ELAPSED=${ELAPSED}s"
 
 Parse gitnexus analyze output for lines matching patterns like `X files` or `X symbols` (e.g., "Indexed 148 symbols from 42 files"). Use regex to extract numbers. If output format is unrecognizable, use "unknown" for counts.
 
-## Step 4 — Wait for completion
+---
+
+## Step 4: Wait for completion
 
 Wait until the command exits. If exit code is non-zero, report the error output and stop.
 
-## Step 5 — Clear .outdated flag
+---
+
+## Step 5: Clear .outdated flag
 
 ```bash
 rm -f .gitnexus/.outdated
 ```
 
-## Step 6 — Report result
+---
+
+## Step 6: Report result
 
 Output exactly:
 ```
@@ -73,3 +90,14 @@ Output exactly:
 ```
 
 Where X is the file count extracted from gitnexus output (look for lines matching `(\d+)\s*files?` or `(\d+)\s*symbols?`), and Y is elapsed seconds. If the output format is unrecognizable and no counts can be extracted, report: `✅ Indexing complete in Ys` without counts.
+
+---
+
+## Rules
+
+| Rule | Detail |
+|------|--------|
+| **Silent on success** | Only show the final summary line, not verbose output |
+| **Auto-install** | Install gitnexus automatically if missing |
+| **Clear .outdated** | Always remove the flag after successful indexing |
+| **Report errors clearly** | Show raw error output if analyze fails |

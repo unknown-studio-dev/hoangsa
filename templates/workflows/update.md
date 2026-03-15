@@ -1,24 +1,30 @@
-<purpose>
-Check for HOANGSA updates via npm, display changelog for versions between installed and latest, obtain user confirmation, and execute clean installation with cache clearing.
-</purpose>
+# HOANGSA Update Workflow
 
-<required_reading>
-Read all files referenced by the invoking prompt's execution_context before starting.
-</required_reading>
+You are the update agent. Mission: check for HOANGSA updates, show changelog, obtain user confirmation, and execute clean installation.
 
-<process>
+**Principles:** Always show what changed before updating. Never update without confirmation. Detect install type (local vs global) automatically.
 
-<step name="language_enforcement">
-Load user's language preference:
+---
+
+## Step 0: Language enforcement
 
 ```bash
-LANG_PREF=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . lang 2>/dev/null || echo "en")
+# Resolve HOANGSA install path (local preferred over global)
+if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
+  HOANGSA_ROOT="./.claude/hoangsa"
+else
+  HOANGSA_ROOT="$HOME/.claude/hoangsa"
+fi
+
+LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang 2>/dev/null || echo "en")
 ```
 
-All user-facing text — version info, changelog display, confirmation prompts, completion messages — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English).
-</step>
+All user-facing text — version info, changelog display, confirmation prompts, completion messages — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English). This applies throughout the **ENTIRE** workflow.
 
-<step name="get_installed_version">
+---
+
+## Step 1: Detect installed version
+
 Detect whether HOANGSA is installed locally or globally by checking both locations and validating install integrity:
 
 ```bash
@@ -72,9 +78,11 @@ Running fresh install...
 ```
 
 Proceed to install step (treat as version 0.0.0 for comparison).
-</step>
 
-<step name="check_latest_version">
+---
+
+## Step 2: Check latest version
+
 Check npm for latest version:
 
 ```bash
@@ -89,9 +97,11 @@ To update manually: `npx hoangsa-cc --global`
 ```
 
 Exit.
-</step>
 
-<step name="compare_versions">
+---
+
+## Step 3: Compare versions
+
 Compare installed vs latest:
 
 **If installed == latest:**
@@ -117,9 +127,11 @@ You're ahead of the latest release (development version?).
 ```
 
 Exit.
-</step>
 
-<step name="show_changes_and_confirm">
+---
+
+## Step 4: Show changes and confirm
+
 **If update available**, fetch and show what's new BEFORE updating:
 
 1. Fetch changelog from GitHub raw URL
@@ -170,10 +182,12 @@ Use AskUserQuestion:
   - "No, cancel"
 
 **If user cancels:** Exit.
-</step>
 
-<step name="run_update">
-Run the update using the install type detected in step 1:
+---
+
+## Step 5: Run update
+
+Run the update using the install type detected in Step 1:
 
 **If LOCAL install:**
 ```bash
@@ -195,24 +209,27 @@ rm -f "$HOME/.claude/cache/hoangsa-update-check.json"
 ```
 
 The SessionStart hook writes to the detected runtime's cache directory, so all paths must be cleared to prevent stale update indicators.
-</step>
 
-<step name="display_result">
+---
+
+## Step 6: Display result
+
 Format completion message (changelog was already shown in confirmation step):
 
 ```
 ╔═══════════════════════════════════════════════════════════╗
-║  HOANGSA Updated: v1.5.10 → v1.5.15                           ║
+║  HOANGSA Updated: v1.5.10 → v1.5.15                     ║
 ╚═══════════════════════════════════════════════════════════╝
 
 ⚠️  Restart Claude Code to pick up the new commands.
 
 [View full changelog](https://github.com/glittercowboy/hoangsa/blob/main/CHANGELOG.md)
 ```
-</step>
 
+---
 
-<step name="check_local_patches">
+## Step 7: Check local patches
+
 After update completes, check if the installer detected and backed up any locally modified files:
 
 Check for hoangsa-local-patches/backup-meta.json in the config directory.
@@ -227,16 +244,15 @@ Please review these patches manually and reapply any needed changes to the new v
 ```
 
 **If no patches:** Continue normally.
-</step>
-</process>
 
-<success_criteria>
-- [ ] Installed version read correctly
-- [ ] Latest version checked via npm
-- [ ] Update skipped if already current
-- [ ] Changelog fetched and displayed BEFORE update
-- [ ] Clean install warning shown
-- [ ] User confirmation obtained
-- [ ] Update executed successfully
-- [ ] Restart reminder shown
-</success_criteria>
+---
+
+## Rules
+
+| Rule | Detail |
+|------|--------|
+| **Show changelog first** | Never update without showing what changed |
+| **Confirm before updating** | Always ask user before executing install |
+| **Detect install type** | Auto-detect local vs global, never ask user |
+| **Clear cache after update** | Remove update-check cache to reset statusline |
+| **Report local patches** | Warn user if modified files were backed up |

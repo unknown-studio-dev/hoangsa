@@ -13,6 +13,7 @@ allowed-tools:
   - AskUserQuestion
 ---
 
+<output>
 <objective>
 Execute plan.json wave-by-wave. Each task runs in a fresh context window (context engineering). After each worker completes, a /simplify pass auto-runs to fix code quality issues before proceeding. Includes 3-tier verification: static analysis, behavioral tests ×3, semantic review against spec.
 
@@ -20,9 +21,14 @@ Orchestrator role only — dispatches workers, monitors progress, handles escala
 </objective>
 
 <execution_context>
-@~/.claude/hoangsa/workflows/cook.md
+Resolve HOANGSA install path — check local first, then global:
+1. `./.claude/hoangsa/workflows/cook.md`
+2. `~/.claude/hoangsa/workflows/cook.md`
+Read the first path that exists.
 </execution_context>
 
 <process>
-Follow the cook workflow from `@~/.claude/hoangsa/workflows/cook.md`.
+Follow the cook workflow loaded above.
 </process>
+
+</output>

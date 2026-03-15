@@ -281,7 +281,10 @@ function processAttribution(content, attribution) {
   );
 }
 
-/** Recursively copy srcDir→destDir, replacing ~/.claude/ paths and attribution in .md files. */
+/** Recursively copy srcDir→destDir, processing attribution in .md files.
+ *  Path replacement removed — templates now use $HOANGSA_ROOT with runtime
+ *  resolution (local preferred over global), so paths are no longer baked in
+ *  at install time. */
 function copyWithPathReplacement(srcDir, destDir, pathPrefix, attribution) {
   if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true });
   fs.mkdirSync(destDir, { recursive: true });
@@ -293,12 +296,6 @@ function copyWithPathReplacement(srcDir, destDir, pathPrefix, attribution) {
       copyWithPathReplacement(srcPath, destPath, pathPrefix, attribution);
     } else if (entry.name.endsWith(".md")) {
       let content = fs.readFileSync(srcPath, "utf8");
-      content = content.replace(/~\/\.claude\//g, pathPrefix);
-      content = content.replace(
-        /\$HOME\/\.claude\//g,
-        toHomePrefix(pathPrefix),
-      );
-      content = content.replace(/\.\/\.claude\//g, `./.claude/`);
       content = processAttribution(content, attribution);
       fs.writeFileSync(destPath, content);
     } else {

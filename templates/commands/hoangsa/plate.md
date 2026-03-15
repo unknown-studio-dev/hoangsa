@@ -8,14 +8,20 @@ allowed-tools:
   - AskUserQuestion
 ---
 
+<output>
 <objective>
 Stage changed files and commit them with a conventional commit message derived from completed task descriptions.
 </objective>
 
 <execution_context>
-@~/.claude/hoangsa/workflows/plate.md
+Resolve HOANGSA install path — check local first, then global:
+1. `./.claude/hoangsa/workflows/plate.md`
+2. `~/.claude/hoangsa/workflows/plate.md`
+Read the first path that exists.
 </execution_context>
 
 <process>
-Follow the plate workflow from `@~/.claude/hoangsa/workflows/plate.md`.
+Follow the plate workflow loaded above.
 </process>
+
+</output>

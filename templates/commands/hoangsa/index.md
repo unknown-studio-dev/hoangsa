@@ -5,6 +5,7 @@ allowed-tools:
   - Bash
 ---
 
+<output>
 <objective>
 Run gitnexus analyze on the workspace to build/refresh the codebase index, then clear the .outdated flag if present.
 
@@ -16,11 +17,14 @@ Routes to the index workflow which handles:
 </objective>
 
 <execution_context>
-@~/.claude/hoangsa/workflows/index.md
+Resolve HOANGSA install path — check local first, then global:
+1. `./.claude/hoangsa/workflows/index.md`
+2. `~/.claude/hoangsa/workflows/index.md`
+Read the first path that exists.
 </execution_context>
 
 <process>
-**Follow the index workflow** from `@~/.claude/hoangsa/workflows/index.md`.
+**Follow the index workflow** loaded above.
 
 The workflow handles all logic including:
 1. Check if gitnexus is installed
@@ -30,3 +34,5 @@ The workflow handles all logic including:
 5. Delete .gitnexus/.outdated if exists
 6. Report results
 </process>
+
+</output>

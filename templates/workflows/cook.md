@@ -9,7 +9,14 @@ You are the orchestrator. Mission: execute the plan wave-by-wave, verify results
 ## Step 0a: Language enforcement
 
 ```bash
-LANG_PREF=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . lang)
+# Resolve HOANGSA install path (local preferred over global)
+if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
+  HOANGSA_ROOT="./.claude/hoangsa"
+else
+  HOANGSA_ROOT="$HOME/.claude/hoangsa"
+fi
+
+LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
 ```
 
 All user-facing text — status updates, questions, reports, error messages, escalation prompts, progress displays — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow. Do not switch languages mid-conversation. Template examples in this workflow are illustrative — adapt them to match the user's `lang` preference.
@@ -58,7 +65,7 @@ Store result as `GITNEXUS_STATUS`.
 ### 1a. Find session + plan
 
 ```bash
-SESSION=$("~/.claude/hoangsa/bin/hoangsa-cli" session latest)
+SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)
 ```
 
 If `found: false` → ask user to run `/hoangsa:prepare` first, stop.
@@ -66,10 +73,10 @@ If `found: false` → ask user to run `/hoangsa:prepare` first, stop.
 ### 1b. Validate plan.json
 
 ```bash
-RESULT=$("~/.claude/hoangsa/bin/hoangsa-cli" validate plan "$SESSION_DIR/plan.json")
+RESULT=$("$HOANGSA_ROOT/bin/hoangsa-cli" validate plan "$SESSION_DIR/plan.json")
 echo $RESULT
 
-DAG=$("~/.claude/hoangsa/bin/hoangsa-cli" dag check "$SESSION_DIR/plan.json")
+DAG=$("$HOANGSA_ROOT/bin/hoangsa-cli" dag check "$SESSION_DIR/plan.json")
 echo $DAG
 ```
 
@@ -83,7 +90,7 @@ Note: `language` field in frontmatter → used to build correct verification com
 ### 1d. Compute waves
 
 ```bash
-WAVES=$("~/.claude/hoangsa/bin/hoangsa-cli" dag waves "$SESSION_DIR/plan.json")
+WAVES=$("$HOANGSA_ROOT/bin/hoangsa-cli" dag waves "$SESSION_DIR/plan.json")
 echo $WAVES
 ```
 
@@ -121,8 +128,8 @@ Only continue when user confirms.
 ### Model selection
 
 ```bash
-WORKER_MODEL=$("~/.claude/hoangsa/bin/hoangsa-cli" resolve-model worker)
-REVIEWER_MODEL=$("~/.claude/hoangsa/bin/hoangsa-cli" resolve-model reviewer)
+WORKER_MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model worker)
+REVIEWER_MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model reviewer)
 ```
 
 Use `worker` model for task implementation (Step 3) and `reviewer` model for semantic review (Step 5 Tier 3). The orchestrator itself runs as `orchestrator` role — it only dispatches, monitors, and reports.
@@ -140,7 +147,7 @@ Before spawning each worker, load the task's context pack:
 
 ```bash
 # Load the context pack for a specific task
-CONTEXT=$("~/.claude/hoangsa/bin/hoangsa-cli" context get "$SESSION_DIR" "<task.id>")
+CONTEXT=$("$HOANGSA_ROOT/bin/hoangsa-cli" context get "$SESSION_DIR" "<task.id>")
 echo $CONTEXT
 ```
 
@@ -189,7 +196,7 @@ Load worker rules before dispatching using a base + addons approach:
 
 1. **Read base rules:**
    - If `.hoangsa/worker-rules.md` exists in workspace → use it as base (project override)
-   - Otherwise → use `~/.claude/hoangsa/workflows/worker-rules/base.md`
+   - Otherwise → use `$HOANGSA_ROOT/workflows/worker-rules/base.md`
 
 2. **Detect applicable addons:**
    - Read `tech_stack` from config.json preferences
@@ -198,7 +205,7 @@ Load worker rules before dispatching using a base + addons approach:
    - Match against addon file frontmatter `frameworks` field
 
 3. **Load matching addons:**
-   - For each matching addon: read `~/.claude/hoangsa/workflows/worker-rules/addons/<name>.md`
+   - For each matching addon: read `$HOANGSA_ROOT/workflows/worker-rules/addons/<name>.md`
    - Project-level addons override: `.hoangsa/worker-rules/addons/<name>.md`
 
 4. **Compose final rules:**
@@ -319,7 +326,7 @@ Orchestrator does NOT analyze code to suggest patches. Only presents evidence.
 After all tasks finish execution and verification is done, read chain preferences from project config:
 
 ```bash
-AUTO_TASTE=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . auto_taste)
+AUTO_TASTE=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . auto_taste)
 ```
 
 - If `auto_taste` value is `true` → automatically chain to `/hoangsa:taste` after Step 6
@@ -350,7 +357,7 @@ If `state.external_task` exists after all waves complete, chain to `/serve` push
   Save immediately after user answers:
 
   ```bash
-  "~/.claude/hoangsa/bin/hoangsa-cli" pref set . auto_taste true
+  "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . auto_taste true
   # or: pref set . auto_taste false
   ```
 

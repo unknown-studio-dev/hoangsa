@@ -4,6 +4,7 @@ description: Show HOANGSA commands and workflow
 allowed-tools: []
 ---
 
+<output>
 <objective>
 Display HOANGSA help — the 3-phase workflow and available commands.
 </objective>
@@ -27,6 +28,7 @@ Commands:
   /hoangsa:plate     Commit completed work with conventional message
   /hoangsa:check     Show session progress overview
   /hoangsa:research  Deep research — codebase + external → RESEARCH.md
+  /hoangsa:audit     Audit codebase — code smells, security, tech debt → AUDIT-REPORT.md
   /hoangsa:serve     Sync task status to external task manager
   /hoangsa:index     Re-index codebase with GitNexus
   /hoangsa:help      Show this help
@@ -48,6 +50,8 @@ Key concepts:
   • Persistent preferences — ask once, save to config, never repeat
 
 Config lives in .hoangsa/config.json
-Session data lives in .hoangsa/sessions/<timestamp>/
+Session data lives in .hoangsa/sessions/<type>/
 ```
 </process>
+
+</output>

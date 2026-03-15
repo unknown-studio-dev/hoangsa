@@ -7,7 +7,14 @@ Analyze a bug, create a minimal fix plan, implement the fixes, and chain to tast
 ## Step 0a: Language enforcement
 
 ```bash
-LANG_PREF=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . lang)
+# Resolve HOANGSA install path (local preferred over global)
+if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
+  HOANGSA_ROOT="./.claude/hoangsa"
+else
+  HOANGSA_ROOT="$HOME/.claude/hoangsa"
+fi
+
+LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
 ```
 
 All user-facing text — status updates, questions, reports, error messages, progress displays — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow. Do not switch languages mid-conversation. Template examples in this workflow are illustrative — adapt them to match the user's `lang` preference.
@@ -235,14 +242,14 @@ If cross-layer fix is needed, tasks should be ordered by dependency:
 Initialize session state:
 
 ```bash
-SESSION=$("~/.claude/hoangsa/bin/hoangsa-cli" session latest)
+SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)
 ```
 
 If no active session exists, auto-create a fix session. Derive the slug from the bug context (root cause summary from Step 2) — the user never types it. Derive slug by extracting 2-4 key nouns/verbs from the root cause summary, joined by hyphens, lowercase, max 32 chars. Examples: 'null-pointer-user-service', 'broken-login-redirect', 'missing-auth-header'.
 
 ```bash
 # SLUG auto-derived from bug summary (e.g. "null-pointer-user-service", "broken-login-redirect")
-SESSION=$("~/.claude/hoangsa/bin/hoangsa-cli" session init fix "$SLUG")
+SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session init fix "$SLUG")
 # → { "id": "fix/null-pointer-user-service", ... }
 ```
 
@@ -274,7 +281,7 @@ Only continue when user confirms.
 ### Model selection
 
 ```bash
-MODEL=$("~/.claude/hoangsa/bin/hoangsa-cli" resolve-model worker)
+MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model worker)
 ```
 
 ### For each task:
@@ -319,7 +326,7 @@ Load worker rules before dispatching using a base + addons approach:
 
 1. **Read base rules:**
    - If `.hoangsa/worker-rules.md` exists in workspace → use it as base (project override)
-   - Otherwise → use `~/.claude/hoangsa/workflows/worker-rules/base.md`
+   - Otherwise → use `$HOANGSA_ROOT/workflows/worker-rules/base.md`
 
 2. **Detect applicable addons:**
    - Read `tech_stack` from config.json preferences
@@ -328,7 +335,7 @@ Load worker rules before dispatching using a base + addons approach:
    - Match against addon file frontmatter `frameworks` field
 
 3. **Load matching addons:**
-   - For each matching addon: read `~/.claude/hoangsa/workflows/worker-rules/addons/<name>.md`
+   - For each matching addon: read `$HOANGSA_ROOT/workflows/worker-rules/addons/<name>.md`
    - Project-level addons override: `.hoangsa/worker-rules/addons/<name>.md`
 
 4. **Compose final rules:**

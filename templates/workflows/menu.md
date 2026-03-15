@@ -9,7 +9,14 @@ You are the design lead. Mission: take user from vague idea → DESIGN-SPEC + TE
 ## Step 0a: Language enforcement
 
 ```bash
-LANG_PREF=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . lang)
+# Resolve HOANGSA install path (local preferred over global)
+if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
+  HOANGSA_ROOT="./.claude/hoangsa"
+else
+  HOANGSA_ROOT="$HOME/.claude/hoangsa"
+fi
+
+LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
 ```
 
 All user-facing text — questions, options, explanations, reports, status updates — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow. Do not switch languages mid-conversation even if the workflow runs for many steps. Template examples in this workflow are illustrative — adapt them to match the user's `lang` preference.
@@ -68,7 +75,7 @@ After Step 3a (task type) and Step 3c (description) are done, auto-extract a slu
 
 ```bash
 # SLUG is auto-derived from user's description — NEVER ask them to type it
-SESSION=$("~/.claude/hoangsa/bin/hoangsa-cli" session init "$TASK_TYPE" "$SLUG")
+SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session init "$TASK_TYPE" "$SLUG")
 # → { "id": "feat/api-authentication", "type": "feat", "name": "api-authentication", "dir": "..." }
 ```
 
@@ -77,7 +84,7 @@ Extract `SESSION_ID`, `SESSION_DIR`, and `SESSION_TYPE` from JSON output.
 Initialize state for this session:
 
 ```bash
-"~/.claude/hoangsa/bin/hoangsa-cli" state init "$SESSION_DIR"
+"$HOANGSA_ROOT/bin/hoangsa-cli" state init "$SESSION_DIR"
 # → creates state.json in SESSION_DIR with status: "pending"
 ```
 
@@ -88,7 +95,7 @@ Initialize state for this session:
 Load project-level preferences from config.json. These persist across sessions — only ask what's missing.
 
 ```bash
-PREFS=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get .)
+PREFS=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get .)
 # → { "lang": "vi", "spec_lang": "vi", "tech_stack": ["typescript"], ... }
 ```
 
@@ -123,7 +130,7 @@ Detected tech stack: [TypeScript, Python]
 After user confirms → save immediately:
 
 ```bash
-"~/.claude/hoangsa/bin/hoangsa-cli" pref set . tech_stack '["typescript","python"]'
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . tech_stack '["typescript","python"]'
 ```
 
 ### 2b. Language preferences (if not saved)
@@ -141,7 +148,7 @@ Use AskUserQuestion:
 After user answers → save immediately:
 
 ```bash
-"~/.claude/hoangsa/bin/hoangsa-cli" pref set . lang "vi"
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . lang "vi"
 ```
 
 If `spec_lang` is `null`:
@@ -158,7 +165,7 @@ Use AskUserQuestion:
 After user answers → save immediately:
 
 ```bash
-"~/.claude/hoangsa/bin/hoangsa-cli" pref set . spec_lang "vi"
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . spec_lang "vi"
 ```
 
 ### 2c. Show saved preferences summary (if all already set)
@@ -528,7 +535,7 @@ status: "draft"
 Then check `review_style` preference:
 
 ```bash
-REVIEW=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . review_style)
+REVIEW=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . review_style)
 ```
 
 ### If `review_style` is "whole_document" or null (default):
@@ -567,7 +574,7 @@ For each section in [Overview, Types/Data Models, Interfaces/APIs, Implementatio
 If `review_style` is `null` → after the first review round, save based on behavior:
 
 ```bash
-"~/.claude/hoangsa/bin/hoangsa-cli" pref set . review_style "whole_document"
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . review_style "whole_document"
 ```
 
 ---
@@ -736,11 +743,11 @@ Review using the same `review_style` as Step 5 (whole_document or section_by_sec
 ## Step 7: Validate
 
 ```bash
-SPEC_RESULT=$("~/.claude/hoangsa/bin/hoangsa-cli" validate spec \
+SPEC_RESULT=$("$HOANGSA_ROOT/bin/hoangsa-cli" validate spec \
   "$SESSION_DIR/DESIGN-SPEC.md")
 echo $SPEC_RESULT
 
-TEST_RESULT=$("~/.claude/hoangsa/bin/hoangsa-cli" validate tests \
+TEST_RESULT=$("$HOANGSA_ROOT/bin/hoangsa-cli" validate tests \
   "$SESSION_DIR/TEST-SPEC.md")
 echo $TEST_RESULT
 ```
@@ -764,11 +771,11 @@ Save all files to `$SESSION_DIR/`:
 Update state to reflect design is complete:
 
 ```bash
-"~/.claude/hoangsa/bin/hoangsa-cli" state update "$SESSION_ID" '{"status":"design"}'
+"$HOANGSA_ROOT/bin/hoangsa-cli" state update "$SESSION_ID" '{"status":"design"}'
 ```
 
 ```bash
-"~/.claude/hoangsa/bin/hoangsa-cli" commit \
+"$HOANGSA_ROOT/bin/hoangsa-cli" commit \
   "menu($SESSION_ID): complete spec for <component>" \
   --files \
     $SESSION_DIR/CONTEXT.md \

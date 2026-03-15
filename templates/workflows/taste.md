@@ -7,7 +7,14 @@ You are the test runner. Mission: run acceptance tests for all tasks in the plan
 ## Step 0: Language enforcement
 
 ```bash
-LANG_PREF=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . lang)
+# Resolve HOANGSA install path (local preferred over global)
+if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
+  HOANGSA_ROOT="./.claude/hoangsa"
+else
+  HOANGSA_ROOT="$HOME/.claude/hoangsa"
+fi
+
+LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
 ```
 
 All user-facing text — status updates, questions, reports, error messages, progress displays — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow. Do not switch languages mid-conversation. Template examples in this workflow are illustrative — adapt them to match the user's `lang` preference.
@@ -17,7 +24,7 @@ All user-facing text — status updates, questions, reports, error messages, pro
 ## Step 1: Load session and plan
 
 ```bash
-SESSION=$("~/.claude/hoangsa/bin/hoangsa-cli" session latest)
+SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)
 ```
 
 If `found: false` → ask user to run `/hoangsa:prepare` first, stop.
@@ -29,7 +36,7 @@ Read `$SESSION_DIR/plan.json` — extract tasks and their `acceptance` commands.
 ## Step 1b: Model selection
 
 ```bash
-MODEL=$("~/.claude/hoangsa/bin/hoangsa-cli" resolve-model tester)
+MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model tester)
 ```
 
 Use the resolved model for running test tasks. The `tester` role is lightweight (default: haiku in balanced profile) since it primarily runs commands and reports results.
@@ -143,7 +150,7 @@ For each task, update status in plan.json:
 - Failed (after all attempts) → `"status": "failed"`
 
 ```bash
-"~/.claude/hoangsa/bin/hoangsa-cli" state update "$SESSION_DIR/plan.json" <task_id> <status>
+"$HOANGSA_ROOT/bin/hoangsa-cli" state update "$SESSION_DIR/plan.json" <task_id> <status>
 ```
 
 ---
@@ -172,7 +179,7 @@ Next steps:
 Read chain preference from project config:
 
 ```bash
-AUTO_PLATE=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . auto_plate)
+AUTO_PLATE=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . auto_plate)
 ```
 
 - If `auto_plate` value is `true` → automatically invoke `/hoangsa:plate`
@@ -190,7 +197,7 @@ AUTO_PLATE=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . auto_plate)
   Save immediately:
 
   ```bash
-  "~/.claude/hoangsa/bin/hoangsa-cli" pref set . auto_plate true
+  "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . auto_plate true
   # or: pref set . auto_plate false
   ```
 

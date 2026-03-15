@@ -11,6 +11,7 @@ allowed-tools:
   - AskUserQuestion
 ---
 
+<output>
 <objective>
 One-time project onboarding. Detects (or scaffolds) the codebase, sets user preferences, configures model routing, and indexes with GitNexus.
 
@@ -22,9 +23,14 @@ Creates `.hoangsa/config.json` with complete project configuration:
 </objective>
 
 <execution_context>
-@~/.claude/hoangsa/workflows/init.md
+Resolve HOANGSA install path — check local first, then global:
+1. `./.claude/hoangsa/workflows/init.md`
+2. `~/.claude/hoangsa/workflows/init.md`
+Read the first path that exists.
 </execution_context>
 
 <process>
-Follow the init workflow from `@~/.claude/hoangsa/workflows/init.md`.
+Follow the init workflow loaded above.
 </process>
+
+</output>

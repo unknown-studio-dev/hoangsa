@@ -9,7 +9,14 @@ You are the decomposer. Mission: turn spec into an executable JSON plan with **a
 ## Step 0: Language enforcement
 
 ```bash
-LANG_PREF=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . lang)
+# Resolve HOANGSA install path (local preferred over global)
+if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
+  HOANGSA_ROOT="./.claude/hoangsa"
+else
+  HOANGSA_ROOT="$HOME/.claude/hoangsa"
+fi
+
+LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
 ```
 
 All user-facing text — status updates, questions, reports, error messages, progress displays — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow. Do not switch languages mid-conversation. Template examples in this workflow are illustrative — adapt them to match the user's `lang` preference.
@@ -19,7 +26,7 @@ All user-facing text — status updates, questions, reports, error messages, pro
 ## Step 1: Load session
 
 ```bash
-SESSION=$("~/.claude/hoangsa/bin/hoangsa-cli" session latest)
+SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)
 echo $SESSION
 ```
 
@@ -32,8 +39,8 @@ Read from session dir:
 Validate immediately:
 
 ```bash
-"~/.claude/hoangsa/bin/hoangsa-cli" validate spec "$SESSION_DIR/DESIGN-SPEC.md"
-"~/.claude/hoangsa/bin/hoangsa-cli" validate tests "$SESSION_DIR/TEST-SPEC.md"
+"$HOANGSA_ROOT/bin/hoangsa-cli" validate spec "$SESSION_DIR/DESIGN-SPEC.md"
+"$HOANGSA_ROOT/bin/hoangsa-cli" validate tests "$SESSION_DIR/TEST-SPEC.md"
 ```
 
 If errors → show errors, ask user to fix spec first.
@@ -45,7 +52,7 @@ If errors → show errors, ask user to fix spec first.
 Run `memory init` to ensure `project-memory.json` exists before plan generation. Use the **project root** (cwd), not the session dir:
 
 ```bash
-"~/.claude/hoangsa/bin/hoangsa-cli" memory init "$(pwd)"
+"$HOANGSA_ROOT/bin/hoangsa-cli" memory init "$(pwd)"
 ```
 
 This creates `<project_root>/.hoangsa/project-memory.json` if it does not already exist. The memory file stores cross-task knowledge (discovered conventions, resolved ambiguities) that workers can read during cook phase.
@@ -205,7 +212,7 @@ Save to `$SESSION_DIR/plan-draft.json`.
 ### Check 1 — Validate with hoangsa-cli
 
 ```bash
-RESULT=$("~/.claude/hoangsa/bin/hoangsa-cli" validate plan \
+RESULT=$("$HOANGSA_ROOT/bin/hoangsa-cli" validate plan \
   "$SESSION_DIR/plan-draft.json")
 echo $RESULT
 ```
@@ -213,7 +220,7 @@ echo $RESULT
 ### Check 2 — DAG validation
 
 ```bash
-DAG=$("~/.claude/hoangsa/bin/hoangsa-cli" dag check \
+DAG=$("$HOANGSA_ROOT/bin/hoangsa-cli" dag check \
   "$SESSION_DIR/plan-draft.json")
 echo $DAG
 ```
@@ -251,8 +258,8 @@ Common DAG errors: (1) Circular dependency — break the cycle by splitting the 
 After all checker loops pass, generate a context pack for each task using `context pack`:
 
 ```bash
-for TASK_ID in $("~/.claude/hoangsa/bin/hoangsa-cli" plan task-ids "$SESSION_DIR/plan-draft.json"); do
-  "~/.claude/hoangsa/bin/hoangsa-cli" context pack \
+for TASK_ID in $("$HOANGSA_ROOT/bin/hoangsa-cli" plan task-ids "$SESSION_DIR/plan-draft.json"); do
+  "$HOANGSA_ROOT/bin/hoangsa-cli" context pack \
     "$SESSION_DIR/plan-draft.json" "$TASK_ID" \
     --output "$SESSION_DIR/task-${TASK_ID}.context.json"
 done
@@ -267,7 +274,7 @@ If `context pack` fails for a task → log a warning but do not block plan appro
 ## Step 6: Show plan to user
 
 ```bash
-WAVES=$("~/.claude/hoangsa/bin/hoangsa-cli" dag waves \
+WAVES=$("$HOANGSA_ROOT/bin/hoangsa-cli" dag waves \
   "$SESSION_DIR/plan-draft.json")
 echo $WAVES
 ```
@@ -326,10 +333,10 @@ When user approves:
 cp "$SESSION_DIR/plan-draft.json" "$SESSION_DIR/plan.json"
 
 # Final validation
-"~/.claude/hoangsa/bin/hoangsa-cli" validate plan "$SESSION_DIR/plan.json"
+"$HOANGSA_ROOT/bin/hoangsa-cli" validate plan "$SESSION_DIR/plan.json"
 
 # Commit
-"~/.claude/hoangsa/bin/hoangsa-cli" commit \
+"$HOANGSA_ROOT/bin/hoangsa-cli" commit \
   "prepare($SESSION_ID): create execution plan for <component>" \
   --files "$SESSION_DIR/plan.json"
 ```

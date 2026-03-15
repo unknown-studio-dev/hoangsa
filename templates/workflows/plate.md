@@ -1,30 +1,43 @@
 # Plate Workflow
 
-Stage changed files and commit with a conventional commit message.
+You are the committer. Mission: stage changed files and commit with a conventional commit message derived from session work.
+
+**Principles:** Show what will be committed before committing. Never commit secrets or large binaries. Always confirm with user.
+
+---
 
 ## Step 0: Language enforcement
 
 ```bash
-LANG_PREF=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . lang)
+# Resolve HOANGSA install path (local preferred over global)
+if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
+  HOANGSA_ROOT="./.claude/hoangsa"
+else
+  HOANGSA_ROOT="$HOME/.claude/hoangsa"
+fi
+
+LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
 ```
 
 All user-facing text — confirmations, questions, summaries — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow.
 
 ---
 
-## Steps
-
-### 1. Inspect working tree
+## Step 1: Inspect working tree
 
 Run `git status` to list all changed, staged, and untracked files.
 Show the user a summary of what will be staged.
 
-### 2. Stage files
+---
+
+## Step 2: Stage files
 
 Run `git add` on the relevant changed files.
 Exclude files that are clearly out of scope (e.g. `.env`, secrets, large binaries).
 
-### 3. Generate commit message
+---
+
+## Step 3: Generate commit message
 
 Derive a conventional commit message from:
 - The active session's completed task descriptions (from the plan or task list)
@@ -34,16 +47,22 @@ Format: `<type>(<scope>): <short description>`
 
 Example: `refactor(refactor/plate-command): T-02 create /plate command, agent, and workflow`
 
-### 4. Confirm with user
+---
+
+## Step 4: Confirm with user
 
 Show the proposed commit message and staged file list.
 Ask the user to confirm or provide an alternative message.
 
-### 5. Commit
+---
+
+## Step 5: Commit
 
 Run `git commit -m "<confirmed message>"`.
 
-### 6. Chain to serve
+---
+
+## Step 6: Chain to serve
 
 **If external task is linked** (`state.external_task` exists in session state):
 
@@ -54,7 +73,7 @@ Always chain to `/hoangsa:serve` in push mode — the user linked a task, so the
 Read chain preference from project config:
 
 ```bash
-AUTO_SERVE=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . auto_serve)
+AUTO_SERVE=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . auto_serve)
 ```
 
 - If `auto_serve` value is `true` → automatically chain to `/hoangsa:serve`
@@ -84,8 +103,21 @@ AUTO_SERVE=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . auto_serve)
   Save immediately:
 
   ```bash
-  "~/.claude/hoangsa/bin/hoangsa-cli" pref set . auto_serve true
+  "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . auto_serve true
   # or: pref set . auto_serve false
   ```
 
   Then proceed based on their choice.
+
+---
+
+## Rules
+
+| Rule | Detail |
+|------|--------|
+| **Preview before commit** | Always show staged files and message before committing |
+| **Exclude secrets** | Never stage `.env`, credentials, or large binaries |
+| **Conventional commits** | Use `type(scope): description` format |
+| **Confirm with user** | Never auto-commit without user approval |
+| **Save preferences on first ask** | Ask `auto_serve` once, save to config, never repeat |
+| **Chain to serve on linked tasks** | If external task exists, always push results back |

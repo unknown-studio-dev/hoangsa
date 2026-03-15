@@ -11,6 +11,7 @@ allowed-tools:
   - WebFetch
 ---
 
+<output>
 <objective>
 Bidirectional sync between HOANGSA sessions and external task managers via MCP.
 
@@ -22,9 +23,14 @@ On first run: auto-discovers MCP servers, prompts user to select a task manager,
 </objective>
 
 <execution_context>
-@~/.claude/hoangsa/workflows/serve.md
+Resolve HOANGSA install path — check local first, then global:
+1. `./.claude/hoangsa/workflows/serve.md`
+2. `~/.claude/hoangsa/workflows/serve.md`
+Read the first path that exists.
 </execution_context>
 
 <process>
-Follow the serve workflow from `@~/.claude/hoangsa/workflows/serve.md`.
+Follow the serve workflow loaded above.
 </process>
+
+</output>

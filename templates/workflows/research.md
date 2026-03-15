@@ -9,7 +9,14 @@ Conduct deep research on a topic — codebase structure, patterns, or external k
 ## Step 0a: Language enforcement
 
 ```bash
-LANG_PREF=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . lang)
+# Resolve HOANGSA install path (local preferred over global)
+if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
+  HOANGSA_ROOT="./.claude/hoangsa"
+else
+  HOANGSA_ROOT="$HOME/.claude/hoangsa"
+fi
+
+LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
 ```
 
 All user-facing text — questions, reports, summaries, status updates — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow. Do not switch languages mid-conversation. Template examples in this workflow are illustrative — adapt them to match the user's `lang` preference.
@@ -56,7 +63,7 @@ Store result as `GITNEXUS_STATUS`.
 Detect whether an active session exists:
 
 ```bash
-SESSION=$("~/.claude/hoangsa/bin/hoangsa-cli" session latest)
+SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)
 ```
 
 - If `SESSION` is non-empty → extract `SESSION_DIR` from the result and use it as the output directory.
@@ -64,7 +71,7 @@ SESSION=$("~/.claude/hoangsa/bin/hoangsa-cli" session latest)
 
 ```bash
 # SLUG auto-derived from topic (e.g. "auth-patterns", "logging-architecture")
-SESSION=$("~/.claude/hoangsa/bin/hoangsa-cli" session init docs "$SLUG")
+SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session init docs "$SLUG")
 # Extract SESSION_DIR from the result
 ```
 
@@ -77,7 +84,7 @@ This makes the workflow flexible — it works both inside a full HOANGSA session
 ### 2a. Load saved preferences
 
 ```bash
-PREFS=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get .)
+PREFS=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get .)
 ```
 
 Extract `research_scope` and `research_mode` from preferences.
@@ -115,7 +122,7 @@ If `research_scope` is `null` (first time):
   Save immediately:
 
   ```bash
-  "~/.claude/hoangsa/bin/hoangsa-cli" pref set . research_scope "both"
+  "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . research_scope "both"
   ```
 
 If already saved → use it. Show briefly:
@@ -141,7 +148,7 @@ If `research_mode` is `null` (first time):
   Save immediately:
 
   ```bash
-  "~/.claude/hoangsa/bin/hoangsa-cli" pref set . research_mode "auto"
+  "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . research_mode "auto"
   ```
 
 If already saved → use it.
@@ -173,7 +180,7 @@ Store result as `GITNEXUS_STATUS`.
 ### Model selection
 
 ```bash
-MODEL=$("~/.claude/hoangsa/bin/hoangsa-cli" resolve-model researcher)
+MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model researcher)
 ```
 
 Use the resolved model for spawning research agents.

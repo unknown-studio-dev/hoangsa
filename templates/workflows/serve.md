@@ -1,25 +1,32 @@
-# /serve Workflow — Bidirectional sync with external task managers via MCP
+# Serve Workflow
 
-## Purpose
+You are the sync agent. Mission: bidirectional sync between HOANGSA sessions and external task managers (ClickUp, Asana, Linear, Jira, GitHub) via MCP.
 
-Two-way sync between HOANGSA sessions and external task managers (ClickUp, Asana, Linear, Jira, GitHub).
+**Principles:** Pull fetches task context for design. Push syncs work results back. Always preview before sending. Never auto-post without user confirmation.
 
 - **Pull (intake):** User pastes a task link → fetch details → use as session context
 - **Push (sync-back):** After work → ask user what to update on the task (status, comment, report)
 
 ---
 
-## Step 0 — Language enforcement
+## Step 0: Language enforcement
 
 ```bash
-LANG_PREF=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . lang)
+# Resolve HOANGSA install path (local preferred over global)
+if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
+  HOANGSA_ROOT="./.claude/hoangsa"
+else
+  HOANGSA_ROOT="$HOME/.claude/hoangsa"
+fi
+
+LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
 ```
 
 All user-facing text **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow.
 
 ---
 
-## Step 1 — Read config
+## Step 1: Read config
 
 Read `.hoangsa/config.json` and check the `task_manager` block:
 
@@ -42,7 +49,7 @@ Read `.hoangsa/config.json` and check the `task_manager` block:
 
 ---
 
-## Step 2 — First-Time Setup
+## Step 2: First-Time Setup
 
 ### 2a. Discover MCP servers
 
@@ -94,7 +101,7 @@ Then proceed to Step 3.
 
 ---
 
-## Step 3 — Route
+## Step 3: Route
 
 Determine direction based on how `/serve` was invoked:
 
@@ -125,7 +132,7 @@ Use AskUserQuestion:
 
 ---
 
-## Step 4 — Pull (Task Intake)
+## Step 4: Pull (Task Intake)
 
 ### 4a. Parse task URL
 
@@ -200,7 +207,7 @@ Save the context to `$SESSION_DIR/EXTERNAL-TASK.md` (if session exists) or hold 
 Also store the task reference in session state for push-back later:
 
 ```bash
-"~/.claude/hoangsa/bin/hoangsa-cli" state update "$SESSION_ID" '{
+"$HOANGSA_ROOT/bin/hoangsa-cli" state update "$SESSION_ID" '{
   "external_task": {
     "provider": "<provider>",
     "task_id": "<id>",
@@ -243,7 +250,7 @@ Use AskUserQuestion:
 
 ---
 
-## Step 5 — Push (Sync-Back)
+## Step 5: Push (Sync-Back)
 
 ### 5a. Collect session results
 
@@ -255,7 +262,7 @@ Read the current session state to gather:
 4. **Commits** — git log for session commits
 
 ```bash
-SESSION=$("~/.claude/hoangsa/bin/hoangsa-cli" session latest)
+SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)
 ```
 
 Read `$SESSION_DIR/state.json` for task completion data.
@@ -490,3 +497,16 @@ During cook execution, when the cook workflow detects an `external_task` in stat
 - Pull mode saves context to `EXTERNAL-TASK.md` — this file is included in `/menu`'s research step
 - Push mode always previews before sending — never auto-posts without user confirmation
 - Comment format adapts to provider limitations (e.g., Jira uses wiki markup, GitHub uses markdown)
+
+---
+
+## Rules
+
+| Rule | Detail |
+|------|--------|
+| **Preview before sending** | Always show composed update before posting to task manager |
+| **Never auto-post** | User must confirm every push action |
+| **Idempotent sync** | Re-running /serve on already-synced tasks is safe |
+| **Save config on first setup** | Ask task manager once, save to config, never repeat |
+| **Partial failure handling** | Report which operations succeeded/failed, retry only failed ones |
+| **Adapt to provider** | Use provider-appropriate markup (Jira wiki, GitHub markdown, etc.) |

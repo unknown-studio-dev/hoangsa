@@ -1,28 +1,39 @@
 # Check Workflow
 
-Show the current session's task progress overview with wave structure and budget.
+You are the status reporter. Mission: show the current session's task progress overview with wave structure and budget.
+
+**Principles:** Read-only — never modify session state. Show all relevant info in one view. Adapt labels to user's language.
+
+---
 
 ## Step 0: Language enforcement
 
 ```bash
-LANG_PREF=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . lang)
+# Resolve HOANGSA install path (local preferred over global)
+if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
+  HOANGSA_ROOT="./.claude/hoangsa"
+else
+  HOANGSA_ROOT="$HOME/.claude/hoangsa"
+fi
+
+LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
 ```
 
 All user-facing text — status updates, reports, progress displays — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow.
 
 ---
 
-## Steps
-
-### 1. Locate active session
+## Step 1: Locate active session
 
 ```bash
-SESSION=$("~/.claude/hoangsa/bin/hoangsa-cli" session latest)
+SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)
 ```
 
 If `found: false` → inform the user that no active session was found and stop.
 
-### 2. Read plan.json
+---
+
+## Step 2: Read plan.json
 
 Read `$SESSION_DIR/plan.json` to load the task list, statuses, and budget.
 
@@ -32,10 +43,12 @@ If no plan.json exists, determine partial session state as follows:
 - If only `CONTEXT.md` exists → show session ID, status `researching`, and a brief context summary from CONTEXT.md.
 - If neither exists → inform user that the session has no artifacts yet.
 
-### 3. Compute waves and tally statuses
+---
+
+## Step 3: Compute waves and tally statuses
 
 ```bash
-WAVES=$("~/.claude/hoangsa/bin/hoangsa-cli" dag waves "$SESSION_DIR/plan.json")
+WAVES=$("$HOANGSA_ROOT/bin/hoangsa-cli" dag waves "$SESSION_DIR/plan.json")
 echo $WAVES
 ```
 
@@ -45,7 +58,9 @@ Tally tasks by status:
 - `pending` or absent status → pending
 - `failed` → failed
 
-### 4. Display overview
+---
+
+## Step 4: Display overview
 
 Print a summary using bilingual labels selected by `$LANG_PREF`. Use the appropriate column below:
 
@@ -102,7 +117,9 @@ Overall status is derived from the task statuses:
 - Any running → `cooking`
 - Otherwise → `planning`
 
-### 5. Show available specs (if present)
+---
+
+## Step 5: Show available artifacts
 
 List which artifacts exist in the session directory. Use `$LANG_PREF` to select the section header (`vi`: "Tài liệu", `en`: "Artifacts"):
 
@@ -115,3 +132,15 @@ Artifacts:
   ✅ plan.json
   ⬜ project-memory.json
 ```
+
+---
+
+## Rules
+
+| Rule | Detail |
+|------|--------|
+| **Read-only** | Never modify plan.json or session state |
+| **Single view** | Show all progress info in one consolidated output |
+| **Bilingual labels** | Use `$LANG_PREF` for all display text |
+| **Graceful partial state** | Handle sessions without plan.json (designing/researching) |
+| **Suggest next steps** | Always show relevant commands the user can run next |

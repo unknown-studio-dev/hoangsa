@@ -6,6 +6,7 @@ allowed-tools:
   - AskUserQuestion
 ---
 
+<output>
 <objective>
 Check for HOANGSA updates, install if available, and display what changed.
 
@@ -19,11 +20,14 @@ Routes to the update workflow which handles:
 </objective>
 
 <execution_context>
-@~/.claude/hoangsa/workflows/update.md
+Resolve HOANGSA install path — check local first, then global:
+1. `./.claude/hoangsa/workflows/update.md`
+2. `~/.claude/hoangsa/workflows/update.md`
+Read the first path that exists.
 </execution_context>
 
 <process>
-**Follow the update workflow** from `@~/.claude/hoangsa/workflows/update.md`.
+**Follow the update workflow** loaded above.
 
 The workflow handles all logic including:
 1. Installed version detection (local/global)
@@ -35,3 +39,5 @@ The workflow handles all logic including:
 7. Update execution
 8. Cache clearing
 </process>
+
+</output>

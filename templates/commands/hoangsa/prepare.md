@@ -9,6 +9,7 @@ allowed-tools:
   - AskUserQuestion
 ---
 
+<output>
 <objective>
 Decompose DESIGN-SPEC + TEST-SPEC into an executable plan.json with tasks, dependencies (DAG), budgets, and runnable acceptance commands.
 
@@ -16,9 +17,14 @@ Loads the latest session from `.hoangsa/sessions/`, validates specs, creates pla
 </objective>
 
 <execution_context>
-@~/.claude/hoangsa/workflows/prepare.md
+Resolve HOANGSA install path — check local first, then global:
+1. `./.claude/hoangsa/workflows/prepare.md`
+2. `~/.claude/hoangsa/workflows/prepare.md`
+Read the first path that exists.
 </execution_context>
 
 <process>
-Follow the prepare workflow from `@~/.claude/hoangsa/workflows/prepare.md`.
+Follow the prepare workflow loaded above.
 </process>
+
+</output>
