@@ -34,7 +34,7 @@ jobs:
             binary: hoangsa-cli
 
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-14
             use_cross: false
             npm_pkg: cli-darwin-x64
             binary: hoangsa-cli
@@ -110,6 +110,13 @@ jobs:
           pattern: "cli-*"
           path: npm/
           merge-multiple: false
+
+      - name: Place binaries in bin/
+        run: |
+          for pkg in npm/cli-*/; do
+            mkdir -p "$pkg/bin"
+            find "$pkg" -maxdepth 1 -name "hoangsa-cli*" -exec mv {} "$pkg/bin/" \;
+          done
 
       - name: Make binaries executable
         run: chmod +x npm/cli-linux-*/bin/hoangsa-cli npm/cli-darwin-*/bin/hoangsa-cli
