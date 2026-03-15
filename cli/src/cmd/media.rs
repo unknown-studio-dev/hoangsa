@@ -63,9 +63,12 @@ pub fn calculate_frame_interval(duration_secs: f64) -> (f64, u32) {
 
 // ── Format detection ─────────────────────────────────────────────────────────
 
+#[cfg(test)]
 const VIDEO_FORMATS: &[&str] = &["mp4", "mov", "webm", "avi", "mkv"];
+#[cfg(test)]
 const IMAGE_FORMATS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif"];
 
+#[cfg(test)]
 pub fn detect_media_type(path: &str) -> &'static str {
     let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
     if VIDEO_FORMATS.contains(&ext.as_str()) {

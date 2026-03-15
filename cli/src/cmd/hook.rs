@@ -145,7 +145,11 @@ pub fn cmd_tracker() {
     }
 
     // Only write .outdated if there are actual changed files tracked
-    if file_set.is_empty() {
+    // Exception: Bash commands that pass bash_likely_writes() should still
+    // mark the index as outdated even without specific file paths, since
+    // we know they likely modify files but can't determine which ones.
+    let is_bash_write = tool_name == "Bash";
+    if file_set.is_empty() && !is_bash_write {
         return;
     }
 
