@@ -1,6 +1,6 @@
 # HOANGSA
 
-> A lean 3-phase (menu → prepare → cook) context engineering system for Claude Code.
+> A context engineering system for Claude Code — split work into bounded tasks, each with a fresh context window.
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 ![npm version](https://img.shields.io/npm/v/hoangsa-cc.svg)
@@ -16,13 +16,16 @@ HOANGSA is a context engineering system for [Claude Code](https://docs.anthropic
 
 The fix is structural. HOANGSA splits work into discrete tasks. Each task runs in a fresh context window with only the files it actually needs. The result is consistent, high-quality output across arbitrarily large projects.
 
-The core pipeline has three phases:
+The core pipeline:
 
 | Phase | Command | Output |
 |-------|---------|--------|
 | Design | `/hoangsa:menu` | DESIGN-SPEC + TEST-SPEC |
 | Plan | `/hoangsa:prepare` | Executable task DAG (`plan.json`) |
 | Execute | `/hoangsa:cook` | Working code, wave by wave |
+| Test | `/hoangsa:taste` | Acceptance test results |
+| Commit | `/hoangsa:plate` | Conventional commit |
+| Review | `/hoangsa:ship` | Code + security review, push/PR |
 
 The orchestrator never writes code. It dispatches workers, each with a bounded context, and assembles results.
 
@@ -30,19 +33,29 @@ The orchestrator never writes code. It dispatches workers, each with a bounded c
 
 ## Features
 
-**Context Engineering** — Each worker task runs in a fresh context window. The plan's `context_pointers` tell each worker exactly which files to read — no more, no less. This is the core value proposition.
+**Context Engineering** — Each worker task runs in a fresh context window (200k tokens). The plan's `context_pointers` tell each worker exactly which files to read — no more, no less.
 
-**Spec-Driven Development** — Every feature starts with a DESIGN-SPEC (requirements, interfaces, acceptance criteria) and TEST-SPEC (test cases, coverage targets). Workers implement against specs, not vague instructions.
+**Spec-Driven Development** — Every feature starts with a DESIGN-SPEC and TEST-SPEC. Workers implement against specs, not vague instructions. Adaptive spec format for different task types (code, ops, infra, docs).
 
-**DAG-Based Execution** — Tasks are organized as a directed acyclic graph with dependency resolution. Independent tasks execute in parallel waves, dependent tasks execute sequentially. No unnecessary serialization.
+**DAG-Based Execution** — Tasks organized as a directed acyclic graph. Independent tasks execute in parallel waves, dependent tasks execute sequentially. No unnecessary serialization.
 
-**Cross-Layer Bug Tracing** — `/hoangsa:fix` spawns a research agent that traces bugs across FE/BE/API/DB boundaries. A frontend bug might originate in a backend API contract — HOANGSA finds the real root cause before touching any code.
+**3-Tier Verification** — Each task goes through static analysis, behavioral tests (x3), and semantic review against spec before proceeding.
+
+**Cross-Layer Bug Tracing** — `/hoangsa:fix` traces bugs across FE/BE/API/DB boundaries to find the real root cause before touching any code.
+
+**Pre-Ship Review Gates** — `/hoangsa:ship` runs code quality and security reviews in parallel, blocks on critical issues, and handles push or PR creation.
 
 **8-Dimension Codebase Audit** — `/hoangsa:audit` scans for code smells, security vulnerabilities, performance bottlenecks, tech debt, test coverage gaps, dependency risks, architectural violations, and documentation gaps.
 
-**Task Manager Integration** — Paste a task link (ClickUp, Asana) anywhere in the workflow. HOANGSA pulls task details as context and syncs results back (status updates, comments, reports) after work completes.
+**Task Manager Integration** — Bidirectional sync with ClickUp and Asana. Pull task details as context, push status/comments/reports back after work completes.
 
-**GitNexus Code Intelligence** — Built-in call graph analysis. Run impact analysis before any edit, perform safe renames across the entire codebase, and trace full execution flows from entry point to leaf function.
+**GitNexus Code Intelligence** — Built-in call graph analysis. Impact analysis before edits, safe renames across the codebase, and full execution flow tracing.
+
+**Visual Debugging** — Analyze screenshots and screen recordings. Extract frames from video, generate montages, and overlay diffs to spot visual regressions.
+
+**Git Flow Management** — Built-in skill for task branching: start, switch, park, resume, finish, cleanup, sync. Auto-detects branching strategy and naming conventions.
+
+**Framework-Specific Worker Rules** — 15 framework addons (React, Next.js, Vue, Svelte, Angular, Express, NestJS, Go, Rust, Python, Java, Swift, Flutter, TypeScript, JavaScript) tune worker behavior per tech stack.
 
 **Multi-Profile Model Selection** — Switch between quality, balanced, and budget model profiles to match task requirements and cost constraints.
 
@@ -88,6 +101,12 @@ npx hoangsa-cc --config-dir <path>
 | `--uninstall` | `-u` | Remove HOANGSA |
 | `--config-dir` | | Use a custom config directory path |
 
+The installer also sets up:
+- Lifecycle hooks (statusline, context monitor, update checker, GitNexus tracker)
+- GitNexus MCP server for code intelligence
+- Task manager MCP integration (if configured)
+- Quality gate skills (silent-failure-hunter, pr-test-analyzer, comment-analyzer, type-design-analyzer)
+
 ---
 
 ## Workflow
@@ -98,6 +117,7 @@ idea  →  /menu      Design    →  DESIGN-SPEC + TEST-SPEC
       →  /cook      Execute   →  Wave-by-wave, fresh context per task
       →  /taste     Test      →  Acceptance tests per task
       →  /plate     Commit    →  Conventional commit message
+      →  /ship      Review    →  Code + security gates, push/PR
       →  /serve     Sync      →  Bidirectional task manager sync
 ```
 
@@ -105,11 +125,13 @@ idea  →  /menu      Design    →  DESIGN-SPEC + TEST-SPEC
 
 **Plan (`/prepare`)** — Parse the specs and generate `plan.json`: a DAG of tasks, each with an assigned worker, bounded file list (`context_pointers`), and explicit dependency edges.
 
-**Execute (`/cook`)** — Walk the DAG wave by wave. Dispatch each worker with its context. Independent tasks in the same wave can run in parallel. Aggregate results before advancing.
+**Execute (`/cook`)** — Walk the DAG wave by wave. Dispatch each worker with its context. Independent tasks in the same wave run in parallel. Each completed task goes through an auto-simplify pass before advancing.
 
-**Test (`/taste`)** — Run the acceptance tests defined in TEST-SPEC. Report pass/fail per task. Block the pipeline on failures.
+**Test (`/taste`)** — Run the acceptance tests defined in TEST-SPEC. Report pass/fail per task. Block the pipeline on failures, delegate fixes to `/hoangsa:fix`.
 
 **Commit (`/plate`)** — Stage changes and generate a conventional commit message from the completed work.
+
+**Review (`/ship`)** — Launch parallel code quality and security review agents. Block on critical/high issues. User decides: fix, override, or cancel. On pass, push and/or create PR with review summary.
 
 **Sync (`/serve`)** — Push status updates, comments, and artifacts back to the linked task manager.
 
@@ -126,6 +148,7 @@ idea  →  /menu      Design    →  DESIGN-SPEC + TEST-SPEC
 | `/hoangsa:cook` | Execute — wave-by-wave with fresh context per task |
 | `/hoangsa:taste` | Test — run acceptance tests per task |
 | `/hoangsa:plate` | Commit — generate and apply a conventional commit message |
+| `/hoangsa:ship` | Ship — code + security review, then push or create PR |
 | `/hoangsa:serve` | Sync — bidirectional sync with connected task manager |
 
 ### Specialized
@@ -145,6 +168,24 @@ idea  →  /menu      Design    →  DESIGN-SPEC + TEST-SPEC
 | `/hoangsa:index` | Index — rebuild GitNexus code intelligence graph |
 | `/hoangsa:update` | Update — upgrade HOANGSA to the latest version |
 | `/hoangsa:help` | Help — show all available commands |
+
+---
+
+## Skills
+
+HOANGSA includes built-in skills that extend Claude Code's capabilities:
+
+### Git Flow
+
+Task-oriented git workflow management. Start a task branch, park work-in-progress, switch between tasks, and finish with push + PR — all with dirty-state guards and auto-detection of your branching strategy.
+
+Flows: `start` | `switch` | `park` | `resume` | `finish` | `cleanup` | `sync`
+
+### Visual Debug
+
+Analyze screenshots and screen recordings to debug visual issues. Extracts frames from video files, generates montage grids for overview, and creates diff overlays to highlight changes between frames.
+
+Supports: `.png`, `.jpg`, `.webp`, `.gif`, `.mp4`, `.mov`, `.webm`, `.avi`, `.mkv`
 
 ---
 
@@ -172,8 +213,9 @@ HOANGSA stores project configuration in `.hoangsa/config.json`.
 |-----|--------|-------------|
 | `lang` | `en`, `vi` | Language for orchestrator output |
 | `spec_lang` | `en`, `vi` | Language for generated specs |
-| `tech_stack` | array | Project technology stack (used to tune worker instructions) |
+| `tech_stack` | array | Project technology stack (used to select worker rule addons) |
 | `review_style` | `strict`, `balanced`, `light` | Code review thoroughness |
+| `interaction_level` | `minimal`, `standard`, `detailed` | How much the orchestrator asks |
 
 ### Model Profiles
 
@@ -206,31 +248,55 @@ HOANGSA fetches task details as additional context and writes results back on `/
 hoangsa/
 ├── cli/                        # Rust CLI (hoangsa-cli)
 │   └── src/
-│       ├── cmd/                # 13 command modules
+│       ├── cmd/                # Command modules
+│       │   ├── commit.rs       # Atomic commit
 │       │   ├── config.rs       # Config read/write
 │       │   ├── context.rs      # Context pointer resolution
 │       │   ├── dag.rs          # DAG traversal and wave scheduling
-│       │   ├── hook.rs         # Lifecycle hooks
+│       │   ├── hook.rs         # Lifecycle hooks (statusline, context-monitor, tracker)
+│       │   ├── media.rs        # Video/image probing, frame extraction, montage
 │       │   ├── memory.rs       # Session memory
-│       │   ├── model.rs        # Model profile management
+│       │   ├── model.rs        # Model profile & role resolution
 │       │   ├── pref.rs         # User preferences
 │       │   ├── session.rs      # Session create/resume/list
 │       │   ├── state.rs        # Task state machine
-│       │   ├── validate.rs     # Plan validation
+│       │   ├── validate.rs     # Plan/spec validation
 │       │   └── verify.rs       # Installation verification
+│       ├── helpers.rs          # Shared utilities
 │       └── main.rs
 ├── templates/
-│   ├── commands/hoangsa/       # 14 slash command definitions
-│   └── workflows/              # Detailed workflow implementations
-│       ├── menu.md             # Design workflow
-│       ├── cook.md             # Execution workflow
-│       ├── fix.md              # Hotfix workflow
-│       ├── audit.md            # Audit workflow
-│       ├── research.md         # Research workflow
-│       ├── update.md           # Update workflow
-│       └── worker-rules.md     # Worker behavior rules
+│   ├── commands/hoangsa/       # 15 slash command definitions
+│   ├── workflows/              # Workflow implementations
+│   │   ├── menu.md             # Design workflow
+│   │   ├── prepare.md          # Planning workflow
+│   │   ├── cook.md             # Execution workflow
+│   │   ├── taste.md            # Test workflow
+│   │   ├── plate.md            # Commit workflow
+│   │   ├── ship.md             # Review & ship workflow
+│   │   ├── fix.md              # Hotfix workflow
+│   │   ├── audit.md            # Audit workflow
+│   │   ├── research.md         # Research workflow
+│   │   ├── serve.md            # Task manager sync
+│   │   ├── init.md             # Project setup
+│   │   ├── update.md           # Update workflow
+│   │   ├── git-context.md      # Shared: git state detection
+│   │   ├── task-link.md        # Shared: task URL parsing
+│   │   └── worker-rules/       # Worker behavior rules
+│   │       ├── base.md         # Common patterns
+│   │       └── addons/         # 15 framework-specific addons
+│   └── skills/                 # Skill definitions
+│       └── hoangsa/
+│           ├── git-flow/       # Git workflow management
+│           └── visual-debug/   # Screenshot & video analysis
 ├── bin/
 │   └── install                 # Node.js installer script
+├── npm/                        # Platform-specific binary packages
+│   ├── cli-darwin-arm64/
+│   ├── cli-darwin-x64/
+│   ├── cli-linux-arm64/
+│   ├── cli-linux-x64/
+│   ├── cli-linux-x64-musl/
+│   └── cli-windows-x64/
 ├── package.json
 └── .hoangsa/                   # Project-local config and sessions
     ├── config.json
@@ -241,10 +307,27 @@ hoangsa/
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| CLI | Rust | Session management, DAG traversal, state machine, validation |
-| Installer | Node.js | Package distribution, slash command registration |
-| Code Intelligence | GitNexus MCP | Call graph, impact analysis, safe rename |
+| CLI | Rust | Session management, DAG traversal, state machine, validation, media analysis, hooks |
+| Installer | Node.js | Package distribution, slash command registration, hook setup |
+| Code Intelligence | GitNexus MCP | Call graph, impact analysis, safe rename, execution flow tracing |
 | AI Runtime | Claude Code | Orchestrator + worker execution |
+
+### Hooks
+
+HOANGSA installs lifecycle hooks into Claude Code:
+
+| Hook | Event | Purpose |
+|------|-------|---------|
+| Statusline | `SessionStart` | Display session info, token usage, project context |
+| Context Monitor | `PostToolUse` | Track context window usage, warn on high utilization |
+| GitNexus Tracker | `PostToolUse` | Track file modifications for index freshness |
+| Update Checker | `SessionStart` | Notify when a new HOANGSA version is available |
+
+### Worker Rules & Framework Addons
+
+Workers receive framework-specific guidance based on your `tech_stack` configuration. Available addons:
+
+Angular, Express.js, Flutter, Go, Java, JavaScript, NestJS, Next.js, Python, React, Rust, Svelte, Swift, TypeScript, Vue
 
 ### How to Contribute
 
@@ -253,6 +336,7 @@ hoangsa/
 3. Run `npm test` to verify the installation
 4. Slash command definitions live in `templates/commands/hoangsa/` — each is a Markdown file with YAML frontmatter
 5. Workflow logic lives in `templates/workflows/` — plain Markdown instructions for the AI
+6. Worker rule addons live in `templates/workflows/worker-rules/addons/`
 
 ---
 
@@ -267,15 +351,26 @@ hoangsa/
 
 - GitNexus MCP (call graphs, impact analysis, execution flow tracing, safe rename)
 
+### Quality Gate Skills
+
+Optionally installed during setup:
+
+- **silent-failure-hunter** — Identifies swallowed errors and inadequate error handling
+- **pr-test-analyzer** — Analyzes test coverage quality and completeness
+- **comment-analyzer** — Checks comment accuracy and documentation gaps
+- **type-design-analyzer** — Reviews type design for encapsulation and invariants
+
 ### Language & Framework Support
 
-HOANGSA is language-agnostic. The worker-rules system has been tested with:
+HOANGSA is language-agnostic. The worker-rules system has addons for:
 
-- JavaScript / TypeScript (React, Next.js, Node.js, Bun)
+- JavaScript / TypeScript (React, Next.js, Vue, Svelte, Angular, Express, NestJS)
 - Rust
 - Python (FastAPI, Django)
 - Go
 - Java / Kotlin (Spring)
+- Swift / Flutter
+- And more via the base rules
 
 ---
 

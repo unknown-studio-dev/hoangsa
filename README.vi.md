@@ -1,8 +1,8 @@
-🇬🇧 [English](README.md)
+[English](README.md)
 
 # HOANGSA
 
-> Hệ thống context engineering 3 giai đoạn (menu → prepare → cook) gọn nhẹ dành cho Claude Code.
+> He thong context engineering cho Claude Code — chia cong viec thanh cac task co gioi han, moi task chay trong context window moi.
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 ![npm version](https://img.shields.io/npm/v/hoangsa-cc.svg)
@@ -12,147 +12,188 @@
 
 ---
 
-## HOANGSA là gì?
+## HOANGSA la gi?
 
-HOANGSA là hệ thống context engineering dành cho [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Nó giải quyết một vấn đề căn bản: **chất lượng output của Claude giảm dần khi context window bị lấp đầy.**
+HOANGSA la he thong context engineering danh cho [Claude Code](https://docs.anthropic.com/en/docs/claude-code). No giai quyet mot van de can ban: **chat luong output cua Claude giam dan khi context window bi lap day.**
 
-Giải pháp mang tính cấu trúc. HOANGSA chia công việc thành các task riêng biệt. Mỗi task chạy trong một context window mới với chỉ những file thực sự cần thiết. Kết quả là output nhất quán, chất lượng cao trên các dự án có quy mô tùy ý.
+Giai phap mang tinh cau truc. HOANGSA chia cong viec thanh cac task rieng biet. Moi task chay trong mot context window moi voi chi nhung file thuc su can thiet. Ket qua la output nhat quan, chat luong cao tren cac du an co quy mo tuy y.
 
-Pipeline cốt lõi gồm ba giai đoạn:
+Pipeline cot loi:
 
-| Giai đoạn | Lệnh | Kết quả |
+| Giai doan | Lenh | Ket qua |
 |-----------|------|---------|
-| Thiết kế | `/hoangsa:menu` | DESIGN-SPEC + TEST-SPEC |
-| Lập kế hoạch | `/hoangsa:prepare` | DAG task thực thi được (`plan.json`) |
-| Thực thi | `/hoangsa:cook` | Code hoàn chỉnh, từng wave một |
+| Thiet ke | `/hoangsa:menu` | DESIGN-SPEC + TEST-SPEC |
+| Lap ke hoach | `/hoangsa:prepare` | DAG task thuc thi duoc (`plan.json`) |
+| Thuc thi | `/hoangsa:cook` | Code hoan chinh, tung wave mot |
+| Kiem tra | `/hoangsa:taste` | Ket qua acceptance test |
+| Commit | `/hoangsa:plate` | Conventional commit |
+| Review | `/hoangsa:ship` | Review code + bao mat, push/PR |
 
-Orchestrator không bao giờ viết code. Nó dispatch các worker, mỗi worker có context giới hạn, và tổng hợp kết quả lại.
-
----
-
-## Tính năng
-
-**Context Engineering** — Mỗi worker task chạy trong context window mới. `context_pointers` trong plan chỉ định chính xác file nào cần đọc — không thừa, không thiếu. Đây là giá trị cốt lõi.
-
-**Phát triển dựa trên Spec** — Mỗi tính năng bắt đầu với DESIGN-SPEC (requirements, interfaces, acceptance criteria) và TEST-SPEC (test cases, coverage targets). Các worker implement theo spec, không phải theo hướng dẫn mơ hồ.
-
-**Thực thi theo DAG** — Các task được tổ chức dưới dạng đồ thị có hướng không chu trình với giải quyết phụ thuộc. Các task độc lập thực thi song song theo wave, các task phụ thuộc thực thi tuần tự. Không có serialization không cần thiết.
-
-**Truy vết Bug Xuyên Tầng** — `/hoangsa:fix` spawn một research agent truy vết bug qua các ranh giới FE/BE/API/DB. Một bug frontend có thể xuất phát từ một API contract phía backend — HOANGSA tìm đúng nguyên nhân gốc rễ trước khi động vào bất kỳ dòng code nào.
-
-**Audit Codebase 8 Chiều** — `/hoangsa:audit` quét code smells, lỗ hổng bảo mật, bottleneck hiệu năng, tech debt, khoảng trống test coverage, rủi ro dependency, vi phạm kiến trúc, và thiếu hụt tài liệu.
-
-**Tích hợp Task Manager** — Dán link task (ClickUp, Asana) bất kỳ đâu trong workflow. HOANGSA kéo thông tin task làm context bổ sung và đồng bộ kết quả ngược lại (cập nhật trạng thái, bình luận, báo cáo) sau khi công việc hoàn thành.
-
-**GitNexus Code Intelligence** — Phân tích call graph tích hợp sẵn. Chạy impact analysis trước mỗi lần sửa, đổi tên an toàn trên toàn bộ codebase, và truy vết toàn bộ execution flow từ entry point đến hàm lá.
-
-**Chọn Model Đa Profile** — Chuyển đổi giữa các profile quality, balanced, và budget để phù hợp với yêu cầu task và ràng buộc chi phí.
+Orchestrator khong bao gio viet code. No dispatch cac worker, moi worker co context gioi han, va tong hop ket qua lai.
 
 ---
 
-## Bắt đầu nhanh
+## Tinh nang
+
+**Context Engineering** — Moi worker task chay trong context window moi (200k tokens). `context_pointers` trong plan chi dinh chinh xac file nao can doc — khong thua, khong thieu.
+
+**Phat trien dua tren Spec** — Moi tinh nang bat dau voi DESIGN-SPEC va TEST-SPEC. Cac worker implement theo spec, khong phai theo huong dan mo ho. Format spec tu dong dieu chinh theo loai task (code, ops, infra, docs).
+
+**Thuc thi theo DAG** — Cac task duoc to chuc duoi dang do thi co huong khong chu trinh. Cac task doc lap thuc thi song song theo wave, cac task phu thuoc thuc thi tuan tu.
+
+**Kiem tra 3 tang** — Moi task di qua static analysis, behavioral tests (x3), va semantic review so voi spec truoc khi tien tiep.
+
+**Truy vet Bug Xuyen Tang** — `/hoangsa:fix` truy vet bug qua cac ranh gioi FE/BE/API/DB de tim dung nguyen nhan goc re truoc khi dong vao code.
+
+**Cong Review Truoc Khi Ship** — `/hoangsa:ship` chay code quality va security review song song, chan khi co van de nghiem trong, va xu ly push hoac tao PR.
+
+**Audit Codebase 8 Chieu** — `/hoangsa:audit` quet code smells, lo hong bao mat, bottleneck hieu nang, tech debt, khoang trong test coverage, rui ro dependency, vi pham kien truc, va thieu hut tai lieu.
+
+**Tich hop Task Manager** — Dong bo hai chieu voi ClickUp va Asana. Keo thong tin task lam context bo sung va day ket qua nguoc lai sau khi cong viec hoan thanh.
+
+**GitNexus Code Intelligence** — Phan tich call graph tich hop san. Impact analysis truoc moi lan sua, doi ten an toan tren toan bo codebase, va truy vet toan bo execution flow.
+
+**Debug Truc Quan** — Phan tich screenshot va screen recording. Trich xuat frame tu video, tao montage grid, va overlay diff de phat hien regression truc quan.
+
+**Quan ly Git Flow** — Skill tich hop cho task branching: start, switch, park, resume, finish, cleanup, sync. Tu dong nhan dien branching strategy va naming convention.
+
+**Worker Rules Theo Framework** — 15 addon framework (React, Next.js, Vue, Svelte, Angular, Express, NestJS, Go, Rust, Python, Java, Swift, Flutter, TypeScript, JavaScript) tinh chinh hanh vi worker theo tech stack.
+
+**Chon Model Da Profile** — Chuyen doi giua cac profile quality, balanced, va budget de phu hop voi yeu cau task va rang buoc chi phi.
+
+---
+
+## Bat dau nhanh
 
 ```bash
-npx hoangsa-cc          # Cài HOANGSA vào môi trường Claude Code
-/hoangsa:init           # Khởi tạo project — phát hiện codebase, cài đặt preferences
-/hoangsa:menu           # Thiết kế task đầu tiên của bạn
+npx hoangsa-cc          # Cai HOANGSA vao moi truong Claude Code
+/hoangsa:init           # Khoi tao project — phat hien codebase, cai dat preferences
+/hoangsa:menu           # Thiet ke task dau tien cua ban
 ```
 
-Sau khi `/hoangsa:menu` hoàn thành, tiếp tục với `/hoangsa:prepare` để tạo plan, rồi `/hoangsa:cook` để thực thi.
+Sau khi `/hoangsa:menu` hoan thanh, tiep tuc voi `/hoangsa:prepare` de tao plan, roi `/hoangsa:cook` de thuc thi.
 
 ---
 
-## Cài đặt
+## Cai dat
 
-Yêu cầu: **Node.js 18+** và **[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)**
+Yeu cau: **Node.js 18+** va **[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)**
 
 ```bash
-# Tương tác — hỏi cài global hay local
+# Tuong tac — hoi cai global hay local
 npx hoangsa-cc
 
-# Cài vào ~/.claude/ — dùng được ở mọi project
+# Cai vao ~/.claude/ — dung duoc o moi project
 npx hoangsa-cc --global
 
-# Cài vào .claude/ — chỉ project này
+# Cai vao .claude/ — chi project nay
 npx hoangsa-cc --local
 
-# Gỡ HOANGSA
+# Go HOANGSA
 npx hoangsa-cc --uninstall
 
-# Cài vào thư mục config tùy chỉnh
+# Cai vao thu muc config tuy chinh
 npx hoangsa-cc --config-dir <path>
 ```
 
-| Flag | Viết tắt | Mô tả |
+| Flag | Viet tat | Mo ta |
 |------|----------|-------|
-| `--global` | `-g` | Cài vào `~/.claude/` (tất cả projects) |
-| `--local` | `-l` | Cài vào `.claude/` (chỉ project này) |
-| `--uninstall` | `-u` | Gỡ HOANGSA |
-| `--config-dir` | | Sử dụng đường dẫn thư mục config tùy chỉnh |
+| `--global` | `-g` | Cai vao `~/.claude/` (tat ca projects) |
+| `--local` | `-l` | Cai vao `.claude/` (chi project nay) |
+| `--uninstall` | `-u` | Go HOANGSA |
+| `--config-dir` | | Su dung duong dan thu muc config tuy chinh |
+
+Installer cung cai dat:
+- Lifecycle hooks (statusline, context monitor, update checker, GitNexus tracker)
+- GitNexus MCP server cho code intelligence
+- Tich hop task manager MCP (neu cau hinh)
+- Quality gate skills (silent-failure-hunter, pr-test-analyzer, comment-analyzer, type-design-analyzer)
 
 ---
 
-## Quy trình
+## Quy trinh
 
 ```
-ý tưởng  →  /menu      Thiết kế  →  DESIGN-SPEC + TEST-SPEC
-         →  /prepare   Lập kế hoạch  →  DAG task thực thi được (plan.json)
-         →  /cook      Thực thi  →  Từng wave, context mới cho mỗi task
-         →  /taste     Kiểm tra  →  Acceptance tests từng task
-         →  /plate     Commit    →  Conventional commit message
-         →  /serve     Đồng bộ   →  Sync hai chiều với task manager
+y tuong  →  /menu      Thiet ke    →  DESIGN-SPEC + TEST-SPEC
+         →  /prepare   Lap ke hoach →  DAG task thuc thi duoc (plan.json)
+         →  /cook      Thuc thi    →  Tung wave, context moi cho moi task
+         →  /taste     Kiem tra    →  Acceptance tests tung task
+         →  /plate     Commit      →  Conventional commit message
+         →  /ship      Review      →  Cong code + bao mat, push/PR
+         →  /serve     Dong bo     →  Sync hai chieu voi task manager
 ```
 
-**Thiết kế (`/menu`)** — Phỏng vấn người dùng về requirements. Tạo ra DESIGN-SPEC có cấu trúc với interfaces và acceptance criteria, cùng TEST-SPEC với test cases và coverage targets.
+**Thiet ke (`/menu`)** — Phong van nguoi dung ve requirements. Tao ra DESIGN-SPEC co cau truc voi interfaces va acceptance criteria, cung TEST-SPEC voi test cases va coverage targets.
 
-**Lập kế hoạch (`/prepare`)** — Phân tích specs và tạo `plan.json`: một DAG các task, mỗi task được gán worker, danh sách file giới hạn (`context_pointers`), và các cạnh dependency tường minh.
+**Lap ke hoach (`/prepare`)** — Phan tich specs va tao `plan.json`: mot DAG cac task, moi task duoc gan worker, danh sach file gioi han (`context_pointers`), va cac canh dependency tuong minh.
 
-**Thực thi (`/cook`)** — Đi qua DAG từng wave. Dispatch mỗi worker cùng context của nó. Các task độc lập trong cùng wave có thể chạy song song. Tổng hợp kết quả trước khi tiến sang wave tiếp theo.
+**Thuc thi (`/cook`)** — Di qua DAG tung wave. Dispatch moi worker cung context cua no. Cac task doc lap trong cung wave chay song song. Moi task hoan thanh di qua auto-simplify pass truoc khi tien tiep.
 
-**Kiểm tra (`/taste`)** — Chạy các acceptance tests được định nghĩa trong TEST-SPEC. Báo cáo pass/fail từng task. Chặn pipeline khi có lỗi.
+**Kiem tra (`/taste`)** — Chay cac acceptance tests dinh nghia trong TEST-SPEC. Bao cao pass/fail tung task. Chan pipeline khi co loi, uy quyen fix cho `/hoangsa:fix`.
 
-**Commit (`/plate`)** — Stage các thay đổi và tạo conventional commit message từ công việc đã hoàn thành.
+**Commit (`/plate`)** — Stage cac thay doi va tao conventional commit message tu cong viec da hoan thanh.
 
-**Đồng bộ (`/serve`)** — Đẩy cập nhật trạng thái, bình luận, và artifacts về task manager được kết nối.
+**Review (`/ship`)** — Chay song song code quality va security review. Chan khi co van de critical/high. Nguoi dung quyet dinh: fix, override, hoac huy. Khi pass, push va/hoac tao PR voi review summary.
 
----
-
-## Lệnh
-
-### Quy trình cốt lõi
-
-| Lệnh | Mô tả |
-|------|-------|
-| `/hoangsa:menu` | Thiết kế — từ ý tưởng đến DESIGN-SPEC + TEST-SPEC |
-| `/hoangsa:prepare` | Lập kế hoạch — chuyển specs thành DAG task thực thi được |
-| `/hoangsa:cook` | Thực thi — từng wave với context mới cho mỗi task |
-| `/hoangsa:taste` | Kiểm tra — chạy acceptance tests từng task |
-| `/hoangsa:plate` | Commit — tạo và áp dụng conventional commit message |
-| `/hoangsa:serve` | Đồng bộ — sync hai chiều với task manager được kết nối |
-
-### Chuyên biệt
-
-| Lệnh | Mô tả |
-|------|-------|
-| `/hoangsa:fix` | Hotfix — truy vết root cause xuyên tầng + fix gọn có mục tiêu |
-| `/hoangsa:audit` | Audit — quét codebase 8 chiều (bảo mật, tech debt, coverage, v.v.) |
-| `/hoangsa:research` | Research — phân tích codebase kết hợp nghiên cứu bên ngoài |
-
-### Tiện ích
-
-| Lệnh | Mô tả |
-|------|-------|
-| `/hoangsa:init` | Khởi tạo — phát hiện codebase, cấu hình preferences, thiết lập lần đầu |
-| `/hoangsa:check` | Trạng thái — hiển thị tiến độ session hiện tại và các task đang chờ |
-| `/hoangsa:index` | Index — xây dựng lại đồ thị code intelligence GitNexus |
-| `/hoangsa:update` | Cập nhật — nâng cấp HOANGSA lên phiên bản mới nhất |
-| `/hoangsa:help` | Trợ giúp — hiển thị tất cả lệnh có sẵn |
+**Dong bo (`/serve`)** — Day cap nhat trang thai, binh luan, va artifacts ve task manager duoc ket noi.
 
 ---
 
-## Cấu hình
+## Lenh
 
-HOANGSA lưu cấu hình project trong `.hoangsa/config.json`.
+### Quy trinh cot loi
+
+| Lenh | Mo ta |
+|------|-------|
+| `/hoangsa:menu` | Thiet ke — tu y tuong den DESIGN-SPEC + TEST-SPEC |
+| `/hoangsa:prepare` | Lap ke hoach — chuyen specs thanh DAG task thuc thi duoc |
+| `/hoangsa:cook` | Thuc thi — tung wave voi context moi cho moi task |
+| `/hoangsa:taste` | Kiem tra — chay acceptance tests tung task |
+| `/hoangsa:plate` | Commit — tao va ap dung conventional commit message |
+| `/hoangsa:ship` | Ship — review code + bao mat, roi push hoac tao PR |
+| `/hoangsa:serve` | Dong bo — sync hai chieu voi task manager duoc ket noi |
+
+### Chuyen biet
+
+| Lenh | Mo ta |
+|------|-------|
+| `/hoangsa:fix` | Hotfix — truy vet root cause xuyen tang + fix gon co muc tieu |
+| `/hoangsa:audit` | Audit — quet codebase 8 chieu (bao mat, tech debt, coverage, v.v.) |
+| `/hoangsa:research` | Research — phan tich codebase ket hop nghien cuu ben ngoai |
+
+### Tien ich
+
+| Lenh | Mo ta |
+|------|-------|
+| `/hoangsa:init` | Khoi tao — phat hien codebase, cau hinh preferences, thiet lap lan dau |
+| `/hoangsa:check` | Trang thai — hien thi tien do session hien tai va cac task dang cho |
+| `/hoangsa:index` | Index — xay dung lai do thi code intelligence GitNexus |
+| `/hoangsa:update` | Cap nhat — nang cap HOANGSA len phien ban moi nhat |
+| `/hoangsa:help` | Tro giup — hien thi tat ca lenh co san |
+
+---
+
+## Skills
+
+HOANGSA bao gom cac skills tich hop san mo rong kha nang cua Claude Code:
+
+### Git Flow
+
+Quan ly git workflow theo task. Tao branch cho task, park cong viec dang lam do, chuyen doi giua cac task, va ket thuc voi push + PR — tat ca co dirty-state guards va tu dong nhan dien branching strategy.
+
+Flows: `start` | `switch` | `park` | `resume` | `finish` | `cleanup` | `sync`
+
+### Visual Debug
+
+Phan tich screenshot va screen recording de debug van de truc quan. Trich xuat frame tu file video, tao montage grid de tong quan, va tao diff overlay de highlight thay doi giua cac frame.
+
+Ho tro: `.png`, `.jpg`, `.webp`, `.gif`, `.mp4`, `.mov`, `.webm`, `.avi`, `.mkv`
+
+---
+
+## Cau hinh
+
+HOANGSA luu cau hinh project trong `.hoangsa/config.json`.
 
 ```json
 {
@@ -170,16 +211,17 @@ HOANGSA lưu cấu hình project trong `.hoangsa/config.json`.
 
 ### Preferences
 
-| Khóa | Giá trị | Mô tả |
+| Khoa | Gia tri | Mo ta |
 |------|---------|-------|
-| `lang` | `en`, `vi` | Ngôn ngữ cho output của orchestrator |
-| `spec_lang` | `en`, `vi` | Ngôn ngữ cho các spec được tạo ra |
-| `tech_stack` | array | Tech stack của project (dùng để tinh chỉnh hướng dẫn worker) |
-| `review_style` | `strict`, `balanced`, `light` | Mức độ kỹ lưỡng khi review code |
+| `lang` | `en`, `vi` | Ngon ngu cho output cua orchestrator |
+| `spec_lang` | `en`, `vi` | Ngon ngu cho cac spec duoc tao ra |
+| `tech_stack` | array | Tech stack cua project (dung de chon worker rule addons) |
+| `review_style` | `strict`, `balanced`, `light` | Muc do ky luong khi review code |
+| `interaction_level` | `minimal`, `standard`, `detailed` | Muc do orchestrator hoi |
 
 ### Model Profiles
 
-Chọn profile để kiểm soát model được dùng ở mỗi vai trò:
+Chon profile de kiem soat model duoc dung o moi vai tro:
 
 | Profile | Worker | Designer | Reviewer |
 |---------|--------|----------|----------|
@@ -187,78 +229,120 @@ Chọn profile để kiểm soát model được dùng ở mỗi vai trò:
 | `balanced` | claude-sonnet | claude-opus | claude-sonnet |
 | `budget` | claude-haiku | claude-sonnet | claude-haiku |
 
-Chuyển đổi profile bằng `/hoangsa:init` hoặc sửa `model_profile` trong `config.json`.
+Chuyen doi profile bang `/hoangsa:init` hoac sua `model_profile` trong `config.json`.
 
-### Tích hợp Task Manager
+### Tich hop Task Manager
 
-| Provider | Cách kết nối |
+| Provider | Cach ket noi |
 |----------|-------------|
-| ClickUp | Dán URL ClickUp task |
-| Asana | Dán URL Asana task |
+| ClickUp | Dan URL ClickUp task |
+| Asana | Dan URL Asana task |
 
-HOANGSA kéo thông tin task làm context bổ sung và ghi kết quả về khi chạy `/hoangsa:serve`.
+HOANGSA keo thong tin task lam context bo sung va ghi ket qua ve khi chay `/hoangsa:serve`.
 
 ---
 
-## Kiến trúc
+## Kien truc
 
-### Cấu trúc Project
+### Cau truc Project
 
 ```
 hoangsa/
 ├── cli/                        # Rust CLI (hoangsa-cli)
 │   └── src/
-│       ├── cmd/                # 13 command modules
-│       │   ├── config.rs       # Đọc/ghi config
-│       │   ├── context.rs      # Phân giải context pointer
-│       │   ├── dag.rs          # Duyệt DAG và lên lịch wave
-│       │   ├── hook.rs         # Lifecycle hooks
-│       │   ├── memory.rs       # Bộ nhớ session
-│       │   ├── model.rs        # Quản lý model profile
-│       │   ├── pref.rs         # Preferences người dùng
-│       │   ├── session.rs      # Tạo/tiếp tục/liệt kê session
+│       ├── cmd/                # Command modules
+│       │   ├── commit.rs       # Atomic commit
+│       │   ├── config.rs       # Doc/ghi config
+│       │   ├── context.rs      # Phan giai context pointer
+│       │   ├── dag.rs          # Duyet DAG va len lich wave
+│       │   ├── hook.rs         # Lifecycle hooks (statusline, context-monitor, tracker)
+│       │   ├── media.rs        # Video/image probing, trich xuat frame, montage
+│       │   ├── memory.rs       # Bo nho session
+│       │   ├── model.rs        # Model profile & role resolution
+│       │   ├── pref.rs         # Preferences nguoi dung
+│       │   ├── session.rs      # Tao/tiep tuc/liet ke session
 │       │   ├── state.rs        # State machine task
-│       │   ├── validate.rs     # Kiểm tra tính hợp lệ của plan
-│       │   └── verify.rs       # Xác minh cài đặt
+│       │   ├── validate.rs     # Kiem tra tinh hop le plan/spec
+│       │   └── verify.rs       # Xac minh cai dat
+│       ├── helpers.rs          # Shared utilities
 │       └── main.rs
 ├── templates/
-│   ├── commands/hoangsa/       # 14 định nghĩa slash command
-│   └── workflows/              # Triển khai workflow chi tiết
-│       ├── menu.md             # Workflow thiết kế
-│       ├── cook.md             # Workflow thực thi
-│       ├── fix.md              # Workflow hotfix
-│       ├── audit.md            # Workflow audit
-│       ├── research.md         # Workflow research
-│       ├── update.md           # Workflow cập nhật
-│       └── worker-rules.md     # Quy tắc hành vi worker
+│   ├── commands/hoangsa/       # 15 dinh nghia slash command
+│   ├── workflows/              # Trien khai workflow
+│   │   ├── menu.md             # Workflow thiet ke
+│   │   ├── prepare.md          # Workflow lap ke hoach
+│   │   ├── cook.md             # Workflow thuc thi
+│   │   ├── taste.md            # Workflow kiem tra
+│   │   ├── plate.md            # Workflow commit
+│   │   ├── ship.md             # Workflow review & ship
+│   │   ├── fix.md              # Workflow hotfix
+│   │   ├── audit.md            # Workflow audit
+│   │   ├── research.md         # Workflow research
+│   │   ├── serve.md            # Dong bo task manager
+│   │   ├── init.md             # Thiet lap project
+│   │   ├── update.md           # Workflow cap nhat
+│   │   ├── git-context.md      # Shared: nhan dien trang thai git
+│   │   ├── task-link.md        # Shared: phan tich task URL
+│   │   └── worker-rules/       # Quy tac hanh vi worker
+│   │       ├── base.md         # Patterns chung
+│   │       └── addons/         # 15 addon theo framework
+│   └── skills/                 # Dinh nghia skills
+│       └── hoangsa/
+│           ├── git-flow/       # Quan ly git workflow
+│           └── visual-debug/   # Phan tich screenshot & video
 ├── bin/
 │   └── install                 # Script installer Node.js
+├── npm/                        # Cac goi binary theo nen tang
+│   ├── cli-darwin-arm64/
+│   ├── cli-darwin-x64/
+│   ├── cli-linux-arm64/
+│   ├── cli-linux-x64/
+│   ├── cli-linux-x64-musl/
+│   └── cli-windows-x64/
 ├── package.json
-└── .hoangsa/                   # Config và sessions cục bộ của project
+└── .hoangsa/                   # Config va sessions cuc bo cua project
     ├── config.json
     └── sessions/               # Artifacts session (plan.json, specs, logs)
 ```
 
 ### Tech Stack
 
-| Tầng | Công nghệ | Mục đích |
+| Tang | Cong nghe | Muc dich |
 |------|-----------|---------|
-| CLI | Rust | Quản lý session, duyệt DAG, state machine, validation |
-| Installer | Node.js | Phân phối package, đăng ký slash command |
-| Code Intelligence | GitNexus MCP | Call graph, impact analysis, đổi tên an toàn |
-| AI Runtime | Claude Code | Thực thi orchestrator + worker |
+| CLI | Rust | Quan ly session, duyet DAG, state machine, validation, phan tich media, hooks |
+| Installer | Node.js | Phan phoi package, dang ky slash command, cai dat hooks |
+| Code Intelligence | GitNexus MCP | Call graph, impact analysis, doi ten an toan, truy vet execution flow |
+| AI Runtime | Claude Code | Thuc thi orchestrator + worker |
 
-### Cách đóng góp
+### Hooks
 
-1. Fork repository tại https://github.com/pirumu/hoangsa
-2. Chạy `npm run build` để biên dịch Rust CLI (`cargo build --release` bên trong `cli/`)
-3. Chạy `npm test` để xác minh cài đặt
-4. Định nghĩa slash command nằm trong `templates/commands/hoangsa/` — mỗi file là Markdown với YAML frontmatter
-5. Logic workflow nằm trong `templates/workflows/` — hướng dẫn Markdown thuần cho AI
+HOANGSA cai dat lifecycle hooks vao Claude Code:
+
+| Hook | Event | Muc dich |
+|------|-------|---------|
+| Statusline | `SessionStart` | Hien thi thong tin session, token usage, project context |
+| Context Monitor | `PostToolUse` | Theo doi su dung context window, canh bao khi cao |
+| GitNexus Tracker | `PostToolUse` | Theo doi file thay doi de cap nhat index |
+| Update Checker | `SessionStart` | Thong bao khi co phien ban HOANGSA moi |
+
+### Worker Rules & Framework Addons
+
+Workers nhan huong dan rieng theo framework dua tren cau hinh `tech_stack`. Cac addon co san:
+
+Angular, Express.js, Flutter, Go, Java, JavaScript, NestJS, Next.js, Python, React, Rust, Svelte, Swift, TypeScript, Vue
+
+### Cach dong gop
+
+1. Fork repository tai https://github.com/pirumu/hoangsa
+2. Chay `npm run build` de bien dich Rust CLI (`cargo build --release` ben trong `cli/`)
+3. Chay `npm test` de xac minh cai dat
+4. Dinh nghia slash command nam trong `templates/commands/hoangsa/` — moi file la Markdown voi YAML frontmatter
+5. Logic workflow nam trong `templates/workflows/` — huong dan Markdown thuan cho AI
+6. Worker rule addons nam trong `templates/workflows/worker-rules/addons/`
 
 ---
 
-## Tích hợp hỗ trợ
+## Tich hop ho tro
 
 ### Task Managers
 
@@ -267,27 +351,38 @@ hoangsa/
 
 ### Code Intelligence
 
-- GitNexus MCP (call graphs, impact analysis, truy vết execution flow, đổi tên an toàn)
+- GitNexus MCP (call graphs, impact analysis, truy vet execution flow, doi ten an toan)
 
-### Hỗ trợ Ngôn ngữ & Framework
+### Quality Gate Skills
 
-HOANGSA không phụ thuộc vào ngôn ngữ cụ thể. Hệ thống worker-rules đã được kiểm thử với:
+Tuy chon cai dat khi setup:
 
-- JavaScript / TypeScript (React, Next.js, Node.js, Bun)
+- **silent-failure-hunter** — Nhan dien loi bi nuot va xu ly loi khong day du
+- **pr-test-analyzer** — Phan tich chat luong va do day du cua test coverage
+- **comment-analyzer** — Kiem tra do chinh xac cua comment va khoang trong tai lieu
+- **type-design-analyzer** — Danh gia thiet ke type ve encapsulation va invariants
+
+### Ho tro Ngon ngu & Framework
+
+HOANGSA khong phu thuoc vao ngon ngu cu the. He thong worker-rules co addon cho:
+
+- JavaScript / TypeScript (React, Next.js, Vue, Svelte, Angular, Express, NestJS)
 - Rust
 - Python (FastAPI, Django)
 - Go
 - Java / Kotlin (Spring)
+- Swift / Flutter
+- Va nhieu hon qua base rules
 
 ---
 
-## Giấy phép
+## Giay phep
 
 [MIT](LICENSE) — Copyright (c) 2026 Zan
 
 ---
 
-## Tác giả
+## Tac gia
 
 **Zan** — [@pirumu](https://github.com/pirumu)
 
