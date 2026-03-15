@@ -1,6 +1,6 @@
 {
   "name": "@hoangsa-cc/cli-windows-x64",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "A lean 3-phase (menu → prepare → cook) context engineering system for Claude Code by Zan. (Windows x64)",
   "author": "Zan",
   "license": "MIT",

@@ -359,6 +359,7 @@ Invoke /hoangsa:research with:
   - Scope: "codebase"
   - Mode: "auto"
   - Session: use the current $SESSION_DIR (research output goes to $SESSION_DIR/RESEARCH.md)
+  - GitNexus: pass GITNEXUS_STATUS so research agents use gitnexus tools when available
 ```
 
 This avoids duplicating the parallel research agents — the research workflow handles structure, patterns, dependencies, and tests analysis with GitNexus-first fallback.
@@ -492,9 +493,12 @@ status: "draft"
 | 2 | ... | ... | FLEXIBLE |
 
 ### Affected Files
-| File | Action | Description |
-|------|--------|-------------|
-| `path/to/file` | CREATE / MODIFY / DELETE | What changes |
+
+**If GitNexus available:** Use `gitnexus_impact({target: "symbolName", direction: "upstream"})` for each symbol being modified to discover all affected files (direct callers at d=1, indirect at d=2). This prevents missing files that import or call the changed code.
+
+| File | Action | Description | Impact |
+|------|--------|-------------|--------|
+| `path/to/file` | CREATE / MODIFY / DELETE | What changes | d=1 / d=2 / N/A |
 
 ---
 

@@ -732,6 +732,18 @@ function install(isGlobal) {
     }
   }
 
+  // Configure GitNexus MCP server for Claude Code
+  // `npx gitnexus setup` doesn't auto-add MCP for Claude Code — it only prints the command.
+  // So we run `claude mcp add` directly.
+  try {
+    execSync("claude mcp add gitnexus -- npx -y gitnexus mcp", { stdio: "pipe" });
+    console.log(`  ${green}✓${reset} Configured gitnexus MCP server`);
+  } catch (e) {
+    console.log(
+      `  ${yellow}⚠${reset} Could not configure gitnexus MCP: ${e.message}`,
+    );
+  }
+
   return { settingsPath, settings, statuslineCommand };
 }
 

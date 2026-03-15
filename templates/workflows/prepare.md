@@ -58,6 +58,41 @@ If `$SESSION_DIR/EXTERNAL-TASK.md` exists, read it and include external task ref
 
 ---
 
+## Step 1d: GitNexus index check
+
+```bash
+if [ ! -d ".gitnexus" ]; then
+  echo "GITNEXUS_MISSING"
+elif [ -f ".gitnexus/.outdated" ] && [ "$(cat .gitnexus/.outdated 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); print(len(d.get("changed_files",[])))' 2>/dev/null)" != "0" ]; then
+  echo "GITNEXUS_OUTDATED"
+else
+  echo "GITNEXUS_AVAILABLE"
+fi
+```
+
+Store result as `GITNEXUS_STATUS`.
+
+- If `GITNEXUS_AVAILABLE` → continue. Use GitNexus in Step 3 for dependency analysis.
+- If `GITNEXUS_MISSING` or `GITNEXUS_OUTDATED` → ask the user:
+
+  Use AskUserQuestion:
+    question: "GitNexus index bị outdated/missing. Sync lại để plan có dependency graph chính xác hơn?"
+    header: "GitNexus"
+    options:
+      - label: "Sync ngay", description: "Chạy gitnexus analyze (~30s) — hiểu callers, callees, impact để tạo depends_on và context_pointers chính xác"
+      - label: "Bỏ qua", description: "Dùng Grep/Glob — vẫn tạo plan được nhưng depends_on có thể thiếu"
+    multiSelect: false
+
+  If user chọn "Sync ngay":
+    ```bash
+    npx gitnexus analyze
+    ```
+    Set `GITNEXUS_STATUS` = `GITNEXUS_AVAILABLE`.
+
+  If user chọn "Bỏ qua" → set `GITNEXUS_STATUS` = `GITNEXUS_UNAVAILABLE`, continue.
+
+---
+
 ## Step 2: Read context
 
 From DESIGN-SPEC frontmatter:
@@ -116,9 +151,19 @@ Within a phase → maximize parallel, minimize sequential chains.
 
 **Hard limit: 45,000/task.** Exceeds → split the task.
 
-### 3e. Context pointers
+### 3e. Context pointers & dependency analysis
 
-Format: `absolute/path/to/file:START_LINE-END_LINE`
+**If GitNexus available:** For each key symbol mentioned in the DESIGN-SPEC (types, functions, classes to create or modify):
+
+1. Run `gitnexus_context({name: "symbolName"})` to get callers, callees, and process participation
+2. Use callers/callees to:
+   - Identify correct `depends_on` between tasks (if task A modifies a symbol called by task B's symbol → B depends on A)
+   - Generate precise `context_pointers` — include caller definitions that workers need to see
+3. Run `gitnexus_impact({target: "symbolName", direction: "upstream"})` for symbols being modified → if HIGH/CRITICAL risk, flag in the plan and consider splitting the task
+
+**If GitNexus unavailable:** Use Grep/Glob to find references and imports. Less precise but functional.
+
+**Context pointer format:** `absolute/path/to/file:START_LINE-END_LINE`
 
 Priority: function/class definitions the worker needs to implement.
 Don't add unrelated files.
