@@ -185,12 +185,27 @@ Acceptance command: <task.acceptance>
 
 ### Worker rules:
 
-Load worker rules before dispatching. Check for project-level override first:
+Load worker rules before dispatching using a base + addons approach:
 
-1. If `.hoangsa/worker-rules.md` exists in workspace → use it
-2. Otherwise → use `~/.claude/hoangsa/workflows/worker-rules.md`
+1. **Read base rules:**
+   - If `.hoangsa/worker-rules.md` exists in workspace → use it as base (project override)
+   - Otherwise → use `~/.claude/hoangsa/workflows/worker-rules/base.md`
 
-Include the full content of the resolved worker-rules file in every worker prompt, appended after the task context above.
+2. **Detect applicable addons:**
+   - Read `tech_stack` from config.json preferences
+   - Read `frameworks` from config.json `codebase.packages[].frameworks` (if available)
+   - Read `test_frameworks` from config.json `codebase.testing.frameworks`
+   - Match against addon file frontmatter `frameworks` field
+
+3. **Load matching addons:**
+   - For each matching addon: read `~/.claude/hoangsa/workflows/worker-rules/addons/<name>.md`
+   - Project-level addons override: `.hoangsa/worker-rules/addons/<name>.md`
+
+4. **Compose final rules:**
+   - Base rules + `"\n---\n"` + each addon content (frontmatter stripped)
+   - Append to worker prompt
+
+Include the composed rules in every worker prompt, appended after the task context above.
 
 ### Post-task: Simplify pass
 
