@@ -1321,6 +1321,280 @@ fn test_gitnexus_tracker(t: &mut TestRunner) {
     }
 }
 
+fn test_statusline_context(t: &mut TestRunner) {
+    eprintln!("\n\x1b[1m● statusline context thresholds\x1b[0m");
+
+    let cli = t.cli.clone();
+
+    // ── a) Color thresholds use remaining_pct (REQ-02) ──────────────────────
+
+    // remaining 80% → green 😊
+    {
+        let dir = tmp_project();
+        let payload = json!({
+            "model": {"display_name": "test-model"},
+            "workspace": {"current_dir": dir.to_str().unwrap(), "cwd": dir.to_str().unwrap()},
+            "context_window": {"remaining_percentage": 80},
+            "session_id": "test-ctx"
+        });
+        let output = run_statusline_cli(&cli, &payload, &dir);
+        t.check(
+            "remaining 80% \u{2192} green \u{1f60a}",
+            output.contains("\x1b[32m") && output.contains("\u{1f60a}"),
+            &format!("got: {}", output.trim()),
+        );
+        cleanup(&dir);
+    }
+
+    // remaining 40% → yellow 😢
+    {
+        let dir = tmp_project();
+        let payload = json!({
+            "model": {"display_name": "test-model"},
+            "workspace": {"current_dir": dir.to_str().unwrap(), "cwd": dir.to_str().unwrap()},
+            "context_window": {"remaining_percentage": 40},
+            "session_id": "test-ctx"
+        });
+        let output = run_statusline_cli(&cli, &payload, &dir);
+        t.check(
+            "remaining 40% \u{2192} yellow \u{1f622}",
+            output.contains("\x1b[33m") && output.contains("\u{1f622}"),
+            &format!("got: {}", output.trim()),
+        );
+        cleanup(&dir);
+    }
+
+    // remaining 15% → red 😭
+    {
+        let dir = tmp_project();
+        let payload = json!({
+            "model": {"display_name": "test-model"},
+            "workspace": {"current_dir": dir.to_str().unwrap(), "cwd": dir.to_str().unwrap()},
+            "context_window": {"remaining_percentage": 15},
+            "session_id": "test-ctx"
+        });
+        let output = run_statusline_cli(&cli, &payload, &dir);
+        t.check(
+            "remaining 15% \u{2192} red \u{1f62d}",
+            output.contains("\x1b[31m") && output.contains("\u{1f62d}"),
+            &format!("got: {}", output.trim()),
+        );
+        cleanup(&dir);
+    }
+
+    // ── b) Context resets on /clear (REQ-01) ────────────────────────────────
+
+    // After high usage (20% remaining), a fresh call with 95% remaining shows green 😊
+    {
+        let dir = tmp_project();
+        let payload_high = json!({
+            "model": {"display_name": "test-model"},
+            "workspace": {"current_dir": dir.to_str().unwrap(), "cwd": dir.to_str().unwrap()},
+            "context_window": {"remaining_percentage": 20},
+            "session_id": "test-ctx-reset"
+        });
+        let _ = run_statusline_cli(&cli, &payload_high, &dir);
+        cleanup(&dir);
+    }
+    {
+        let dir = tmp_project();
+        let payload_reset = json!({
+            "model": {"display_name": "test-model"},
+            "workspace": {"current_dir": dir.to_str().unwrap(), "cwd": dir.to_str().unwrap()},
+            "context_window": {"remaining_percentage": 95},
+            "session_id": "test-ctx-reset"
+        });
+        let output = run_statusline_cli(&cli, &payload_reset, &dir);
+        t.check(
+            "after /clear: 95% remaining \u{2192} green \u{1f60a}",
+            output.contains("\x1b[32m") && output.contains("\u{1f60a}"),
+            &format!("got: {}", output.trim()),
+        );
+        cleanup(&dir);
+    }
+
+    // ── c) Missing context data (REQ-06) ────────────────────────────────────
+
+    // Payload without context_window field → should output "--%", no crash
+    {
+        let dir = tmp_project();
+        let payload = json!({
+            "model": {"display_name": "test-model"},
+            "workspace": {"current_dir": dir.to_str().unwrap(), "cwd": dir.to_str().unwrap()},
+            "session_id": "test-ctx"
+        });
+        let output = run_statusline_cli(&cli, &payload, &dir);
+        t.check(
+            "missing context_window \u{2192} outputs --%",
+            output.contains("--%"),
+            &format!("got: {}", output.trim()),
+        );
+        cleanup(&dir);
+    }
+
+    // Empty JSON {} → should produce output (not crash)
+    {
+        let dir = tmp_project();
+        let payload = json!({});
+        let output = run_statusline_cli(&cli, &payload, &dir);
+        t.check(
+            "empty JSON \u{2192} no crash, produces output",
+            !output.is_empty(),
+            &format!("got: {}", output.trim()),
+        );
+        cleanup(&dir);
+    }
+}
+
+fn test_statusline_integration(t: &mut TestRunner) {
+    eprintln!("\n\x1b[1m● statusline integration (stdin timeout, bridge file, context-monitor)\x1b[0m");
+
+    let cli = t.cli.clone();
+    let dir = tmp_project();
+
+    // ── a) Stdin timeout: process must exit within 5s even with no stdin data (REQ-03) ──
+    {
+        use std::process::Stdio;
+        let mut child = std::process::Command::new(&cli)
+            .args(["hook", "statusline"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn statusline");
+        // Drop stdin to signal EOF immediately
+        drop(child.stdin.take());
+        let start = std::time::Instant::now();
+        let _status = child.wait().expect("wait statusline");
+        let elapsed = start.elapsed();
+        t.check(
+            "stdin timeout exits within 5s",
+            elapsed.as_secs() < 5,
+            &format!("took {}s", elapsed.as_secs()),
+        );
+    }
+
+    // ── b) Bridge file written with timestamp (REQ-04) ──────────────────────
+    {
+        use std::process::Stdio;
+        let bridge_path = std::env::temp_dir().join("claude-ctx-test-bridge-integ.json");
+        // Clean up any existing file
+        let _ = fs::remove_file(&bridge_path);
+
+        let payload = json!({
+            "model": {"display_name": "test-model"},
+            "workspace": {"current_dir": dir.to_str().unwrap(), "cwd": dir.to_str().unwrap()},
+            "context_window": {"remaining_percentage": 45},
+            "session_id": "test-bridge-integ"
+        });
+
+        let mut child = std::process::Command::new(&cli)
+            .args(["hook", "statusline"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn statusline bridge");
+        {
+            use std::io::Write;
+            if let Some(ref mut stdin) = child.stdin {
+                let _ = stdin.write_all(payload.to_string().as_bytes());
+            }
+        }
+        let _ = child.wait_with_output().expect("wait statusline bridge");
+
+        // Read bridge file
+        let bridge_exists = bridge_path.exists();
+        t.check(
+            "bridge file written",
+            bridge_exists,
+            &format!("path: {}", bridge_path.display()),
+        );
+
+        if bridge_exists {
+            let raw = fs::read_to_string(&bridge_path).expect("read bridge");
+            let v: Value = serde_json::from_str(&raw).expect("parse bridge json");
+            let rem = v["remaining_percentage"].as_f64().unwrap_or(-1.0);
+            let used = v["used_pct"].as_f64().unwrap_or(-1.0);
+            let ts = v["timestamp"].as_u64().unwrap_or(0);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+
+            t.check(
+                "bridge remaining_percentage ~45",
+                (rem - 45.0).abs() < 2.0,
+                &format!("got: {rem}"),
+            );
+            t.check(
+                "bridge used_pct ~55",
+                (used - 55.0).abs() < 2.0,
+                &format!("got: {used}"),
+            );
+            t.check(
+                "bridge timestamp is recent (within 10s)",
+                ts > 0 && now.saturating_sub(ts) < 10,
+                &format!("ts={ts} now={now}"),
+            );
+        }
+
+        let _ = fs::remove_file(&bridge_path);
+    }
+
+    // ── c) Context-monitor emits warning when usage is high (REQ-04, REQ-05) ─
+    {
+        use std::process::Stdio;
+        let bridge_path = std::env::temp_dir().join("claude-ctx-test-monitor.json");
+        let warn_path = std::env::temp_dir().join("claude-ctx-test-monitor-warned.json");
+
+        // Clean up warn file so debounce doesn't suppress the warning
+        let _ = fs::remove_file(&warn_path);
+
+        // Write bridge file with remaining=30 (below WARNING_THRESHOLD=35) and fresh timestamp
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let bridge = json!({
+            "session_id": "test-monitor",
+            "remaining_percentage": 30,
+            "used_pct": 70,
+            "timestamp": now
+        });
+        fs::write(&bridge_path, bridge.to_string()).expect("write monitor bridge");
+
+        let payload = json!({"session_id": "test-monitor"});
+
+        let mut child = std::process::Command::new(&cli)
+            .args(["hook", "context-monitor"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn context-monitor");
+        {
+            use std::io::Write;
+            if let Some(ref mut stdin) = child.stdin {
+                let _ = stdin.write_all(payload.to_string().as_bytes());
+            }
+        }
+        let out = child.wait_with_output().expect("wait context-monitor");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+
+        t.check(
+            "context-monitor emits CTX WARNING or CTX CRITICAL",
+            stdout.contains("CTX WARNING") || stdout.contains("CTX CRITICAL"),
+            &format!("got: {}", stdout.trim()),
+        );
+
+        let _ = fs::remove_file(&bridge_path);
+        let _ = fs::remove_file(&warn_path);
+    }
+
+    cleanup(&dir);
+}
+
 fn test_gitnexus_statusline(t: &mut TestRunner) {
     eprintln!("\n\x1b[1m● gitnexus statusline hook\x1b[0m");
 
@@ -1474,6 +1748,8 @@ pub fn cmd_verify(project_dir: &str) {
     test_integration_workflow_refs(&mut t);
     test_full_state_lifecycle(&mut t);
     test_gitnexus_tracker(&mut t);
+    test_statusline_context(&mut t);
+    test_statusline_integration(&mut t);
     test_gitnexus_statusline(&mut t);
     test_media(&mut t);
 

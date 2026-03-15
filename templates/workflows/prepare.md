@@ -92,7 +92,7 @@ Store result as `GITNEXUS_STATUS`.
 
   If user chọn "Sync ngay":
     ```bash
-    npx gitnexus analyze
+    npx gitnexus analyze --embeddings
     ```
     Set `GITNEXUS_STATUS` = `GITNEXUS_AVAILABLE`.
 
@@ -177,7 +177,7 @@ Don't add unrelated files.
 
 ---
 
-## Step 4: Create plan.json (draft)
+## Step 4: Create plan.json
 
 ```json
 {
@@ -203,7 +203,7 @@ Don't add unrelated files.
 }
 ```
 
-Save to `$SESSION_DIR/plan-draft.json`.
+Save to `$SESSION_DIR/plan.json`.
 
 ---
 
@@ -213,7 +213,7 @@ Save to `$SESSION_DIR/plan-draft.json`.
 
 ```bash
 RESULT=$("$HOANGSA_ROOT/bin/hoangsa-cli" validate plan \
-  "$SESSION_DIR/plan-draft.json")
+  "$SESSION_DIR/plan.json")
 echo $RESULT
 ```
 
@@ -221,7 +221,7 @@ echo $RESULT
 
 ```bash
 DAG=$("$HOANGSA_ROOT/bin/hoangsa-cli" dag check \
-  "$SESSION_DIR/plan-draft.json")
+  "$SESSION_DIR/plan.json")
 echo $DAG
 ```
 
@@ -258,9 +258,9 @@ Common DAG errors: (1) Circular dependency — break the cycle by splitting the 
 After all checker loops pass, generate a context pack for each task using `context pack`:
 
 ```bash
-for TASK_ID in $("$HOANGSA_ROOT/bin/hoangsa-cli" plan task-ids "$SESSION_DIR/plan-draft.json"); do
+for TASK_ID in $("$HOANGSA_ROOT/bin/hoangsa-cli" plan task-ids "$SESSION_DIR/plan.json"); do
   "$HOANGSA_ROOT/bin/hoangsa-cli" context pack \
-    "$SESSION_DIR/plan-draft.json" "$TASK_ID" \
+    "$SESSION_DIR/plan.json" "$TASK_ID" \
     --output "$SESSION_DIR/task-${TASK_ID}.context.json"
 done
 ```
@@ -275,7 +275,7 @@ If `context pack` fails for a task → log a warning but do not block plan appro
 
 ```bash
 WAVES=$("$HOANGSA_ROOT/bin/hoangsa-cli" dag waves \
-  "$SESSION_DIR/plan-draft.json")
+  "$SESSION_DIR/plan.json")
 echo $WAVES
 ```
 
@@ -329,9 +329,6 @@ After each change → **re-run checker automatically**.
 When user approves:
 
 ```bash
-# Copy draft to final
-cp "$SESSION_DIR/plan-draft.json" "$SESSION_DIR/plan.json"
-
 # Final validation
 "$HOANGSA_ROOT/bin/hoangsa-cli" validate plan "$SESSION_DIR/plan.json"
 

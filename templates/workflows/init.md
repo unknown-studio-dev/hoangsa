@@ -1008,7 +1008,7 @@ Indexing codebase with GitNexus...
 ```
 
 ```bash
-timeout 120 npx gitnexus analyze && rm -f .gitnexus/.outdated && echo "GITNEXUS_OK" || echo "GITNEXUS_FAIL"
+timeout 120 npx gitnexus analyze --embeddings && rm -f .gitnexus/.outdated && echo "GITNEXUS_OK" || echo "GITNEXUS_FAIL"
 ```
 
 If `gitnexus analyze` fails or times out (>120s), warn user: "GitNexus indexing failed. You can retry later with `/hoangsa:index`." Continue with remaining steps — indexing is non-blocking.

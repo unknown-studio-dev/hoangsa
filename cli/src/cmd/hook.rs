@@ -3,11 +3,22 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::time::Duration;
+
+fn read_stdin_with_timeout(timeout_secs: u64) -> String {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = std::io::stdin().read_to_string(&mut buf);
+        let _ = tx.send(buf);
+    });
+    rx.recv_timeout(Duration::from_secs(timeout_secs))
+        .unwrap_or_default()
+}
 
 fn read_stdin() -> String {
-    let mut buf = String::new();
-    let _ = std::io::stdin().read_to_string(&mut buf);
-    buf
+    read_stdin_with_timeout(3)
 }
 
 fn parse_stdin() -> Value {
@@ -209,22 +220,9 @@ pub fn cmd_statusline() {
         let filled = ((used as f64 / 100.0) * 10.0).round() as usize;
         let bar: String = "\u{2588}".repeat(filled) + &"\u{2591}".repeat(10 - filled);
 
-        // Emoji based on absolute token count: ≤200K 😊, 200K–700K 😢, ≥700K 😭
-        let total_k = total_tokens.unwrap_or(0) / 1000;
-        let emoji = if total_k <= 200 {
-            "\u{1f60a}"
-        } else if total_k <= 700 {
-            "\u{1f622}"
-        } else {
-            "\u{1f62d}"
-        };
-        let color = if total_k <= 200 {
-            "\x1b[32m"
-        } else if total_k <= 700 {
-            "\x1b[33m"
-        } else {
-            "\x1b[31m"
-        };
+        // Color + emoji based on remaining_percentage: >50% green 😊, >35% yellow 😢, ≤35% red 😭
+        let emoji = if rem > 50.0 { "\u{1f60a}" } else if rem > 35.0 { "\u{1f622}" } else { "\u{1f62d}" };
+        let color = if rem > 50.0 { "\x1b[32m" } else if rem > 35.0 { "\x1b[33m" } else { "\x1b[31m" };
 
         // Token count display — raw values, no baseline subtraction
         let fmt_k = |n: u64| -> String {
@@ -505,6 +503,18 @@ pub fn cmd_context_monitor() {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or(json!({"callsSinceWarn": 0, "lastLevel": null}));
+
+    // Detect /clear: remaining jumped UP by >30% indicates context was cleared
+    let last_remaining = warn_data["lastRemainingPct"].as_f64().unwrap_or(0.0);
+    if remaining - last_remaining > 30.0 {
+        // /clear detected — reset debounce completely
+        warn_data = json!({"callsSinceWarn": 0, "lastLevel": null, "lastRemainingPct": remaining});
+        let _ = fs::write(&warn_path, warn_data.to_string());
+        return; // After clear, context is healthy — no warning needed
+    }
+
+    // Track current remaining for next call
+    warn_data["lastRemainingPct"] = json!(remaining);
 
     let first_warn = !warn_path.exists();
     let calls = warn_data["callsSinceWarn"].as_u64().unwrap_or(0) + 1;

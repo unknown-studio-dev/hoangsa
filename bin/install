@@ -660,6 +660,33 @@ function copyAllFiles(src, targetDir, pathPrefix, attribution) {
   fs.writeFileSync(versionDest, pkg.version);
   console.log(`  ${green}✓${reset} Wrote VERSION (${pkg.version})`);
 
+  // Install quality gate skills (external dependencies for cook workflow Step 4d)
+  // Skill sources are hardcoded constants — no user input in execSync calls
+  const qualitySkills = [
+    { source: "paulkinlan/co-do", skill: "silent-failure-hunter" },
+    { source: "paulkinlan/co-do", skill: "pr-test-analyzer" },
+    { source: "paulkinlan/co-do", skill: "comment-analyzer" },
+    { source: "paulkinlan/co-do", skill: "type-design-analyzer" },
+  ];
+  console.log(`  ${dim}Installing quality gate skills...${reset}`);
+  let skillsInstalled = 0;
+  for (const { source, skill } of qualitySkills) {
+    const skillDir = path.join(os.homedir(), ".claude", "skills", skill);
+    if (fs.existsSync(skillDir)) {
+      skillsInstalled++;
+      continue;
+    }
+    try {
+      execSync(`npx skills add ${source}@${skill} -g -y`, { stdio: "pipe", timeout: 30000 });
+      skillsInstalled++;
+    } catch {
+      console.log(`  ${yellow}⚠${reset} Failed to install ${skill} — quality gate will skip this analyzer`);
+    }
+  }
+  if (skillsInstalled > 0) {
+    console.log(`  ${green}✓${reset} Quality gate skills: ${skillsInstalled}/${qualitySkills.length} ready`);
+  }
+
   return failures;
 }
 
@@ -753,10 +780,15 @@ function install(isGlobal) {
 
   // Configure GitNexus MCP server for Claude Code
   // `npx gitnexus setup` doesn't auto-add MCP for Claude Code — it only prints the command.
-  // So we run `claude mcp add` directly.
+  // So we run `claude mcp add` directly, but skip if already configured.
   try {
-    execSync("claude mcp add gitnexus -- npx -y gitnexus mcp", { stdio: "pipe" });
-    console.log(`  ${green}✓${reset} Configured gitnexus MCP server`);
+    const mcpList = execSync("claude mcp list", { stdio: "pipe" }).toString();
+    if (mcpList.includes("gitnexus")) {
+      console.log(`  ${green}✓${reset} gitnexus MCP server already configured`);
+    } else {
+      execSync("claude mcp add gitnexus -- npx -y gitnexus mcp", { stdio: "pipe" });
+      console.log(`  ${green}✓${reset} Configured gitnexus MCP server`);
+    }
   } catch (e) {
     console.log(
       `  ${yellow}⚠${reset} Could not configure gitnexus MCP: ${e.message}`,

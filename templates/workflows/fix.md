@@ -50,7 +50,7 @@ Store result as `GITNEXUS_STATUS`.
 
   If user chọn "Sync ngay":
     ```bash
-    npx gitnexus analyze
+    npx gitnexus analyze --embeddings
     ```
     Set `GITNEXUS_STATUS` = `GITNEXUS_AVAILABLE` after sync completes.
 

@@ -52,7 +52,7 @@ Store result as `GITNEXUS_STATUS`.
 
   If user chọn "Sync ngay":
     ```bash
-    npx gitnexus analyze
+    npx gitnexus analyze --embeddings
     ```
     Set `GITNEXUS_STATUS` = `GITNEXUS_AVAILABLE` after sync completes.
 
@@ -373,9 +373,105 @@ If `state.external_task` exists after all waves complete, chain to `/serve` push
 
 ---
 
+## Step 4d: Code Quality Gate
+
+Run after all waves complete, before verification. This is the final quality sweep on ALL changed files collectively — catches cross-task issues that per-task simplify misses.
+
+### Collect changed files
+
+```bash
+# Get all files changed in this session
+CHANGED_FILES=$(git diff --name-only HEAD~$(git log --oneline --since="$(cat $SESSION_DIR/state.json | python3 -c "import sys,json; print(json.load(sys.stdin).get('started_at','1 hour ago'))")" | wc -l) HEAD 2>/dev/null || git diff --name-only HEAD~10 HEAD)
+```
+
+### Run quality analyzers (conditional)
+
+Spawn subagents in parallel where applicable. Each analyzer is advisory — it reports issues but does NOT auto-fix. The orchestrator collects all findings and presents a single quality report.
+
+**Always run:**
+
+1. **code-reviewer** (final sweep) — general code quality review on all changed files
+   ```
+   Review these files for bugs, logic errors, security vulnerabilities, and code quality:
+   <CHANGED_FILES>
+   Focus on cross-file consistency and integration issues.
+   Report only HIGH confidence issues.
+   ```
+
+2. **pr-test-analyzer** (test coverage check) — verify tests cover changed behavior
+   ```
+   Analyze test coverage for these changed files:
+   <CHANGED_FILES>
+   Focus on behavioral coverage, not line coverage.
+   Identify critical gaps and missing edge cases.
+   ```
+
+**Conditional — run if error handling was changed:**
+
+3. **silent-failure-hunter** — detect swallowed errors and inadequate error handling
+   ```
+   Check for silent failures in changed files:
+   <CHANGED_FILES filtered to files with try/catch/except/error changes>
+   Zero tolerance for swallowed errors.
+   ```
+   Skip if no error handling patterns detected in changed files.
+
+**Conditional — run if comments were added/modified:**
+
+4. **comment-analyzer** — verify comment accuracy and detect comment rot
+   ```
+   Analyze comments in changed files:
+   <CHANGED_FILES filtered to files with comment changes>
+   Check for misleading comments and documentation gaps.
+   ```
+   Skip if no comment changes detected.
+
+**Conditional — run if types were added/modified:**
+
+5. **type-design-analyzer** — evaluate type encapsulation and invariant quality
+   ```
+   Analyze type designs in changed files:
+   <CHANGED_FILES filtered to files with type/interface/struct/class definitions>
+   Rate encapsulation, invariant expression, and usefulness.
+   ```
+   Skip if no type definition changes detected.
+
+### Quality Gate decision
+
+Collect all analyzer results and present:
+
+```
+🔍 Code Quality Gate
+
+  Analyzers run: <N>/5
+
+  code-reviewer:         ✅ 0 issues  |  ⚠️ 2 warnings  |  ❌ 1 critical
+  pr-test-analyzer:      ✅ good coverage  |  ⚠️ 2 gaps identified
+  silent-failure-hunter: ✅ no silent failures  |  ⏭️ skipped (no error handling changes)
+  comment-analyzer:      ⏭️ skipped (no comment changes)
+  type-design-analyzer:  ⚠️ UserAccount type — encapsulation 6/10
+
+  Critical issues (must fix):
+    1. [code-reviewer] SQL injection risk in user_service.py:45
+
+  Warnings (recommended):
+    1. [pr-test-analyzer] Missing edge case: empty input for create_user
+    2. [code-reviewer] Unused import in routes.py
+    3. [type-design-analyzer] UserAccount exposes mutable internal state
+```
+
+**Gate rules:**
+- **Critical issues (❌)** → MUST fix before proceeding. Spawn fix workers automatically, then re-run affected analyzers.
+- **Warnings (⚠️)** → present to user, recommend fixing but don't block.
+- **All clear (✅)** → proceed to Step 5 verification.
+
+**Quality Gate failure recovery:** If an analyzer crashes or times out, skip it and note in report. Do NOT block the pipeline for analyzer failures.
+
+---
+
 ## Step 5: Verification (3-tier)
 
-Run after all waves complete (or after stopping).
+Run after all waves complete and quality gate passes (or after stopping).
 
 ### Tier 1 — Static Analysis
 
