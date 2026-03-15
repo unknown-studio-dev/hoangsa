@@ -1,6 +1,6 @@
 {
   "name": "hoangsa-cc",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "type": "module",
   "description": "A lean 3-phase (menu → prepare → cook) context engineering system for Claude Code by Zan.",
   "bin": {
