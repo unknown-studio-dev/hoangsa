@@ -179,12 +179,12 @@ AUTO_PLATE=$("~/.claude/hoangsa/bin/hoangsa-cli" pref get . auto_plate)
 - If `auto_plate` value is `false` → skip, just show next steps
 - If `auto_plate` value is `null` (first time) → ask the user once, then **save their answer**:
 
-  Use AskUserQuestion:
-    question: "Muốn tự động commit sau khi taste pass?"
+  Use AskUserQuestion (adapt labels to user's `lang` preference):
+    question: "Auto-commit after taste passes?"
     header: "Auto plate"
     options:
-      - label: "Luôn luôn", description: "Tự động commit khi tất cả tests pass"
-      - label: "Không", description: "Tôi sẽ commit thủ công bằng /hoangsa:plate"
+      - label: "Always", description: "Automatically commit when all tests pass"
+      - label: "No", description: "I will commit manually with /hoangsa:plate"
     multiSelect: false
 
   Save immediately:

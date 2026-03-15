@@ -103,7 +103,7 @@ Returns execution flows ranked by relevance. Better than `Grep` for understandin
 
 ---
 
-## 7. Communication
+## 8. Communication
 
 - **Report, don't guess.** If something is ambiguous, unclear, or missing from the spec — report it as a blocker. Do not make assumptions about intended behavior.
 - **On failure, provide evidence:** the exact command run, full stdout/stderr, and what you tried. Do not summarize or truncate error output.
@@ -112,7 +112,7 @@ Returns execution flows ranked by relevance. Better than `Grep` for understandin
 
 ---
 
-## 8. Anti-Fake Tests
+## 9. Anti-Fake Tests
 
 A fake test passes CI without verifying real behavior. Every test MUST exercise the actual production code path.
 
@@ -125,7 +125,7 @@ A fake test passes CI without verifying real behavior. Every test MUST exercise 
 
 ---
 
-## 9. Edge Case Checklist
+## 10. Edge Case Checklist
 
 Apply these checks to every async, stateful, or resource-owning piece of code you write or modify.
 
