@@ -173,117 +173,25 @@ pub fn cmd_statusline() {
     let total_input = data["context_window"]["total_input_tokens"].as_u64();
     let total_output = data["context_window"]["total_output_tokens"].as_u64();
 
-    // Cache path for persisting context data across /clear
-    let cache_path = if !session.is_empty() {
-        Some(std::env::temp_dir().join(format!("claude-ctx-cache-{session}.json")))
-    } else {
-        None
+    // Raw remaining percentage — no cache, no buffer
+    let rem = remaining
+        .or_else(|| used_pct_live.map(|u| 100.0 - u))
+        .unwrap_or(100.0);
+    let has_data = remaining.is_some() || used_pct_live.is_some();
+    let used = (100.0 - rem).clamp(0.0, 100.0).round() as u32;
+
+    // Raw total tokens
+    let total_tokens = match (total_input, total_output) {
+        (Some(i), Some(o)) => Some(i + o),
+        (Some(i), None) => Some(i),
+        (None, Some(o)) => Some(o),
+        _ => None,
     };
-
-    // Load previous cache for baseline detection
-    let prev_cache = cache_path.as_ref().and_then(|cp| {
-        fs::read_to_string(cp)
-            .ok()
-            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-    });
-
-    // Detect context reset: remaining% jumped up by >20 points (indicates /clear)
-    let detect_reset = |new_rem: f64| -> bool {
-        if let Some(ref cached) = prev_cache {
-            let old_rem = cached["remaining_percentage"].as_f64().unwrap_or(100.0);
-            new_rem > old_rem + 20.0
-        } else {
-            false
-        }
-    };
-
-    // Get or update token baseline (resets when context is cleared)
-    let get_baseline = |reset: bool, inp: Option<u64>, outp: Option<u64>| -> (u64, u64) {
-        if reset {
-            // Context was cleared — set baseline to current cumulative tokens
-            (inp.unwrap_or(0), outp.unwrap_or(0))
-        } else if let Some(ref cached) = prev_cache {
-            // Carry forward existing baseline
-            (
-                cached["baseline_input"].as_u64().unwrap_or(0),
-                cached["baseline_output"].as_u64().unwrap_or(0),
-            )
-        } else {
-            (0, 0)
-        }
-    };
-
-    // Try live data first, fall back to cached
-    // has_data tracks whether we have real context info (vs defaults)
-    let (rem, size, inp, outp, from_cache, has_data, baseline_in, baseline_out) =
-        if let Some(rem) = remaining {
-            let reset = detect_reset(rem);
-            let (bi, bo) = get_baseline(reset, total_input, total_output);
-            // Save to cache with baseline
-            if let Some(ref cp) = cache_path {
-                let cache = json!({
-                    "remaining_percentage": rem,
-                    "used_percentage": used_pct_live,
-                    "context_window_size": ctx_size,
-                    "total_input_tokens": total_input,
-                    "total_output_tokens": total_output,
-                    "baseline_input": bi,
-                    "baseline_output": bo,
-                    "timestamp": now_unix()
-                });
-                let _ = fs::write(cp, cache.to_string());
-            }
-            (rem, ctx_size, total_input, total_output, false, true, bi, bo)
-        } else if let Some(used_pct) = used_pct_live {
-            // Claude Code sent used_percentage but not remaining_percentage
-            let rem = 100.0 - used_pct;
-            let reset = detect_reset(rem);
-            let (bi, bo) = get_baseline(reset, total_input, total_output);
-            if let Some(ref cp) = cache_path {
-                let cache = json!({
-                    "remaining_percentage": rem,
-                    "used_percentage": used_pct,
-                    "context_window_size": ctx_size,
-                    "total_input_tokens": total_input,
-                    "total_output_tokens": total_output,
-                    "baseline_input": bi,
-                    "baseline_output": bo,
-                    "timestamp": now_unix()
-                });
-                let _ = fs::write(cp, cache.to_string());
-            }
-            (rem, ctx_size, total_input, total_output, false, true, bi, bo)
-        } else if let Some(ref cp) = cache_path {
-            // Load from cache
-            if let Some(cached) = fs::read_to_string(cp)
-                .ok()
-                .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-            {
-                (
-                    cached["remaining_percentage"].as_f64().unwrap_or(100.0),
-                    cached["context_window_size"].as_u64(),
-                    cached["total_input_tokens"].as_u64(),
-                    cached["total_output_tokens"].as_u64(),
-                    true,
-                    true,
-                    cached["baseline_input"].as_u64().unwrap_or(0),
-                    cached["baseline_output"].as_u64().unwrap_or(0),
-                )
-            } else {
-                (100.0, None, None, None, false, false, 0, 0)
-            }
-        } else {
-            (100.0, None, None, None, false, false, 0, 0)
-        };
 
     // Context window display
     let ctx = {
-        const BUFFER: f64 = 16.5;
-        let usable_rem = ((rem - BUFFER) / (100.0 - BUFFER) * 100.0).max(0.0);
-        let used = (100.0 - usable_rem).clamp(0.0, 100.0).round() as u32;
-
         // Write bridge file for context-monitor
-        if !session.is_empty() && !from_cache {
+        if !session.is_empty() && has_data {
             let bridge_path = std::env::temp_dir().join(format!("claude-ctx-{session}.json"));
             let bridge = json!({
                 "session_id": session,
@@ -296,22 +204,25 @@ pub fn cmd_statusline() {
 
         let filled = ((used as f64 / 100.0) * 10.0).round() as usize;
         let bar: String = "\u{2588}".repeat(filled) + &"\u{2591}".repeat(10 - filled);
-        let emoji = if used <= 20 {
+
+        // Emoji based on absolute token count: ≤200K 😊, 200K–700K 😢, ≥700K 😭
+        let total_k = total_tokens.unwrap_or(0) / 1000;
+        let emoji = if total_k <= 200 {
             "\u{1f60a}"
-        } else if used <= 70 {
+        } else if total_k <= 700 {
             "\u{1f622}"
         } else {
             "\u{1f62d}"
         };
-        let color = if used <= 20 {
+        let color = if total_k <= 200 {
             "\x1b[32m"
-        } else if used <= 70 {
+        } else if total_k <= 700 {
             "\x1b[33m"
         } else {
             "\x1b[31m"
         };
 
-        // Token count display
+        // Token count display — raw values, no baseline subtraction
         let fmt_k = |n: u64| -> String {
             if n == 0 {
                 "0K".to_string()
@@ -321,20 +232,11 @@ pub fn cmd_statusline() {
                 format!("{}K", (n + 500) / 1000)
             }
         };
-        // Subtract baseline to show per-context tokens (resets after /clear)
-        let token_info = match (inp, outp, size) {
-            (Some(i), Some(o), Some(s)) => {
-                let used = (i.saturating_sub(baseline_in)) + (o.saturating_sub(baseline_out));
-                format!(" {}/{}", fmt_k(used), fmt_k(s))
-            }
-            (Some(i), Some(o), None) => {
-                let used = (i.saturating_sub(baseline_in)) + (o.saturating_sub(baseline_out));
-                format!(" {}", fmt_k(used))
-            }
+        let token_info = match (total_tokens, ctx_size) {
+            (Some(t), Some(s)) => format!(" {}/{}", fmt_k(t), fmt_k(s)),
+            (Some(t), None) => format!(" {}", fmt_k(t)),
             _ => String::new(),
         };
-
-        let cache_indicator = if from_cache { "\x1b[2m~\x1b[0m" } else { "" };
 
         let pct_display = if has_data {
             format!("{used}%")
@@ -343,7 +245,7 @@ pub fn cmd_statusline() {
         };
 
         format!(
-            " {emoji} {color}{bar} {pct_display}{token_info}\x1b[0m{cache_indicator}"
+            " {emoji} {color}{bar} {pct_display}{token_info}\x1b[0m"
         )
     };
 

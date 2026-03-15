@@ -1,6 +1,6 @@
 {
   "name": "@hoangsa-cc/cli-darwin-x64",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "A lean 3-phase (menu → prepare → cook) context engineering system for Claude Code by Zan. (macOS x64)",
   "author": "Zan",
   "license": "MIT",
