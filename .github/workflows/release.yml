@@ -34,7 +34,7 @@ jobs:
             binary: hoangsa-cli
 
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-14
             use_cross: false
             npm_pkg: cli-darwin-x64
             binary: hoangsa-cli
