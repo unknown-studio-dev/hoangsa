@@ -98,6 +98,9 @@ fn main() {
         ("media", "check-ffmpeg") => cmd::media::cmd_check_ffmpeg(),
         #[cfg(feature = "media")]
         ("media", "install-ffmpeg") => cmd::media::cmd_install_ffmpeg(),
+        ("hook", "stop-check") => {
+            cmd::hook::cmd_stop_check(rest.first().copied(), &cwd);
+        }
         ("commit", _) => {
             // commit "<message>" --files f1 f2 ...
             let message = sub;
@@ -139,6 +142,7 @@ Usage:
   hoangsa-cli config set <projectDir> <jsonPatch>
   hoangsa-cli context pack <sessionDir> <taskId>
   hoangsa-cli context get <sessionDir> <taskId>
+  hoangsa-cli hook stop-check [sessions_dir]
   hoangsa-cli verify [projectDir]
   hoangsa-cli media probe <file>
   hoangsa-cli media frames <video> [--interval <s>] [--max-frames <n>] [--output-dir <dir>]

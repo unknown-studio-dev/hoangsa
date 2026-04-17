@@ -313,10 +313,11 @@ function cleanupHooksFromSettings(settings) {
       const before = settings.hooks[event].length;
       settings.hooks[event] = settings.hooks[event].filter(
         (entry) =>
-          !Array.isArray(entry.hooks) ||
-          !entry.hooks.some(
-            (h) => h.command && h.command.includes("hoangsa-cli"),
-          ),
+          !entry._hoangsa_managed &&
+          (!Array.isArray(entry.hooks) ||
+            !entry.hooks.some(
+              (h) => h.command && h.command.includes("hoangsa-cli"),
+            )),
       );
       if (settings.hooks[event].length < before) {
         changed = true;
@@ -656,6 +657,35 @@ function cleanupLegacy(targetDir) {
   }
 }
 
+/** Install HOANGSA Stop hook into settings.json.
+ *  Uses runtime resolution: tries local binary first, falls back to global.
+ *  Replaces any existing _hoangsa_managed Stop hook (including legacy prompt-type). */
+function ensureHoangsaHooks(settings) {
+  if (!settings.hooks) settings.hooks = {};
+  if (!settings.hooks.Stop) settings.hooks.Stop = [];
+
+  // Remove any existing _hoangsa_managed Stop hooks (prompt or command type)
+  settings.hooks.Stop = settings.hooks.Stop.filter(
+    (entry) => !entry._hoangsa_managed,
+  );
+
+  // Add the deterministic command-type Stop hook
+  settings.hooks.Stop.push({
+    _hoangsa_managed: true,
+    hooks: [
+      {
+        type: "command",
+        command:
+          'sh -c \'h=./.claude/hoangsa/bin/hoangsa-cli;[ -x "$h" ]||h=$HOME/.claude/hoangsa/bin/hoangsa-cli;"$h" hook stop-check\'',
+        timeout: 5,
+      },
+    ],
+  });
+
+  console.log(`  ${green}✓${reset} Installed Stop hook (workflow completion guard)`);
+  return true;
+}
+
 /** Install HOANGSA to global (~/.claude) or local (./.claude) config directory. */
 function install(isGlobal) {
   const src = path.join(__dirname, "..", "templates");
@@ -699,9 +729,10 @@ function install(isGlobal) {
   // Report any backed-up local patches
   reportLocalPatches(targetDir);
 
-  // Read settings for task manager setup
+  // Read settings and install HOANGSA hooks
   const settingsPath = path.join(targetDir, "settings.json");
   const settings = readSettings(settingsPath);
+  ensureHoangsaHooks(settings);
 
   // Install Thoth globally (skip if already installed)
   try {
