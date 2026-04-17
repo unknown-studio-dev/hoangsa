@@ -213,19 +213,40 @@ pub fn cmd_lesson_guard(cwd: &str) {
     let all_lessons_text = lessons.join("\n---\n");
 
     if let Some(lesson) = blocking_lesson {
-        // Lesson says NEVER for this path → surface with context, approve to let agent decide
-        let gitignore_note = if is_gitignored {
-            "\nNote: This file is in .gitignore — it may be an installed copy, not the source."
+        // Hard-block when editing an installed-copy path that a NEVER lesson
+        // warns about. Previously this only surfaced a warning and approved —
+        // which let the agent override the lesson (happened 5+ times). The
+        // block condition is deterministic: NEVER-lesson match + gitignored +
+        // path sits under a known installed-copy prefix.
+        let fp = file_path;
+        let is_installed_copy_path = fp.contains("/.claude/hoangsa/")
+            || fp.contains("/.claude/skills/")
+            || fp.contains("/.claude/commands/")
+            || fp.contains("/.claude/agents/");
+        let should_block = is_gitignored && is_installed_copy_path;
+
+        if should_block {
+            out(&json!({
+                "decision": "block",
+                "reason": format!(
+                    "BLOCKED: '{}' is a gitignored installed-copy path and matches a NEVER lesson.\n\nLesson:\n{}\n\nEdit the source under templates/ instead, then run bin/install to sync.\n\nIf this is intentional (rare), tell the user to override explicitly.",
+                    file_path, lesson
+                )
+            }));
         } else {
-            ""
-        };
-        out(&json!({
-            "decision": "approve",
-            "reason": format!(
-                "⚠️ LESSON GUARD for '{}':{}\n\nRelevant lesson:\n{}\n\n---\nAll recalled lessons:\n{}\n\nIf this edit is intentional, proceed. If not, find the correct source file.",
-                file_path, gitignore_note, lesson, all_lessons_text
-            )
-        }));
+            let gitignore_note = if is_gitignored {
+                "\nNote: This file is in .gitignore — it may be an installed copy, not the source."
+            } else {
+                ""
+            };
+            out(&json!({
+                "decision": "approve",
+                "reason": format!(
+                    "⚠️ LESSON GUARD for '{}':{}\n\nRelevant lesson:\n{}\n\n---\nAll recalled lessons:\n{}\n\nIf this edit is intentional, proceed. If not, find the correct source file.",
+                    file_path, gitignore_note, lesson, all_lessons_text
+                )
+            }));
+        }
     } else if !lessons.is_empty() {
         // No blocking lesson, but surface lessons as context
         out(&json!({
