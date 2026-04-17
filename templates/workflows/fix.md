@@ -302,11 +302,22 @@ Only continue when user confirms.
 
 ## Step 4: Implement fixes
 
-### Model selection
+### Model selection + config metadata
 
 ```bash
 MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model worker)
+INTERACTION=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . interaction_level)
+CONFIG=$("$HOANGSA_ROOT/bin/hoangsa-cli" config get .)
 ```
+
+Extract from config:
+- `codebase.testing` → test frameworks and config — used to build acceptance commands if not specified in plan
+- `codebase.packages` → package build/test commands for verification
+
+**Apply `interaction_level`:**
+- `"detailed"` → show full cross-layer trace, all affected files with reasoning
+- `"concise"` → show root cause + fix plan only, skip trace details
+- `null` → default to `"detailed"`
 
 ### For each task:
 

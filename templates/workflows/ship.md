@@ -23,6 +23,17 @@ All user-facing text — confirmations, questions, summaries — **MUST** use th
 
 ---
 
+## Step 0b: Model selection + config metadata
+
+```bash
+REVIEWER_MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model reviewer)
+CONFIG=$("$HOANGSA_ROOT/bin/hoangsa-cli" config get .)
+```
+
+Use the `reviewer` model for code and security review agents. Extract `codebase.ci` from config — used in Step 5 to hint user to check CI after push.
+
+---
+
 ## Step 1: Git state analysis
 
 ```bash
@@ -195,6 +206,15 @@ git push -u origin $(git branch --show-current)
 ```
 
 Show confirmation: "Pushed <N> commits to origin/<branch>"
+
+### After any push (both "Push + tạo PR" and "Chỉ push"):
+
+If `codebase.ci` from config (loaded in Step 0b) is non-null/non-empty, hint the user:
+
+```
+💡 CI: <ci platform> — check pipeline status after push
+   <e.g., "GitHub Actions — check .github/workflows/ pipeline">
+```
 
 ### If "Chỉ xem report":
 

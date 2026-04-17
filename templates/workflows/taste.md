@@ -37,13 +37,24 @@ Read `$SESSION_DIR/plan.json` — extract tasks and their `acceptance` commands.
 
 ---
 
-## Step 1b: Model selection
+## Step 1b: Model selection + config metadata
 
 ```bash
 MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model tester)
+INTERACTION=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . interaction_level)
+CONFIG=$("$HOANGSA_ROOT/bin/hoangsa-cli" config get .)
 ```
 
 Use the resolved model for running test tasks. The `tester` role is lightweight (default: haiku in balanced profile) since it primarily runs commands and reports results.
+
+Extract from config:
+- `codebase.testing` → test frameworks, config files, file patterns — use as fallback if a task's `acceptance` command is missing or generic
+- `codebase.packages[].test` → per-package test commands
+
+**Apply `interaction_level`:**
+- `"detailed"` → show full test output per task, quality gate details
+- `"concise"` → show pass/fail per task, only expand on failures
+- `null` → default to `"detailed"`
 
 ---
 

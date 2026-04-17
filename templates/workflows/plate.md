@@ -23,6 +23,21 @@ All user-facing text — confirmations, questions, summaries — **MUST** use th
 
 ---
 
+## Step 0b: Model selection + config metadata
+
+```bash
+COMMITTER_MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model committer)
+CONFIG=$("$HOANGSA_ROOT/bin/hoangsa-cli" config get .)
+```
+
+Use the `committer` model for commit message generation. The `committer` role is lightweight (default: haiku in balanced profile).
+
+Extract from config:
+- `codebase.git_convention` → commit message format (default: `"conventional-commits"`)
+- `codebase.monorepo` + `codebase.packages` → scope the commit to affected package(s) if monorepo
+
+---
+
 ## Step 1: Inspect working tree
 
 Run `git status` to list all changed, staged, and untracked files.
@@ -67,13 +82,21 @@ This ensures staged memory from workers gets promoted before the commit, keeping
 
 ## Step 3: Generate commit message
 
-Derive a conventional commit message from:
+Derive a commit message from:
 - The active session's completed task descriptions (from the plan or task list)
 - The nature of the changes (feat, fix, refactor, chore, docs, test, etc.)
 
-Format: `<type>(<scope>): <short description>`
+**Format depends on `codebase.git_convention` from config (loaded in Step 0b):**
 
-Example: `refactor(refactor/plate-command): T-02 create /plate command, agent, and workflow`
+| Convention | Format | Example |
+|-----------|--------|---------|
+| `conventional-commits` (default) | `<type>(<scope>): <short description>` | `refactor(plate-command): T-02 create /plate command` |
+| `ticket-prefix` | `[TICKET-ID] <short description>` | `[PROJ-123] create /plate command and workflow` |
+| `simple` | `<short description>` | `Create /plate command, agent, and workflow` |
+
+If `codebase.monorepo` is `true` and changes span multiple packages, include the affected package name(s) in the scope.
+
+If `codebase.git_convention` is `null` → default to `conventional-commits`.
 
 ---
 
@@ -156,7 +179,7 @@ AUTO_SERVE=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . auto_serve)
 |------|--------|
 | **Preview before commit** | Always show staged files and message before committing |
 | **Exclude secrets** | Never stage `.env`, credentials, or large binaries |
-| **Conventional commits** | Use `type(scope): description` format |
+| **Respect git_convention** | Use commit format from `codebase.git_convention` in config (default: conventional-commits) |
 | **Confirm with user** | Never auto-commit without user approval |
 | **Save preferences on first ask** | Ask `auto_serve` once, save to config, never repeat |
 | **Chain to serve on linked tasks** | If external task exists, always push results back |

@@ -146,6 +146,23 @@ REVIEWER_MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model reviewer)
 
 Use `worker` model for task implementation (Step 3) and `reviewer` model for semantic review (Step 5 Tier 3). The orchestrator itself runs as `orchestrator` role — it only dispatches, monitors, and reports.
 
+### Load config metadata
+
+```bash
+CONFIG=$("$HOANGSA_ROOT/bin/hoangsa-cli" config get .)
+INTERACTION=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . interaction_level)
+```
+
+Extract from config:
+- `codebase.testing` → test frameworks, config files, file patterns — used in Step 5 Tier 2 to select the correct test runner and config
+- `codebase.linters` → linter config — used in Step 5 Tier 1 for static analysis commands
+- `codebase.packages` → package info including build/test commands
+
+**Apply `interaction_level` throughout:**
+- `"detailed"` → show per-task progress with acceptance output, full verification results, budget breakdown
+- `"concise"` → show wave-level progress, only report failures and final summary
+- `null` → default to `"detailed"`
+
 ### For each wave:
 
 1. **Load context pack for each task** before spawning workers

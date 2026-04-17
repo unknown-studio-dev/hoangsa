@@ -181,7 +181,28 @@ fi
 
 ## Step 3: Detect project metadata
 
-Before scanning, gather project context for accurate analysis:
+Before scanning, gather project context. **Start from config.json** (detected by `/hoangsa:init`), then fill gaps:
+
+```bash
+CONFIG=$("$HOANGSA_ROOT/bin/hoangsa-cli" config get .)
+INTERACTION=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . interaction_level)
+```
+
+### 3a. Load from config (already detected by init)
+
+Extract from `CONFIG`:
+- `codebase.packages` → tech stack, build/test commands per package
+- `codebase.frameworks` → detected frameworks
+- `codebase.testing` → test frameworks, config files, file patterns
+- `codebase.linters` → linter config
+- `codebase.ci` → CI/CD platform
+- `codebase.monorepo` → monorepo structure
+- `codebase.entry_points` → project entry points — pass to Architecture dimension for focused analysis
+- `preferences.tech_stack` → confirmed tech stack
+
+### 3b. Fill gaps (only if config fields are empty/null)
+
+For any field that is `null` or `[]` in config, detect from filesystem:
 
 ```
 - Read package.json / Cargo.toml / pyproject.toml / go.mod → tech stack, versions
@@ -192,6 +213,13 @@ Before scanning, gather project context for accurate analysis:
 - Check for linter/formatter config (.eslintrc, prettier, rustfmt, ruff, etc.)
 - Detect monorepo structure (workspaces, lerna, turborepo, etc.)
 ```
+
+Merge config data with detected data into `PROJECT_META`. Config values take precedence over re-detected values (they were user-confirmed during init).
+
+**Apply `interaction_level`:**
+- `"detailed"` → Deep audit shows full findings per dimension with evidence, confirm mode on
+- `"concise"` → Show summary table + critical/high issues only, skip low-severity details
+- `null` → default to `"detailed"`
 
 Store as `PROJECT_META` — this context is passed to all scanning agents.
 

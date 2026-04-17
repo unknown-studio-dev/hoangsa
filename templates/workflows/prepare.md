@@ -27,6 +27,22 @@ All user-facing text — status updates, questions, reports, error messages, pro
 
 ---
 
+## Step 0b: Model selection + config metadata
+
+```bash
+PLANNER_MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model planner)
+INTERACTION=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . interaction_level)
+```
+
+Use the `planner` model for plan generation and task decomposition. This respects both the project's `profile` setting and any per-role `model_overrides` in config.json.
+
+Adapt verbosity based on `interaction_level`:
+- `"detailed"` → show full DAG explanation, budget breakdown per task, traceability matrix
+- `"concise"` → show wave summary and total budget only
+- `null` → default to `"detailed"`
+
+---
+
 ## Step 1: Load session
 
 ```bash

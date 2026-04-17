@@ -27,7 +27,17 @@ All user-facing text — questions, options, explanations, reports, status updat
 
 ---
 
-## Step 0b: Thoth index check (interactive)
+## Step 0b: Model selection
+
+```bash
+DESIGNER_MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model designer)
+```
+
+Use the `designer` model for spec writing and design discussions. This respects both the project's `profile` setting and any per-role `model_overrides` in config.json.
+
+---
+
+## Step 0c: Thoth index check (interactive)
 
 ```bash
 if [ ! -f ".thoth/graph.redb" ]; then
@@ -112,6 +122,11 @@ PREFS=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get .)
 ```
 
 Parse the returned JSON to extract: `lang`, `spec_lang`, `tech_stack`, `interaction_level`, `review_style`.
+
+**Apply `interaction_level` throughout this workflow:**
+- `"detailed"` → ask more deep-dive questions (3-5), show full option trade-offs, include architecture reasoning in specs
+- `"concise"` → ask fewer deep-dive questions (1-2), shorter option descriptions, skip obvious explanations
+- `null` → default to `"detailed"`
 
 ### 2a. Auto-detect tech stack (if not saved or empty)
 
@@ -406,9 +421,25 @@ Save to `$SESSION_DIR/CONTEXT.md`:
 
 ---
 
+## Step 3f: Load codebase metadata from config
+
+```bash
+CONFIG=$("$HOANGSA_ROOT/bin/hoangsa-cli" config get .)
+```
+
+Extract from config and pass to research step:
+- `codebase.packages` → known packages, entry points, build/test commands
+- `codebase.frameworks` → detected frameworks
+- `codebase.testing` → test frameworks, config files, file patterns
+- `codebase.entry_points` → project entry points
+
+This avoids re-detecting what init already discovered. Research agents should use this metadata as a starting point and only re-detect if it appears stale.
+
+---
+
 ## Step 4: Codebase research (delegate to /hoangsa:research)
 
-Delegate codebase research to the research workflow in **auto mode**, scoped to **codebase only**:
+Delegate codebase research to the research workflow in **auto mode**, scoped to **codebase only**. Pass the `codebase` metadata from config so research agents don't re-detect project structure from scratch:
 
 ```
 Invoke /hoangsa:research with:
