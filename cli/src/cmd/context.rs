@@ -47,10 +47,13 @@ pub fn cmd_pack(session_dir: Option<&str>, task_id: Option<&str>) {
     };
 
     // Build file_segments (with path traversal guard — SEC-003 fix)
-    let workspace_dir = plan
-        .get("workspace_dir")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let workspace_dir = match plan.get("workspace_dir").and_then(|v| v.as_str()) {
+        Some(wd) if !wd.is_empty() => wd,
+        _ => {
+            out(&json!({ "error": "plan.json missing or empty workspace_dir" }));
+            return;
+        }
+    };
     let workspace_canonical = match std::fs::canonicalize(workspace_dir) {
         Ok(p) => p,
         Err(_) => {
