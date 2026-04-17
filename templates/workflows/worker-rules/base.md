@@ -63,6 +63,8 @@ These rules are non-negotiable unless explicitly overridden by project config.
 - **Read only what you need.** Start with `context_pointers`, then `task.files`. Do not explore the entire codebase.
 - **Do not read files unrelated to the task.** Every file read consumes context window — keep it focused.
 - **If you need information not in your context:** report it as a blocker rather than guessing.
+- **Large tool results — evict, don't hoard.** If a tool result exceeds ~100 lines (Grep output, file reads, test output), extract only the relevant lines you need and discard the rest. Do NOT keep massive tool results in your working memory — summarize the key findings, note the file path and line range for re-reading later if needed. Think of your context window as RAM: large tool results are the #1 cause of context rot.
+- **Re-read over recall.** If you need to reference a large file section again later, use `Read` with a targeted `offset`/`limit` rather than trying to hold it all in context from the first read.
 
 ---
 

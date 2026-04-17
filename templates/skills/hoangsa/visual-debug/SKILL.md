@@ -9,7 +9,7 @@ license: MIT
 compatibility: "Claude Code >= 1.0, ffmpeg (optional, for video)"
 metadata:
   author: hoangsa
-  version: 1.0.0
+  version: 0.0.1
   category: debugging
   spec: agentskills.io/1.0
 ---

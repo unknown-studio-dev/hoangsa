@@ -266,7 +266,18 @@ Load worker rules using a **middleware composition chain** (inspired by Deep Age
 5. **Apply pre-invoke gates** (if any addon has `pre_invoke_gate`):
    - Run the gate command. If it fails, skip this addon with a warning.
 
-6. **Compose final rules:**
+6. **Enforce allowed_tools** (capability gating):
+   - Collect `allowed_tools` arrays from all matching addons
+   - If ANY addon specifies a non-empty `allowed_tools`, compute the **union** of all addon allowed_tools lists
+   - If the union is non-empty, append this block to the worker prompt (after the rules):
+     ```
+     ## Tool Restrictions
+     You are ONLY allowed to use these tools: <comma-separated union list>
+     Do NOT use any tool not on this list. If you need a restricted tool, report it as a blocker.
+     ```
+   - If all addons have empty `allowed_tools` → no restriction (worker uses full toolset)
+
+7. **Compose final rules:**
    - Concatenate in chain order: `before_base addons + "\n---\n" + base + "\n---\n" + after_base addons + "\n---\n" + project overrides + "\n---\n" + tail addons`
    - Strip frontmatter from each addon before concatenation
    - Append to worker prompt
@@ -665,6 +676,10 @@ This is HOANGSA's core value proposition. Never compromise on it.
 3. **Middleware chain composition** — Worker rules are composed in a deterministic order (before_base → base → after_base → project → tail), sorted by priority then name within each group. Deterministic ordering maximizes Anthropic prompt cache hit rates.
 
 4. **Deterministic tool sorting** — MCP tools and addon rules are always sorted alphabetically by name. This ensures the same configuration always produces the same prompt prefix, enabling efficient prompt caching (~90% cost savings on cached portions).
+
+5. **Context eviction** — Workers are instructed to evict large tool results (>100 lines) from working memory: extract key findings, note file path + line range for re-reading, discard the rest. This prevents context rot from accumulating massive Grep/Read outputs. (Adapted from DeepAgents `FilesystemMiddleware.wrap_tool_call` pattern — prompt-level enforcement rather than code-level.)
+
+6. **Capability gating** — Addons can restrict worker tool access via `allowed_tools` frontmatter field. When enforced, workers receive an explicit tool restriction block in their prompt. This prevents research-only workers from accidentally writing files, or security-sensitive addons from allowing shell execution. (Adapted from DeepAgents `SandboxBackendProtocol` capability gating pattern.)
 
 ---
 

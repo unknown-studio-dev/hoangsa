@@ -10,7 +10,7 @@ license: MIT
 compatibility: "Claude Code >= 1.0"
 metadata:
   author: hoangsa
-  version: 1.0.0
+  version: 0.0.1
   category: git
   spec: agentskills.io/1.0
 ---
