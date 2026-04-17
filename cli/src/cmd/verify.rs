@@ -1429,6 +1429,219 @@ fn test_media(t: &mut TestRunner) {
     cleanup(&dir);
 }
 
+// ─── addon tests ────────────────────────────────────────────────────────────
+
+fn test_addon(t: &mut TestRunner) {
+    eprintln!("\n\x1b[1m● addon\x1b[0m");
+
+    let dir = tmp_project();
+    let d = dir.to_str().unwrap();
+
+    // Setup: create .claude/hoangsa/workflows/worker-rules/addons/ with mock addons
+    let addons_dir = dir.join(".claude/hoangsa/workflows/worker-rules/addons");
+    fs::create_dir_all(&addons_dir).unwrap();
+
+    fs::write(
+        addons_dir.join("react.md"),
+        "---\nname: react\nframeworks: [\"react\", \"react-native\", \"expo\"]\ntest_frameworks: [\"jest\", \"vitest\"]\n---\n\n# React addon\n",
+    )
+    .unwrap();
+    fs::write(
+        addons_dir.join("vue.md"),
+        "---\nname: vue\nframeworks: [\"vue\", \"nuxt\"]\ntest_frameworks: [\"vitest\"]\n---\n\n# Vue addon\n",
+    )
+    .unwrap();
+    fs::write(
+        addons_dir.join("rust.md"),
+        "---\nname: rust\nframeworks: [\"rust\", \"axum\"]\ntest_frameworks: [\"cargo-test\"]\n---\n\n# Rust addon\n",
+    )
+    .unwrap();
+
+    // Create config.json with codebase section
+    let config_dir = dir.join(".hoangsa");
+    fs::write(
+        config_dir.join("config.json"),
+        serde_json::to_string_pretty(&json!({
+            "profile": "balanced",
+            "preferences": { "lang": "en", "tech_stack": ["rust"] },
+            "codebase": { "active_addons": [] },
+            "task_manager": { "provider": null }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    // T-INT-01: addon list — shows available + active
+    {
+        let out = t.run_json(&["addon", "list", d], &dir);
+        t.check(
+            "addon list shows available",
+            out["available"].as_array().map(|a| a.len()).unwrap_or(0) == 3,
+            &format!("expected 3 available, got {out:?}"),
+        );
+        t.check(
+            "addon list shows active_addons empty",
+            out["active_addons"].as_array().map(|a| a.len()).unwrap_or(1) == 0,
+            &format!("got {out:?}"),
+        );
+        // Check that each available has name, frameworks, active fields
+        if let Some(avail) = out["available"].as_array() {
+            let first = &avail[0];
+            t.check(
+                "addon list item has name+frameworks+active",
+                first["name"].is_string()
+                    && first["frameworks"].is_array()
+                    && first["active"].is_boolean(),
+                &format!("got {first:?}"),
+            );
+        }
+    }
+
+    // T-INT-02: addon add — enables addons
+    {
+        let out = t.run_json(&["addon", "add", d, "[\"react\",\"rust\"]"], &dir);
+        t.check(
+            "addon add success",
+            out["success"] == true,
+            &format!("got {out:?}"),
+        );
+        t.check(
+            "addon add active_addons updated",
+            out["active_addons"].as_array().map(|a| a.len()).unwrap_or(0) == 2,
+            &format!("got {out:?}"),
+        );
+        // Check config.json was updated
+        let config: Value = serde_json::from_str(
+            &fs::read_to_string(config_dir.join("config.json")).unwrap(),
+        )
+        .unwrap();
+        let active = config["codebase"]["active_addons"]
+            .as_array()
+            .map(|a| a.len())
+            .unwrap_or(0);
+        t.check(
+            "addon add config.json synced",
+            active == 2,
+            &format!("config active_addons len={active}"),
+        );
+        // Check project-level addon files copied
+        t.check(
+            "addon add copies react.md",
+            dir.join(".hoangsa/worker-rules/addons/react.md").exists(),
+            "react.md not found in project addons",
+        );
+        // Check worker-rules.md regenerated
+        let wr = fs::read_to_string(dir.join(".hoangsa/worker-rules.md")).unwrap_or_default();
+        t.check(
+            "addon add syncs worker-rules.md",
+            wr.contains("react") && wr.contains("rust"),
+            "worker-rules.md missing addon entries",
+        );
+    }
+
+    // T-INT-03: addon add — rejects unknown addon
+    {
+        let out = t.run_json(&["addon", "add", d, "[\"nonexistent\"]"], &dir);
+        t.check(
+            "addon add unknown → error",
+            out["error"].is_string()
+                && out["error"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("nonexistent"),
+            &format!("got {out:?}"),
+        );
+    }
+
+    // T-INT-04: addon add — idempotent (no duplicate)
+    {
+        let out = t.run_json(&["addon", "add", d, "[\"react\"]"], &dir);
+        t.check(
+            "addon add idempotent",
+            out["success"] == true
+                && out["active_addons"]
+                    .as_array()
+                    .map(|a| a.len())
+                    .unwrap_or(0)
+                    == 2,
+            &format!("got {out:?}"),
+        );
+    }
+
+    // T-INT-05: addon remove — disables addons
+    {
+        let out = t.run_json(&["addon", "remove", d, "[\"react\"]"], &dir);
+        t.check(
+            "addon remove success",
+            out["success"] == true,
+            &format!("got {out:?}"),
+        );
+        t.check(
+            "addon remove active_addons updated",
+            out["active_addons"].as_array().map(|a| a.len()).unwrap_or(0) == 1,
+            &format!("got {out:?}"),
+        );
+        t.check(
+            "addon remove deletes project addon file",
+            !dir.join(".hoangsa/worker-rules/addons/react.md").exists(),
+            "react.md still exists after remove",
+        );
+    }
+
+    // T-INT-06: addon remove — ignores non-active addon
+    {
+        let out = t.run_json(&["addon", "remove", d, "[\"vue\"]"], &dir);
+        t.check(
+            "addon remove non-active → success",
+            out["success"] == true,
+            &format!("got {out:?}"),
+        );
+    }
+
+    // T-INT-07: addon list — no projectDir
+    {
+        // We pass no extra args beyond "addon list" — but our routing always injects cwd
+        // so test with explicit non-existent dir via env override won't work.
+        // Instead test list shows correct active status after add/remove
+        let out = t.run_json(&["addon", "list", d], &dir);
+        let active_count = out["active_addons"]
+            .as_array()
+            .map(|a| a.len())
+            .unwrap_or(0);
+        t.check(
+            "addon list after remove shows 1 active",
+            active_count == 1,
+            &format!("expected 1 active, got {active_count}"),
+        );
+        // Check rust is still active
+        let has_rust = out["available"]
+            .as_array()
+            .and_then(|a| {
+                a.iter()
+                    .find(|v| v["name"] == "rust")
+                    .map(|v| v["active"] == true)
+            })
+            .unwrap_or(false);
+        t.check(
+            "addon list rust still active",
+            has_rust,
+            "rust should be active",
+        );
+    }
+
+    // T-INT-08: addon add — invalid JSON
+    {
+        let out = t.run_json(&["addon", "add", d, "not-json"], &dir);
+        t.check(
+            "addon add invalid JSON → error",
+            out["error"].is_string(),
+            &format!("got {out:?}"),
+        );
+    }
+
+    cleanup(&dir);
+}
+
 // ─── entry point ─────────────────────────────────────────────────────────────
 
 pub fn cmd_verify(project_dir: &str) {
@@ -1465,6 +1678,7 @@ pub fn cmd_verify(project_dir: &str) {
     test_statusline_context(&mut t);
     test_statusline_integration(&mut t);
     test_media(&mut t);
+    test_addon(&mut t);
 
     eprintln!("\n\x1b[1m─── results ───\x1b[0m");
     let total = t.passed + t.failed;

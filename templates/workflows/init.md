@@ -857,8 +857,65 @@ Use AskUserQuestion:
     - label: "Sửa codebase", description: "Sửa stack / build / test commands"
   multiSelect: false
 
-If "OK" → proceed to Step 5.
+If "OK" → proceed to Step 4b (addon selection).
 If "Sửa ..." → jump back to the relevant step, re-run from there.
+
+---
+
+## Step 4b: Addon selection (post-detection)
+
+After user confirms config, offer addon customization. Auto-detected addons may miss frameworks (e.g., NestJS detected only as "typescript"). This step lets users add/remove addons before saving.
+
+```bash
+ADDON_LIST=$("$HOANGSA_ROOT/bin/hoangsa-cli" addon list .)
+```
+
+Parse available addons and the auto-detected active list. Show:
+
+```
+Worker-rules addons (auto-detected):
+  ✅ rust — rust, axum, actix-web, rocket, warp, tokio, leptos, tauri
+  ✅ javascript — javascript, nodejs, node, bun
+
+  Có muốn thêm/bớt addons?
+```
+
+Use AskUserQuestion:
+  question: "Addons auto-detected xong. Muốn chỉnh không?"
+  header: "Addons"
+  options:
+    - label: "OK — giữ nguyên", description: "Dùng addons đã detect — recommended"
+    - label: "Thêm addons", description: "Chọn thêm addons từ danh sách available"
+    - label: "Bỏ addons", description: "Xóa addons không cần thiết"
+  multiSelect: false
+
+If "OK" → proceed to Step 5.
+
+If "Thêm addons" → show multi-select of inactive addons:
+  Use AskUserQuestion:
+    question: "Chọn addons muốn thêm:"
+    header: "Add"
+    options: (up to 4 inactive addons, sorted by relevance to detected stack)
+    multiSelect: true
+
+  For selected addons:
+  ```bash
+  "$HOANGSA_ROOT/bin/hoangsa-cli" addon add . '["addon1","addon2"]'
+  ```
+
+If "Bỏ addons" → show multi-select of active addons:
+  Use AskUserQuestion:
+    question: "Chọn addons muốn bỏ:"
+    header: "Remove"
+    options: (active addons)
+    multiSelect: true
+
+  For selected addons:
+  ```bash
+  "$HOANGSA_ROOT/bin/hoangsa-cli" addon remove . '["addon1"]'
+  ```
+
+After changes, show updated addon list and proceed to Step 5.
 
 ---
 
