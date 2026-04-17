@@ -31,6 +31,7 @@ const args = process.argv.slice(2);
 const hasGlobal = args.includes("--global") || args.includes("-g");
 const hasLocal = args.includes("--local") || args.includes("-l");
 const hasUninstall = args.includes("--uninstall") || args.includes("-u");
+const hasMedia = args.includes("--media");
 
 /** Resolve global config dir: ~/.claude */
 function getGlobalDir() {
@@ -64,7 +65,7 @@ console.log(banner);
 // Show help if requested
 if (hasHelp) {
   console.log(
-    `  ${yellow}Usage:${reset} npx hoangsa-cc [options]\n\n  ${yellow}Options:${reset}\n    ${cyan}-g, --global${reset}              Install globally (to ~/.claude/)\n    ${cyan}-l, --local${reset}               Install locally (to ./.claude/)\n    ${cyan}-u, --uninstall${reset}           Uninstall HOANGSA (remove all HOANGSA files)\n    ${cyan}-h, --help${reset}                Show this help message\n\n  ${yellow}Examples:${reset}\n    ${dim}# Interactive install (prompts for location)${reset}\n    npx hoangsa-cc\n\n    ${dim}# Install globally${reset}\n    npx hoangsa-cc --global\n\n    ${dim}# Install to current project only${reset}\n    npx hoangsa-cc --local\n\n    ${dim}# Uninstall HOANGSA globally${reset}\n    npx hoangsa-cc --global --uninstall\n`,
+    `  ${yellow}Usage:${reset} npx hoangsa-cc [options]\n\n  ${yellow}Options:${reset}\n    ${cyan}-g, --global${reset}              Install globally (to ~/.claude/)\n    ${cyan}-l, --local${reset}               Install locally (to ./.claude/)\n    ${cyan}    --media${reset}               Include video debugging support (montage/diff)\n    ${cyan}-u, --uninstall${reset}           Uninstall HOANGSA (remove all HOANGSA files)\n    ${cyan}-h, --help${reset}                Show this help message\n\n  ${yellow}Examples:${reset}\n    ${dim}# Interactive install (prompts for location)${reset}\n    npx hoangsa-cc\n\n    ${dim}# Install globally${reset}\n    npx hoangsa-cc --global\n\n    ${dim}# Install with video debugging support${reset}\n    npx hoangsa-cc --global --media\n\n    ${dim}# Install to current project only${reset}\n    npx hoangsa-cc --local\n\n    ${dim}# Uninstall HOANGSA globally${reset}\n    npx hoangsa-cc --global --uninstall\n`,
   );
   process.exit(0);
 }
@@ -82,21 +83,32 @@ function platformPackageName() {
   return process.platform === "win32" ? "windows" : process.platform;
 }
 
-function resolvePlatformBinary() {
+function resolvePlatformBinary(wantMedia = false) {
   const platform = process.platform; // 'darwin', 'linux', 'win32'
-  const arch = process.arch;         // 'x64', 'arm64'
-  const binaryName = platform === "win32" ? "hoangsa-cli.exe" : "hoangsa-cli";
+  const arch = process.arch; // 'x64', 'arm64'
+  const ext = platform === "win32" ? ".exe" : "";
+  const binaryName = wantMedia ? `hoangsa-cli-media${ext}` : `hoangsa-cli${ext}`;
+  const fallbackName = `hoangsa-cli${ext}`; // if media binary not found, fall back to default
 
   // Only x64 and arm64 have published packages
   if (arch === "x64" || arch === "arm64") {
     const pkgName = `@hoangsa-cc/cli-${platformPackageName()}-${arch}`;
     try {
-      // createRequire-based resolve works in ESM context
       const pkgJsonPath = _require.resolve(`${pkgName}/package.json`);
       const pkgDir = path.dirname(pkgJsonPath);
       const binPath = path.join(pkgDir, "bin", binaryName);
       if (fs.existsSync(binPath)) {
         return binPath;
+      }
+      // If --media requested but media binary not in package, fall back to default
+      if (wantMedia) {
+        const fallbackPath = path.join(pkgDir, "bin", fallbackName);
+        if (fs.existsSync(fallbackPath)) {
+          console.log(
+            `  ${yellow}⚠${reset} Media binary not found in platform package — using default binary`,
+          );
+          return fallbackPath;
+        }
       }
     } catch (_) {
       // Package not installed — fall through to dev build
@@ -104,9 +116,33 @@ function resolvePlatformBinary() {
   }
 
   // Fallback: local development build
-  const devBinary = path.join(__dirname, "..", "cli", "target", "release", binaryName);
+  const devBinary = path.join(
+    __dirname,
+    "..",
+    "cli",
+    "target",
+    "release",
+    binaryName,
+  );
   if (fs.existsSync(devBinary)) {
     return devBinary;
+  }
+  // Try default dev binary if media not found
+  if (wantMedia) {
+    const devFallback = path.join(
+      __dirname,
+      "..",
+      "cli",
+      "target",
+      "release",
+      fallbackName,
+    );
+    if (fs.existsSync(devFallback)) {
+      console.log(
+        `  ${yellow}⚠${reset} Media binary not found — using default. Build with: npm run build:media`,
+      );
+      return devFallback;
+    }
   }
 
   return null;
@@ -124,7 +160,6 @@ const LEGACY_AGENT_FILES = [
   "fix.md",
   "research.md",
 ];
-
 
 /** Read and parse settings.json; return {} on missing/invalid. */
 function readSettings(settingsPath) {
@@ -278,11 +313,15 @@ function cleanupHooksFromSettings(settings) {
       settings.hooks[event] = settings.hooks[event].filter(
         (entry) =>
           !Array.isArray(entry.hooks) ||
-          !entry.hooks.some((h) => h.command && h.command.includes("hoangsa-cli")),
+          !entry.hooks.some(
+            (h) => h.command && h.command.includes("hoangsa-cli"),
+          ),
       );
       if (settings.hooks[event].length < before) {
         changed = true;
-        console.log(`  ${green}✓${reset} Removed HOANGSA ${event} hooks from settings`);
+        console.log(
+          `  ${green}✓${reset} Removed HOANGSA ${event} hooks from settings`,
+        );
       }
       if (settings.hooks[event].length === 0) delete settings.hooks[event];
     }
@@ -313,7 +352,8 @@ function uninstall(isGlobal) {
     return;
   }
 
-  let removedCount = removeDirectories(targetDir) + cleanupLegacyAgents(targetDir);
+  let removedCount =
+    removeDirectories(targetDir) + cleanupLegacyAgents(targetDir);
 
   // Clean up hooks from settings
   const settingsPath = path.join(targetDir, "settings.json");
@@ -463,7 +503,7 @@ function reportLocalPatches(configDir) {
 }
 
 /** Copy all template files to targetDir (commands, workflows, binary, CHANGELOG, VERSION). */
-function copyAllFiles(src, targetDir, attribution) {
+function copyAllFiles(src, targetDir, attribution, wantMedia = false) {
   const failures = [];
   const hoangsaDestDir = path.join(targetDir, "hoangsa");
 
@@ -520,9 +560,10 @@ function copyAllFiles(src, targetDir, attribution) {
   // Copy compiled binary — prefer platform package, fall back to dev build
   const binDestDir = path.join(hoangsaDestDir, "bin");
   fs.mkdirSync(binDestDir, { recursive: true });
-  const binaryDestName = process.platform === "win32" ? "hoangsa-cli.exe" : "hoangsa-cli";
+  const binaryDestName =
+    process.platform === "win32" ? "hoangsa-cli.exe" : "hoangsa-cli";
   const binaryDest = path.join(binDestDir, binaryDestName);
-  const resolvedBinary = resolvePlatformBinary();
+  const resolvedBinary = resolvePlatformBinary(wantMedia);
   if (resolvedBinary) {
     fs.copyFileSync(resolvedBinary, binaryDest);
     fs.chmodSync(binaryDest, 0o755);
@@ -564,14 +605,21 @@ function copyAllFiles(src, targetDir, attribution) {
       continue;
     }
     try {
-      execSync(`npx skills add ${source}@${skill} -g -y`, { stdio: "pipe", timeout: 30000 });
+      execSync(`npx skills add ${source}@${skill} -g -y`, {
+        stdio: "pipe",
+        timeout: 30000,
+      });
       skillsInstalled++;
     } catch {
-      console.log(`  ${yellow}⚠${reset} Failed to install ${skill} — quality gate will skip this analyzer`);
+      console.log(
+        `  ${yellow}⚠${reset} Failed to install ${skill} — quality gate will skip this analyzer`,
+      );
     }
   }
   if (skillsInstalled > 0) {
-    console.log(`  ${green}✓${reset} Quality gate skills: ${skillsInstalled}/${qualitySkills.length} ready`);
+    console.log(
+      `  ${green}✓${reset} Quality gate skills: ${skillsInstalled}/${qualitySkills.length} ready`,
+    );
   }
 
   return failures;
@@ -579,10 +627,16 @@ function copyAllFiles(src, targetDir, attribution) {
 
 /** Remove .hoangsa/project-memory.json from current project (dead since v2.x — conventions now handled by worker-rules + addons). */
 function cleanupProjectMemory() {
-  const memoryFile = path.join(process.cwd(), ".hoangsa", "project-memory.json");
+  const memoryFile = path.join(
+    process.cwd(),
+    ".hoangsa",
+    "project-memory.json",
+  );
   if (fs.existsSync(memoryFile)) {
     fs.unlinkSync(memoryFile);
-    console.log(`  ${green}✓${reset} Removed deprecated .hoangsa/project-memory.json`);
+    console.log(
+      `  ${green}✓${reset} Removed deprecated .hoangsa/project-memory.json`,
+    );
   }
 }
 
@@ -625,7 +679,7 @@ function install(isGlobal) {
   saveLocalPatches(targetDir);
 
   // Copy all files
-  const failures = copyAllFiles(src, targetDir, attribution);
+  const failures = copyAllFiles(src, targetDir, attribution, hasMedia);
 
   // Clean up legacy artifacts
   cleanupLegacy(targetDir);
@@ -657,9 +711,7 @@ function install(isGlobal) {
       execSync("npx @unknownstudio/thoth", { stdio: "pipe" });
       console.log(`  ${green}✓${reset} Installed thoth`);
     } catch (e) {
-      console.log(
-        `  ${yellow}⚠${reset} Could not install thoth: ${e.message}`,
-      );
+      console.log(`  ${yellow}⚠${reset} Could not install thoth: ${e.message}`);
     }
   }
 
