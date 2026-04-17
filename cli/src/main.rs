@@ -33,6 +33,18 @@ fn main() {
     let rest: Vec<&str> = args.iter().skip(2).map(|s| s.as_str()).collect();
 
     match (cmd, sub) {
+        ("addon", "list") => {
+            let dir = rest.first().copied().unwrap_or(&cwd);
+            cmd::addon::cmd_list(Some(dir));
+        }
+        ("addon", "add") => {
+            let dir = rest.first().copied().unwrap_or(&cwd);
+            cmd::addon::cmd_add(Some(dir), rest.get(1).copied());
+        }
+        ("addon", "remove") => {
+            let dir = rest.first().copied().unwrap_or(&cwd);
+            cmd::addon::cmd_remove(Some(dir), rest.get(1).copied());
+        }
         ("validate", "plan") => cmd::validate::cmd_plan(rest.first().unwrap_or(&"")),
         ("validate", "spec") => cmd::validate::cmd_spec(rest.first().unwrap_or(&"")),
         ("validate", "tests") => cmd::validate::cmd_tests(rest.first().unwrap_or(&"")),
@@ -102,6 +114,9 @@ fn main() {
             eprintln!(
                 "
 Usage:
+  hoangsa-cli addon list <projectDir>
+  hoangsa-cli addon add <projectDir> '<json_array>'
+  hoangsa-cli addon remove <projectDir> '<json_array>'
   hoangsa-cli validate plan <path>
   hoangsa-cli validate spec <path>
   hoangsa-cli validate tests <path>

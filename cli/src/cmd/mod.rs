@@ -1,3 +1,4 @@
+pub mod addon;
 pub mod commit;
 pub mod config;
 pub mod context;
