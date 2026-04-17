@@ -146,6 +146,28 @@ The taste workflow does NOT attempt to fix failures itself — that is the fix w
 
 ---
 
+## Step 3b: Track lesson outcomes (if Thoth available)
+
+After all tests are run, update lesson outcome scores based on results. This feeds Thoth's auto-quarantine system — lessons that consistently lead to failures get demoted automatically.
+
+```bash
+if [ -f ".thoth/graph.redb" ]; then
+  echo "THOTH_AVAILABLE"
+fi
+```
+
+If Thoth is available:
+
+1. Read `.thoth/LESSONS.md` and identify lessons that mention symbols/modules touched by the tested tasks
+2. For each relevant lesson:
+   - If the related task **passed** → `thoth_lesson_outcome({lesson_index: <N>, outcome: "success"})`
+   - If the related task **failed** and the lesson was supposed to prevent that kind of failure → `thoth_lesson_outcome({lesson_index: <N>, outcome: "failure"})`
+3. Only score lessons with clear relevance — do not score every lesson for every task
+
+This is lightweight — skip if no lessons match the tested modules. The goal is gradual signal accumulation, not exhaustive scoring.
+
+---
+
 ## Step 4: Update task statuses
 
 For each task, update status in plan.json:

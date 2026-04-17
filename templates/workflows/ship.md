@@ -131,6 +131,18 @@ Handling:
 
 If verdict is PASS → auto-proceed to Step 5.
 
+## Step 4b: Flag high-risk changes for review
+
+If Thoth is available and any review issue has severity CRITICAL:
+
+```
+thoth_request_review({reason: "Pre-ship: <N> critical issues found in <files>"})
+```
+
+This creates a marker in Thoth's episode log so the team can track which ships had flagged risks, even if the user overrides.
+
+---
+
 ## Step 5: Ship action
 
 Use AskUserQuestion:

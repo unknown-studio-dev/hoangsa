@@ -198,7 +198,12 @@ Instructions:
 7. Commit with message: "<task_type>(<session_id>): <task.name>"
 
 Acceptance command: <task.acceptance>
+
+After task completion (pass or fail):
+  thoth_episode_append({event: "task_completed", data: {task_id: "<task.id>", status: "<pass|fail>", files_changed: [<list>]}})
 ```
+
+**THOTH_ACTOR:** Set `THOTH_ACTOR=hoangsa/cook-wave-<N>` environment variable when spawning workers. This selects the `hoangsa/cook-*` gate policy (longer recall window, lower relevance threshold) so workers have less friction during implementation.
 
 **Token budget tracking:** Track token usage per task. If a task approaches 80% of its budget_tokens, warn. If it exceeds budget, the worker should wrap up current work and report partial completion rather than continuing.
 

@@ -406,6 +406,28 @@ Fixing...
 
 ---
 
+## Step 4b: Persist bug lesson (if Thoth available)
+
+After a successful fix, persist the root cause as a lesson so future agents avoid the same trap:
+
+```
+thoth_remember_lesson({
+  when: "touching <module/file where bug lived>",
+  then: "<root cause pattern — what was wrong and why>",
+  stage: true
+})
+```
+
+Also log the fix event for background review context:
+
+```
+thoth_episode_append({event: "bug_fixed", data: {root_cause: "<summary>", files_changed: [<list>], layers_affected: [<list>]}})
+```
+
+Skip this step if Thoth is unavailable or the fix was trivial (typo, missing import).
+
+---
+
 ## Step 5: Auto-chain to taste
 
 After all fix tasks complete, automatically chain to `/hoangsa:taste` to verify the fix did not introduce regressions.

@@ -94,10 +94,27 @@ thoth_recall({query: "description of what you're looking for"})
 
 Returns execution flows ranked by relevance. Better than `Grep` for understanding how pieces connect.
 
+### After completing a task successfully:
+
+```
+thoth_remember_fact({content: "Implemented <task.name>: <1-line summary of what changed>", tags: ["cook", "<session_id>"], stage: true})
+```
+
+This stages a fact about the work you did. It counts toward draining reflection debt without committing to MEMORY.md — the orchestrator or user can promote/reject later via `thoth_memory_promote` / `thoth_memory_reject`.
+
+### If you fixed a bug or discovered a non-obvious pattern:
+
+```
+thoth_remember_lesson({when: "touching <module or symbol>", then: "<what you learned>", stage: true})
+```
+
+Only persist lessons that would help a future agent avoid the same trap. Do not persist obvious things.
+
 ### Rules:
 
 - **Impact before edit.** Run `thoth_impact` on every symbol you're about to modify. This is not optional — it prevents breaking callers you didn't know about.
 - **HIGH/CRITICAL = report.** If impact analysis returns HIGH or CRITICAL risk, report it to the orchestrator with the affected symbols. Do not proceed without acknowledgment.
+- **Remember after success.** After task acceptance passes, persist a staged fact about what you changed. If you learned something non-obvious, persist a staged lesson too.
 - **Fallback gracefully.** If a Thoth tool call fails (timeout, error), fall back to Grep/Glob. Do not block on it.
 - **Thoth unavailable = skip.** If the orchestrator does not pass `THOTH_AVAILABLE`, use Grep/Glob as usual. Do not attempt Thoth calls.
 

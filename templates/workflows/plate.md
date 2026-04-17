@@ -37,6 +37,34 @@ Exclude files that are clearly out of scope (e.g. `.env`, secrets, large binarie
 
 ---
 
+## Step 2b: Drain pending Thoth memory
+
+If `.thoth/MEMORY.pending.md` or `.thoth/LESSONS.pending.md` has entries, handle them before committing:
+
+```bash
+PENDING_F=$(grep -c '^### ' .thoth/MEMORY.pending.md 2>/dev/null || echo 0)
+PENDING_L=$(grep -c '^### ' .thoth/LESSONS.pending.md 2>/dev/null || echo 0)
+```
+
+If `PENDING_F + PENDING_L > 0`:
+
+1. Show pending entries to user:
+   ```
+   <N> pending memory entries from this session:
+     [F-0] <fact preview>
+     [L-0] <lesson preview>
+   ```
+
+2. For each entry, auto-promote if it looks useful, or ask:
+   - Entries tagged with the current session ID → `thoth_memory_promote({kind: "fact", index: N})` automatically
+   - Other entries → show and let user decide
+
+3. If `memory_mode` in `.thoth/config.toml` is `"auto"` → skip this step (entries were already committed directly)
+
+This ensures staged memory from workers gets promoted before the commit, keeping MEMORY.md and LESSONS.md in sync with the codebase state.
+
+---
+
 ## Step 3: Generate commit message
 
 Derive a conventional commit message from:

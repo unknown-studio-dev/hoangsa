@@ -179,6 +179,8 @@ MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model researcher)
 
 Use the resolved model for spawning research agents.
 
+**THOTH_ACTOR:** Set `THOTH_ACTOR=hoangsa/research-<agent>` for research agents. This selects the `hoangsa/research-*` gate policy (gate disabled) so read-only research agents are not blocked by the gate.
+
 Launch 3 parallel research agents:
 
 ### Agent 1 — Structure
