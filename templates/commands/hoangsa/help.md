@@ -30,7 +30,7 @@ Commands:
   /hoangsa:research  Deep research — codebase + external → RESEARCH.md
   /hoangsa:audit     Audit codebase — code smells, security, tech debt → AUDIT-REPORT.md
   /hoangsa:serve     Sync task status to external task manager
-  /hoangsa:index     Re-index codebase with GitNexus
+  /hoangsa:index     Re-index codebase with Thoth
   /hoangsa:help      Show this help
   /hoangsa:update    Update HOANGSA to latest version
 

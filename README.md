@@ -49,7 +49,7 @@ The orchestrator never writes code. It dispatches workers, each with a bounded c
 
 **Task Manager Integration** — Bidirectional sync with ClickUp and Asana. Pull task details as context, push status/comments/reports back after work completes.
 
-**GitNexus Code Intelligence** — Built-in call graph analysis. Impact analysis before edits, safe renames across the codebase, and full execution flow tracing.
+**Thoth Code Intelligence** — Built-in call graph analysis. Impact analysis before edits, safe renames across the codebase, and full execution flow tracing.
 
 **Visual Debugging** — Analyze screenshots and screen recordings. Extract frames from video, generate montages, and overlay diffs to spot visual regressions.
 
@@ -98,8 +98,8 @@ npx hoangsa-cc --uninstall
 | `--uninstall` | `-u` | Remove HOANGSA |
 
 The installer also sets up:
-- Lifecycle hooks (statusline, context monitor, update checker, GitNexus tracker)
-- GitNexus MCP server for code intelligence
+- Lifecycle hooks (statusline, context monitor, update checker)
+- Thoth MCP for code intelligence and persistent memory
 - Task manager MCP integration (if configured)
 - Quality gate skills (silent-failure-hunter, pr-test-analyzer, comment-analyzer, type-design-analyzer)
 
@@ -161,7 +161,7 @@ idea  →  /menu      Design    →  DESIGN-SPEC + TEST-SPEC
 |---------|-------------|
 | `/hoangsa:init` | Initialize — detect codebase, configure preferences, first-time setup |
 | `/hoangsa:check` | Status — show current session progress and pending tasks |
-| `/hoangsa:index` | Index — rebuild GitNexus code intelligence graph |
+| `/hoangsa:index` | Index — rebuild Thoth code intelligence graph |
 | `/hoangsa:update` | Update — upgrade HOANGSA to the latest version |
 | `/hoangsa:help` | Help — show all available commands |
 
@@ -305,7 +305,7 @@ hoangsa/
 |-------|-----------|---------|
 | CLI | Rust | Session management, DAG traversal, state machine, validation, media analysis, hooks |
 | Installer | Node.js | Package distribution, slash command registration, hook setup |
-| Code Intelligence | GitNexus MCP | Call graph, impact analysis, safe rename, execution flow tracing |
+| Code Intelligence | Thoth MCP | Call graph, impact analysis, symbol context, execution flow tracing |
 | AI Runtime | Claude Code | Orchestrator + worker execution |
 
 ### Hooks
@@ -316,7 +316,6 @@ HOANGSA installs lifecycle hooks into Claude Code:
 |------|-------|---------|
 | Statusline | `SessionStart` | Display session info, token usage, project context |
 | Context Monitor | `PostToolUse` | Track context window usage, warn on high utilization |
-| GitNexus Tracker | `PostToolUse` | Track file modifications for index freshness |
 | Update Checker | `SessionStart` | Notify when a new HOANGSA version is available |
 
 ### Worker Rules & Framework Addons
@@ -345,7 +344,7 @@ Angular, Express.js, Flutter, Go, Java, JavaScript, NestJS, Next.js, Python, Rea
 
 ### Code Intelligence
 
-- GitNexus MCP (call graphs, impact analysis, execution flow tracing, safe rename)
+- Thoth MCP (call graphs, impact analysis, execution flow tracing, persistent memory)
 
 ### Quality Gate Skills
 

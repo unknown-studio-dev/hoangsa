@@ -13,7 +13,7 @@ allowed-tools:
 
 <output>
 <objective>
-One-time project onboarding. Detects (or scaffolds) the codebase, sets user preferences, configures model routing, and indexes with GitNexus.
+One-time project onboarding. Detects (or scaffolds) the codebase, sets user preferences, configures model routing, and indexes with Thoth.
 
 Creates `.hoangsa/config.json` with complete project configuration:
 - User preferences (lang, spec_lang, interaction_level, review_style)

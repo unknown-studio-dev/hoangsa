@@ -51,7 +51,7 @@ Orchestrator không bao giờ viết code. Nó dispatch các worker, mỗi worke
 
 **Tích hợp Task Manager** — Đồng bộ hai chiều với ClickUp và Asana. Kéo thông tin task làm context bổ sung và đẩy kết quả ngược lại sau khi công việc hoàn thành.
 
-**GitNexus Code Intelligence** — Phân tích call graph tích hợp sẵn. Impact analysis trước mỗi lần sửa, đổi tên an toàn trên toàn bộ codebase, và truy vết toàn bộ execution flow.
+**Thoth Code Intelligence** — Phân tích call graph tích hợp sẵn. Impact analysis trước mỗi lần sửa, đổi tên an toàn trên toàn bộ codebase, và truy vết toàn bộ execution flow.
 
 **Debug Trực Quan** — Phân tích screenshot và screen recording. Trích xuất frame từ video, tạo montage grid, và overlay diff để phát hiện regression trực quan.
 
@@ -100,8 +100,8 @@ npx hoangsa-cc --uninstall
 | `--uninstall` | `-u` | Gỡ HOANGSA |
 
 Installer cũng cài đặt:
-- Lifecycle hooks (statusline, context monitor, update checker, GitNexus tracker)
-- GitNexus MCP server cho code intelligence
+- Lifecycle hooks (statusline, context monitor, update checker)
+- Thoth MCP cho code intelligence và persistent memory
 - Tích hợp task manager MCP (nếu cấu hình)
 - Quality gate skills (silent-failure-hunter, pr-test-analyzer, comment-analyzer, type-design-analyzer)
 
@@ -163,7 +163,7 @@ Installer cũng cài đặt:
 |------|-------|
 | `/hoangsa:init` | Khởi tạo — phát hiện codebase, cấu hình preferences, thiết lập lần đầu |
 | `/hoangsa:check` | Trạng thái — hiển thị tiến độ session hiện tại và các task đang chờ |
-| `/hoangsa:index` | Index — xây dựng lại đồ thị code intelligence GitNexus |
+| `/hoangsa:index` | Index — xây dựng lại đồ thị code intelligence Thoth |
 | `/hoangsa:update` | Cập nhật — nâng cấp HOANGSA lên phiên bản mới nhất |
 | `/hoangsa:help` | Trợ giúp — hiển thị tất cả lệnh có sẵn |
 
@@ -307,7 +307,7 @@ hoangsa/
 |------|-----------|---------|
 | CLI | Rust | Quản lý session, duyệt DAG, state machine, validation, phân tích media, hooks |
 | Installer | Node.js | Phân phối package, đăng ký slash command, cài đặt hooks |
-| Code Intelligence | GitNexus MCP | Call graph, impact analysis, đổi tên an toàn, truy vết execution flow |
+| Code Intelligence | Thoth MCP | Call graph, impact analysis, symbol context, truy vết execution flow |
 | AI Runtime | Claude Code | Thực thi orchestrator + worker |
 
 ### Hooks
@@ -318,7 +318,6 @@ HOANGSA cài đặt lifecycle hooks vào Claude Code:
 |------|-------|---------|
 | Statusline | `SessionStart` | Hiển thị thông tin session, token usage, project context |
 | Context Monitor | `PostToolUse` | Theo dõi sử dụng context window, cảnh báo khi cao |
-| GitNexus Tracker | `PostToolUse` | Theo dõi file thay đổi để cập nhật index |
 | Update Checker | `SessionStart` | Thông báo khi có phiên bản HOANGSA mới |
 
 ### Worker Rules & Framework Addons
@@ -347,7 +346,7 @@ Angular, Express.js, Flutter, Go, Java, JavaScript, NestJS, Next.js, Python, Rea
 
 ### Code Intelligence
 
-- GitNexus MCP (call graphs, impact analysis, truy vết execution flow, đổi tên an toàn)
+- Thoth MCP (call graphs, impact analysis, truy vết execution flow, persistent memory)
 
 ### Quality Gate Skills
 
