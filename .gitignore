@@ -9,3 +9,5 @@ cli/target/
 coverage/
 .gitnexus
 AGENTS.md
+.idea
+.thoth
