@@ -10,7 +10,6 @@ allowed-tools:
   - AskUserQuestion
 ---
 
-<output>
 <objective>
 Analyze a bug with cross-layer root cause tracing (FE↔BE↔API↔DB), create a minimal fix plan (1–3 tasks, each <10k tokens), implement the fixes, run /simplify on changed files, then auto-chain to /hoangsa:taste.
 
@@ -32,4 +31,3 @@ Read the first path that exists.
 Follow the fix workflow loaded above.
 </process>
 
-</output>

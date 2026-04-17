@@ -6,7 +6,6 @@ allowed-tools:
   - Bash
 ---
 
-<output>
 <objective>
 Read the active session's state and display a rich progress overview: session ID, stack, wave-by-wave task progress with budget usage, and a list of available artifacts (specs, plan, memory).
 </objective>
@@ -22,4 +21,3 @@ Read the first path that exists.
 Follow the check workflow loaded above.
 </process>
 
-</output>

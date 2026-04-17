@@ -13,7 +13,6 @@ allowed-tools:
   - WebFetch
 ---
 
-<output>
 <objective>
 Perform a comprehensive audit of the current codebase, producing a detailed AUDIT-REPORT.md that covers:
 
@@ -40,4 +39,3 @@ Read the first path that exists.
 Follow the audit workflow loaded above.
 </process>
 
-</output>

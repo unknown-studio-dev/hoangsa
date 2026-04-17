@@ -4,7 +4,6 @@ description: Show HOANGSA commands and workflow
 allowed-tools: []
 ---
 
-<output>
 <objective>
 Display HOANGSA help — the 3-phase workflow and available commands.
 </objective>
@@ -54,4 +53,3 @@ Session data lives in .hoangsa/sessions/<type>/
 ```
 </process>
 
-</output>

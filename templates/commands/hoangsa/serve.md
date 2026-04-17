@@ -11,7 +11,6 @@ allowed-tools:
   - WebFetch
 ---
 
-<output>
 <objective>
 Bidirectional sync between HOANGSA sessions and external task managers via MCP.
 
@@ -33,4 +32,3 @@ Read the first path that exists.
 Follow the serve workflow loaded above.
 </process>
 
-</output>

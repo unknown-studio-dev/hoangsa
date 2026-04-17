@@ -13,7 +13,6 @@ allowed-tools:
   - AskUserQuestion
 ---
 
-<output>
 <objective>
 Execute plan.json wave-by-wave. Each task runs in a fresh context window (context engineering). After each worker completes, a /simplify pass auto-runs to fix code quality issues before proceeding. Includes 3-tier verification: static analysis, behavioral tests ×3, semantic review against spec.
 
@@ -31,4 +30,3 @@ Read the first path that exists.
 Follow the cook workflow loaded above.
 </process>
 
-</output>

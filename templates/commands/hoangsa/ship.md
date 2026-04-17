@@ -9,7 +9,6 @@ allowed-tools:
   - AskUserQuestion
 ---
 
-<output>
 <objective>
 Review code changes (code quality + security) in parallel, block on critical issues, then let user push or create PR.
 </objective>
@@ -25,4 +24,3 @@ Read the first path that exists.
 Follow the ship workflow loaded above.
 </process>
 
-</output>

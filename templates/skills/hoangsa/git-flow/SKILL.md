@@ -3,12 +3,11 @@ name: git-flow
 description: "This skill should be used when the user wants to start a new task, switch between tasks, park or resume work, finish a task (push + PR), clean up merged branches, or sync with upstream. Triggers on phrases like 'start task', 'new task', 'work on', 'switch to', 'park this', 'resume', 'continue where I left off', 'done with this', 'finish task', 'create PR', 'clean branches', 'delete merged', 'rebase', 'pull latest', or 'sync with main'."
 ---
 
-# Git Flow — Developer Task Workflow
-
+<objective>
 Manage git branching, task switching, and code lifecycle. Complements `/plate` (commit) and `/serve` (sync) by handling everything around them: branch creation, dirty state detection, task transitions, PR creation, and cleanup.
+</objective>
 
-## When to Use
-
+<triggers>
 - "start new task" / "new feature" / "work on TASK-123"
 - "switch to task X" / "let me work on something else"
 - "park this" / "save for later" / "I'll come back to this"
@@ -17,14 +16,12 @@ Manage git branching, task switching, and code lifecycle. Complements `/plate` (
 - "clean up branches" / "delete merged branches"
 - "pull latest" / "rebase" / "sync with main"
 - "I have uncommitted changes" / "is it safe to switch?"
+</triggers>
 
-## Core Principle
+<detection>
+**Core Principle:** Detect, don't assume. Infer branching strategy, naming conventions, and base branch from the repository's git history. Ask the user only when detection is ambiguous.
 
-**Detect, don't assume.** Infer branching strategy, naming conventions, and base branch from the repository's git history. Ask the user only when detection is ambiguous.
-
-## Detection: Run Once Per Session
-
-Before any flow, gather repository context:
+Run once per session before any flow:
 
 ```bash
 # 1. Detect base branch
@@ -53,11 +50,10 @@ git log --oneline -5
 - Extract separator: `-`, `_`, `/`
 - Extract task ID pattern: `PROJ-123`, `#123`, no ID
 - Use the most common pattern found
+</detection>
 
-## Flows
-
-### Flow 1: Start Task
-
+<flows>
+<flow name="start-task">
 Trigger: "start task", "new task", "work on X"
 
 1. Run detection (above)
@@ -67,15 +63,15 @@ Trigger: "start task", "new task", "work on X"
    - gitflow feature → from `develop`
    - gitflow hotfix → from `main`/`master`
    - trunk-based → from `main`/`master`
-5. Check for dirty state → if dirty, trigger Flow 3 (Park) first
+5. Check for dirty state → if dirty, trigger Park flow first
 6. Create and checkout branch:
    ```bash
    git checkout -b <branch-name> <base-branch>
    ```
 7. Confirm to user: branch name, base, ready to work
+</flow>
 
-### Flow 2: Switch Task
-
+<flow name="switch-task">
 Trigger: "switch to", "work on X instead", user starts talking about different task
 
 1. Detect dirty state (`git status --porcelain`)
@@ -85,11 +81,11 @@ Trigger: "switch to", "work on X instead", user starts talking about different t
    - **Discard** → confirm twice, then `git checkout -- .`
 3. Switch to target:
    - Branch exists → `git checkout <branch>`
-   - Branch doesn't exist → trigger Flow 1 (Start Task)
+   - Branch doesn't exist → trigger Start Task flow
 4. If target branch has stashed work → notify user, offer to pop
+</flow>
 
-### Flow 3: Park Work
-
+<flow name="park-work">
 Trigger: "park this", "save for later", "I need to step away"
 
 Two strategies — ask user preference (save to config on first ask):
@@ -107,9 +103,9 @@ git stash push -m "PARK: <task-description> [$(git branch --show-current)]"
 ```
 
 After parking, optionally switch to another branch (ask user).
+</flow>
 
-### Flow 4: Resume Work
-
+<flow name="resume-work">
 Trigger: "resume", "continue", "back to task X", "where was I"
 
 1. Find parked work:
@@ -124,13 +120,13 @@ Trigger: "resume", "continue", "back to task X", "where was I"
    ```
 2. Show user what's parked with context
 3. User selects which to resume
-4. Handle dirty state on current branch (Flow 2 logic)
+4. Handle dirty state on current branch (Switch Task logic)
 5. Checkout target branch
 6. If stash → `git stash pop`
 7. If WIP commit → notify user (they can `git reset HEAD~1` to unstage, or keep working and squash later)
+</flow>
 
-### Flow 5: Finish Task
-
+<flow name="finish-task">
 Trigger: "done", "finish", "create PR", "push this"
 
 1. If uncommitted changes → chain to `/plate`
@@ -148,9 +144,9 @@ Trigger: "done", "finish", "create PR", "push this"
 4. Show PR URL to user
 5. Chain to `/serve` if external task linked (update status to "In Review")
 6. Ask: stay on branch or switch to base?
+</flow>
 
-### Flow 6: Cleanup
-
+<flow name="cleanup">
 Trigger: "clean branches", "delete merged", "prune"
 
 ```bash
@@ -164,9 +160,9 @@ git branch -d <branch>
 # Prune remote tracking
 git remote prune origin
 ```
+</flow>
 
-### Flow 7: Sync Upstream
-
+<flow name="sync-upstream">
 Trigger: "pull latest", "rebase", "sync", "update from main"
 
 1. Detect preferred strategy (rebase vs merge) from git log:
@@ -187,13 +183,22 @@ Trigger: "pull latest", "rebase", "sync", "update from main"
    ```
 4. Handle conflicts: show conflicted files, help resolve
 5. Pop stash if stashed
+</flow>
+</flows>
 
-## Dirty State Guard
+<rules>
+| Rule | Detail |
+|------|--------|
+| **Detect, don't assume** | Infer strategy and conventions from git history |
+| **Never lose work** | Always handle dirty state before branch operations |
+| **Confirm destructive actions** | Double-confirm discards, force-pushes, branch deletes |
+| **Chain, don't duplicate** | Use `/plate` for commits, `/serve` for sync |
+| **Save preferences** | Ask once, save to config, don't repeat |
+| **User's language** | Respect `lang` pref for all user-facing text |
+| **Dirty State Guard** | Before ANY branch operation, always check `git status --porcelain`. If output is non-empty, handle dirty state BEFORE proceeding. Never silently discard changes. |
+</rules>
 
-**Critical behavior**: Before ANY branch operation, always check `git status --porcelain`. If output is non-empty, handle dirty state BEFORE proceeding. Never silently discard changes.
-
-## Preferences (saved to config)
-
+<preferences>
 | Key | Values | Default |
 |-----|--------|---------|
 | `git_park_strategy` | `wip_commit`, `stash` | `wip_commit` |
@@ -204,20 +209,9 @@ Read/write via:
 "$HOANGSA_ROOT/bin/hoangsa-cli" pref get . <key>
 "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . <key> <value>
 ```
+</preferences>
 
-## Rules
-
-| Rule | Detail |
-|------|--------|
-| **Detect, don't assume** | Infer strategy and conventions from git history |
-| **Never lose work** | Always handle dirty state before branch operations |
-| **Confirm destructive actions** | Double-confirm discards, force-pushes, branch deletes |
-| **Chain, don't duplicate** | Use `/plate` for commits, `/serve` for sync |
-| **Save preferences** | Ask once, save to config, don't repeat |
-| **User's language** | Respect `lang` pref for all user-facing text |
-
-## Workflow Integration
-
+<integration>
 This skill is integrated into HOANGSA workflows via the shared `git-context.md` module:
 
 | Workflow | Integration Point | Behavior |
@@ -228,9 +222,8 @@ This skill is integrated into HOANGSA workflows via the shared `git-context.md` 
 | `/plate` | Step 6 (after commit) | Push + PR + switch options |
 
 The skill provides the knowledge; `git-context.md` provides the executable steps that workflows reference.
+</integration>
 
-## Additional Resources
-
-### Reference Files
-
+<references>
 - **`references/flows.md`** — Edge cases, conflict resolution guides, dirty state decision tree, PR templates, and advanced scenarios (interactive rebase, cherry-pick, finding lost work)
+</references>

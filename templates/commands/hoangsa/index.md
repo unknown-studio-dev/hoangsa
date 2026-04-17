@@ -5,7 +5,6 @@ allowed-tools:
   - Bash
 ---
 
-<output>
 <objective>
 Run thoth index on the workspace to build/refresh the codebase index.
 
@@ -33,4 +32,3 @@ The workflow handles all logic including:
 5. Report results
 </process>
 
-</output>

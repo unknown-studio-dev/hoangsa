@@ -11,7 +11,6 @@ allowed-tools:
   - AskUserQuestion
 ---
 
-<output>
 <objective>
 One-time project onboarding. Detects (or scaffolds) the codebase, sets user preferences, configures model routing, and indexes with Thoth.
 
@@ -33,4 +32,3 @@ Read the first path that exists.
 Follow the init workflow loaded above.
 </process>
 
-</output>

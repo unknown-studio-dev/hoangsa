@@ -9,7 +9,6 @@ allowed-tools:
   - AskUserQuestion
 ---
 
-<output>
 <objective>
 Decompose DESIGN-SPEC + TEST-SPEC into an executable plan.json with tasks, dependencies (DAG), budgets, and runnable acceptance commands.
 
@@ -27,4 +26,3 @@ Read the first path that exists.
 Follow the prepare workflow loaded above.
 </process>
 
-</output>

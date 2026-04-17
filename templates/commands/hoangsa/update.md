@@ -6,7 +6,6 @@ allowed-tools:
   - AskUserQuestion
 ---
 
-<output>
 <objective>
 Check for HOANGSA updates, install if available, and display what changed.
 
@@ -40,4 +39,3 @@ The workflow handles all logic including:
 8. Cache clearing
 </process>
 
-</output>

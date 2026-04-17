@@ -9,7 +9,6 @@ allowed-tools:
   - AskUserQuestion
 ---
 
-<output>
 <objective>
 Lead the user from a vague idea to a complete DESIGN-SPEC.md + TEST-SPEC.md, ready for planning.
 
@@ -33,4 +32,3 @@ Read the first path that exists.
 Follow the menu workflow loaded above.
 </process>
 
-</output>

@@ -1,0 +1,24 @@
+# .thothignore — Thoth-specific ignore rules (gitignore syntax).
+# Layered on top of .gitignore. Edit freely.
+
+# Thoth data (always ignored by the watcher, but explicit here too)
+.thoth/
+
+# Node / JS / TS
+node_modules/
+dist/
+build/
+.next/
+.nuxt/
+coverage/
+*.min.js
+*.bundle.js
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Common generated / large files
+*.generated.*
+*.min.css
+*.map
+*.pb.rs

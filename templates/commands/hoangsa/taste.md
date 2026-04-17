@@ -10,7 +10,6 @@ allowed-tools:
   - AskUserQuestion
 ---
 
-<output>
 <objective>
 Run acceptance tests for each task in the current session, report pass/fail results clearly, and update task statuses in plan.json.
 
@@ -28,4 +27,3 @@ Read the first path that exists.
 Follow the taste workflow loaded above.
 </process>
 
-</output>

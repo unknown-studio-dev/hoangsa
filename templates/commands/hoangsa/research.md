@@ -13,7 +13,6 @@ allowed-tools:
   - WebFetch
 ---
 
-<output>
 <objective>
 Research a topic deeply by combining codebase analysis with external research, producing a RESEARCH.md artifact.
 
@@ -34,4 +33,3 @@ Read the first path that exists.
 Follow the research workflow loaded above.
 </process>
 
-</output>

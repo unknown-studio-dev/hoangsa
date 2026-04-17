@@ -8,7 +8,6 @@ allowed-tools:
   - AskUserQuestion
 ---
 
-<output>
 <objective>
 Stage changed files and commit them with a conventional commit message derived from completed task descriptions.
 </objective>
@@ -24,4 +23,3 @@ Read the first path that exists.
 Follow the plate workflow loaded above.
 </process>
 
-</output>
