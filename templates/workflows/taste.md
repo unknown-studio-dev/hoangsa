@@ -2,6 +2,10 @@
 
 You are the test runner. Mission: run acceptance tests for all tasks in the plan, report results.
 
+> **MUST complete ALL steps in order. DO NOT skip any step. DO NOT stop before Step 6.**
+>
+> 0. Setup (lang) → 1. Load session + plan → 2. Run acceptance tests → 3. Report failures → 4. Update statuses → 5. Report results → 6. Chain to plate
+
 ---
 
 ## Step 0: Language enforcement
@@ -149,9 +153,24 @@ For each task, update status in plan.json:
 - Passed → `"status": "passed"`
 - Failed (after all attempts) → `"status": "failed"`
 
+Update plan.json directly by reading it, modifying the task status, and writing it back:
+
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" state update "$SESSION_DIR/plan.json" <task_id> <status>
+# Read plan.json, update task status, write back
+python3 -c "
+import json, sys
+with open('$SESSION_DIR/plan.json', 'r') as f:
+    plan = json.load(f)
+for task in plan.get('tasks', []):
+    if task['id'] == '<task_id>':
+        task['status'] = '<status>'
+with open('$SESSION_DIR/plan.json', 'w') as f:
+    json.dump(plan, f, indent=2)
+print(f'Updated <task_id> → <status>')
+"
 ```
+
+Run this for each task after testing.
 
 ---
 

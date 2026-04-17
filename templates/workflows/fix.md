@@ -2,6 +2,10 @@
 
 Analyze a bug, create a minimal fix plan, implement the fixes, and chain to taste.
 
+> **MUST complete ALL steps in order. DO NOT skip any step. DO NOT stop before Step 6.**
+>
+> 0. Setup (lang + Thoth + task link) → 1. Analyze bug → 2. Cross-layer trace → 3. Confirm fix plan → 4. Implement fixes → 5. Chain to taste → 6. Report + sync
+
 ---
 
 ## Step 0a: Language enforcement
@@ -465,6 +469,26 @@ Use AskUserQuestion:
 
 3. Execute sync via MCP based on user's choice
 4. Report result with link back to task
+
+---
+
+## Self-verification checklist
+
+Before reporting completion, output this table. Every row MUST show DONE or SKIPPED:
+
+```
+| Step | Status |
+|------|--------|
+| 0. Setup (lang + Thoth + task link) | DONE / SKIPPED |
+| 1. Analyze bug | DONE / SKIPPED |
+| 2. Cross-layer trace | DONE / SKIPPED |
+| 3. Confirm fix plan | DONE / SKIPPED |
+| 4. Implement fixes | DONE / SKIPPED |
+| 5. Chain to taste | DONE / SKIPPED |
+| 6. Report + sync | DONE / SKIPPED |
+```
+
+If any step shows SKIPPED without explicit user approval, go back and complete it before stopping.
 
 ---
 

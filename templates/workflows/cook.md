@@ -4,6 +4,10 @@ You are the orchestrator. Mission: execute the plan wave-by-wave, verify results
 
 **Principles:** Orchestrator does NOT write code. Only dispatch, monitor, report, escalate. Each task runs in a **fresh context** — this is the core of HOANGSA's context engineering.
 
+> **MUST complete ALL steps in order. DO NOT skip any step. DO NOT stop before Step 6.**
+>
+> 0. Setup (lang + Thoth) → 1. Load & validate plan → 2. Confirm with user → 3. Execute waves → 4. Escalation + quality gate → 5. Verification (3-tier) → 6. Final report + chain
+
 ---
 
 ## Step 0a: Language enforcement
@@ -555,6 +559,44 @@ Semantic check:
     1. Fix the failing tests
     2. Re-run /hoangsa:cook to retry remaining scope
     3. Or fix manually
+```
+
+---
+
+## Self-verification checklist
+
+Before reporting completion in Step 6, output this table. Every row MUST show DONE or SKIPPED:
+
+```
+| Step | Status |
+|------|--------|
+| 0. Setup (lang + Thoth) | DONE / SKIPPED |
+| 1. Load & validate plan | DONE / SKIPPED |
+| 2. Confirm with user | DONE / SKIPPED |
+| 3. Execute all waves | DONE / SKIPPED |
+| 4. Escalation handling | DONE / SKIPPED |
+| 4d. Code Quality Gate | DONE / SKIPPED |
+| 5. Verification (3-tier) | DONE / SKIPPED |
+| 6. Final report | DONE / SKIPPED |
+```
+
+If any step shows SKIPPED without explicit user approval, go back and complete it before stopping.
+
+---
+
+## State persistence
+
+Update `state.json` at key checkpoints so progress survives context compaction or crash:
+
+```bash
+# At Step 2 (after user confirms):
+"$HOANGSA_ROOT/bin/hoangsa-cli" state update "$SESSION_DIR" '{"status":"cooking"}'
+
+# At Step 6 (final report — all pass):
+"$HOANGSA_ROOT/bin/hoangsa-cli" state update "$SESSION_DIR" '{"status":"done"}'
+
+# At Step 6 (partial/failures):
+"$HOANGSA_ROOT/bin/hoangsa-cli" state update "$SESSION_DIR" '{"status":"failed"}'
 ```
 
 ---

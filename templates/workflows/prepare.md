@@ -4,6 +4,10 @@ You are the decomposer. Mission: turn spec into an executable JSON plan with **a
 
 **Principles:** Plan must be self-contained. Acceptance must be a runnable command. Checker runs before showing user.
 
+> **MUST complete ALL steps in order. DO NOT skip any step. DO NOT stop before Step 8.**
+>
+> 0. Setup (lang) → 1. Load session + specs → 2. Detect stack → 3. Generate plan → 4. DAG validation → 5. Checker loop (MANDATORY) → 6. Context packs → 7. User approval → 8. Save plan
+
 ---
 
 ## Step 0: Language enforcement
@@ -351,6 +355,28 @@ Report:
 ## Context engineering rules
 
 Each task in the plan will execute in a **fresh context window** during cook phase. This prevents context rot — the quality degradation that occurs as Claude fills its context window. The plan must be self-contained enough that each task can execute independently with only its `context_pointers` and `acceptance` criteria.
+
+---
+
+## Self-verification checklist
+
+Before reporting completion in Step 8, output this table. Every row MUST show DONE or SKIPPED:
+
+```
+| Step | Status |
+|------|--------|
+| 0. Setup (lang) | DONE / SKIPPED |
+| 1. Load session + specs | DONE / SKIPPED |
+| 2. Detect stack | DONE / SKIPPED |
+| 3. Generate plan | DONE / SKIPPED |
+| 4. DAG validation | DONE / SKIPPED |
+| 5. Checker loop | DONE / SKIPPED |
+| 6. Context packs | DONE / SKIPPED |
+| 7. User approval | DONE / SKIPPED |
+| 8. Save plan | DONE / SKIPPED |
+```
+
+If any step shows SKIPPED without explicit user approval, go back and complete it before stopping.
 
 ---
 
