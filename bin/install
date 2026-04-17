@@ -69,19 +69,6 @@ if (hasHelp) {
   process.exit(0);
 }
 
-/** Build absolute hook command: "<configDir>/hoangsa/bin/hoangsa-cli" hook <sub> */
-function buildHookCommand(configDir, hookSubcommand) {
-  const binPath = configDir.replace(/\\/g, "/") + "/hoangsa/bin/hoangsa-cli";
-  return `"${binPath}" hook ${hookSubcommand}`;
-}
-
-/** Resolve hook command: absolute path for global installs, relative for local. */
-function resolveHookCommand(isGlobal, targetDir, hookSubcommand) {
-  return isGlobal
-    ? buildHookCommand(targetDir, hookSubcommand)
-    : `".claude/hoangsa/bin/hoangsa-cli" hook ${hookSubcommand}`;
-}
-
 /**
  * Resolve the pre-built hoangsa-cli binary from a platform-specific npm package.
  * Tries @hoangsa-cc/cli-<platform>-<arch> first (published packages), then
@@ -138,54 +125,6 @@ const LEGACY_AGENT_FILES = [
   "research.md",
 ];
 
-/**
- * Hook definitions — drives both setup (install) and cleanup (uninstall).
- * Each entry maps a Claude Code lifecycle event to a named hook subcommand.
- */
-const HOOK_DEFINITIONS = [
-  {
-    event: "SessionStart",
-    hookName: "check-update",
-    label: "update check hook",
-  },
-  {
-    event: "PostToolUse",
-    hookName: "context-monitor",
-    label: "context monitor hook",
-  },
-];
-
-/** Add hook to settings[event] if no existing entry already contains matchStr. */
-function addHook(settings, event, matchStr, command) {
-  if (!settings.hooks) settings.hooks = {};
-  if (!settings.hooks[event]) settings.hooks[event] = [];
-  const exists = settings.hooks[event].some(
-    (entry) =>
-      entry.hooks &&
-      entry.hooks.some((h) => h.command && h.command.includes(matchStr)),
-  );
-  if (!exists) {
-    settings.hooks[event].push({ hooks: [{ type: "command", command }] });
-    return true;
-  }
-  return false;
-}
-
-/** Remove hooks matching matchStr from settings[event]; prune empty arrays/objects. */
-function removeHook(settings, event, matchStr) {
-  if (!settings.hooks || !settings.hooks[event]) return false;
-  const before = settings.hooks[event].length;
-  settings.hooks[event] = settings.hooks[event].filter(
-    (entry) =>
-      !Array.isArray(entry.hooks) ||
-      !entry.hooks.some((h) => h.command && h.command.includes(matchStr)),
-  );
-  const removed = settings.hooks[event].length < before;
-  if (settings.hooks[event].length === 0) delete settings.hooks[event];
-  if (settings.hooks && Object.keys(settings.hooks).length === 0)
-    delete settings.hooks;
-  return removed;
-}
 
 /** Read and parse settings.json; return {} on missing/invalid. */
 function readSettings(settingsPath) {
@@ -317,10 +256,11 @@ function cleanupLegacyAgents(targetDir, includePattern = false) {
   return removed;
 }
 
-/** Remove all HOANGSA hooks and statusline from settings. Returns true if changed. */
-function removeAllHooks(settings) {
+/** Remove all HOANGSA hooks and statusline from settings.json. Returns true if changed. */
+function cleanupHooksFromSettings(settings) {
   let changed = false;
 
+  // Remove statusline
   if (
     settings.statusLine &&
     settings.statusLine.command &&
@@ -331,31 +271,25 @@ function removeAllHooks(settings) {
     console.log(`  ${green}✓${reset} Removed hoangsa statusline from settings`);
   }
 
-  for (const def of HOOK_DEFINITIONS) {
-    if (removeHook(settings, def.event, `hook ${def.hookName}`)) {
-      changed = true;
-      console.log(
-        `  ${green}✓${reset} Removed HOANGSA ${def.event} hooks from settings`,
+  // Remove all HOANGSA hooks (check-update, context-monitor, tracker)
+  if (settings.hooks) {
+    for (const event of Object.keys(settings.hooks)) {
+      const before = settings.hooks[event].length;
+      settings.hooks[event] = settings.hooks[event].filter(
+        (entry) =>
+          !Array.isArray(entry.hooks) ||
+          !entry.hooks.some((h) => h.command && h.command.includes("hoangsa-cli")),
       );
+      if (settings.hooks[event].length < before) {
+        changed = true;
+        console.log(`  ${green}✓${reset} Removed HOANGSA ${event} hooks from settings`);
+      }
+      if (settings.hooks[event].length === 0) delete settings.hooks[event];
     }
+    if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
   }
 
   return changed;
-}
-
-/** Clean up HOANGSA hooks/statusline from settings.json. Returns 1 if modified. */
-function cleanupSettings(targetDir) {
-  const settingsPath = path.join(targetDir, "settings.json");
-  if (!fs.existsSync(settingsPath)) {
-    return 0;
-  }
-
-  const settings = readSettings(settingsPath);
-  if (removeAllHooks(settings)) {
-    writeSettings(settingsPath, settings);
-    return 1;
-  }
-  return 0;
 }
 
 /** Uninstall HOANGSA: removes all HOANGSA files/hooks, preserves user content. */
@@ -379,10 +313,17 @@ function uninstall(isGlobal) {
     return;
   }
 
-  const removedCount =
-    removeDirectories(targetDir) +
-    cleanupLegacyAgents(targetDir) +
-    cleanupSettings(targetDir);
+  let removedCount = removeDirectories(targetDir) + cleanupLegacyAgents(targetDir);
+
+  // Clean up hooks from settings
+  const settingsPath = path.join(targetDir, "settings.json");
+  if (fs.existsSync(settingsPath)) {
+    const settings = readSettings(settingsPath);
+    if (cleanupHooksFromSettings(settings)) {
+      writeSettings(settingsPath, settings);
+      removedCount++;
+    }
+  }
 
   if (removedCount === 0) {
     console.log(`  ${yellow}⚠${reset} No hoangsa files found to remove.`);
@@ -645,30 +586,17 @@ function cleanupProjectMemory() {
   }
 }
 
-/** Remove legacy tracker hook from settings.json (tracker is now handled by Thoth's own PreToolUse gate). */
-function cleanupLegacyTrackerHook(targetDir) {
-  const settingsPath = path.join(targetDir, "settings.json");
-  if (!fs.existsSync(settingsPath)) return;
-  const settings = readSettings(settingsPath);
-  if (removeHook(settings, "PostToolUse", "hook tracker")) {
-    writeSettings(settingsPath, settings);
-    console.log(`  ${green}✓${reset} Removed legacy tracker hook (now handled by Thoth)`);
-  }
-}
-
-/** Remove legacy artifacts during install (agents + hoangsa-*.md pattern + package.json + project-memory + tracker hook). */
+/** Remove legacy artifacts during install (agents + project-memory + hooks from settings). */
 function cleanupLegacy(targetDir) {
   cleanupLegacyAgents(targetDir, true);
   cleanupProjectMemory();
-  cleanupLegacyTrackerHook(targetDir);
-}
 
-/** Add all HOOK_DEFINITIONS entries to settings (idempotent). */
-function configureHooks(settings, targetDir, isGlobal) {
-  for (const def of HOOK_DEFINITIONS) {
-    const command = resolveHookCommand(isGlobal, targetDir, def.hookName);
-    if (addHook(settings, def.event, `hook ${def.hookName}`, command)) {
-      console.log(`  ${green}✓${reset} Configured ${def.label}`);
+  // Remove all legacy HOANGSA hooks from settings.json
+  const settingsPath = path.join(targetDir, "settings.json");
+  if (fs.existsSync(settingsPath)) {
+    const settings = readSettings(settingsPath);
+    if (cleanupHooksFromSettings(settings)) {
+      writeSettings(settingsPath, settings);
     }
   }
 }
@@ -716,16 +644,9 @@ function install(isGlobal) {
   // Report any backed-up local patches
   reportLocalPatches(targetDir);
 
-  // Configure hooks and statusline in settings.json
+  // Read settings for task manager setup
   const settingsPath = path.join(targetDir, "settings.json");
   const settings = readSettings(settingsPath);
-  const statuslineCommand = resolveHookCommand(
-    isGlobal,
-    targetDir,
-    "statusline",
-  );
-
-  configureHooks(settings, targetDir, isGlobal);
 
   // Install Thoth globally (skip if already installed)
   try {
@@ -752,7 +673,7 @@ function install(isGlobal) {
     );
   }
 
-  return { settingsPath, settings, statuslineCommand };
+  return { settingsPath, settings };
 }
 
 /** Prompt user to configure a task manager MCP server (ClickUp/Asana), or skip. */
@@ -857,11 +778,6 @@ function handleTaskManager(settings, isInteractive, callback) {
  */
 function runPostInstall(result, isInteractive) {
   handleTaskManager(result.settings, isInteractive, () => {
-    result.settings.statusLine = {
-      type: "command",
-      command: result.statuslineCommand,
-    };
-    console.log(`  ${green}✓${reset} Configured statusline`);
     writeSettings(result.settingsPath, result.settings);
     console.log(
       `\n  ${green}Done!${reset} Start Claude Code and run ${cyan}/hoangsa:menu${reset} to begin.\n`,

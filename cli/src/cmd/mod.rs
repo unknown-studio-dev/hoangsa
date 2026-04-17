@@ -3,7 +3,6 @@ pub mod commit;
 pub mod config;
 pub mod context;
 pub mod dag;
-pub mod hook;
 pub mod media;
 pub mod model;
 pub mod pref;

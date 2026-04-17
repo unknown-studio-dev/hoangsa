@@ -77,9 +77,6 @@ fn main() {
         ("config", "set") => cmd::config::cmd_set(rest.first().copied(), rest.get(1).copied()),
         ("context", "pack") => cmd::context::cmd_pack(rest.first().copied(), rest.get(1).copied()),
         ("context", "get") => cmd::context::cmd_get(rest.first().copied(), rest.get(1).copied()),
-        ("hook", "statusline") => cmd::hook::cmd_statusline(),
-        ("hook", "check-update") => cmd::hook::cmd_check_update(),
-        ("hook", "context-monitor") => cmd::hook::cmd_context_monitor(),
         ("verify", _) => {
             let project_dir = if sub.is_empty() { &cwd } else { sub };
             cmd::verify::cmd_verify(project_dir);
@@ -132,9 +129,6 @@ Usage:
   hoangsa-cli config set <projectDir> <jsonPatch>
   hoangsa-cli context pack <sessionDir> <taskId>
   hoangsa-cli context get <sessionDir> <taskId>
-  hoangsa-cli hook statusline
-  hoangsa-cli hook check-update
-  hoangsa-cli hook context-monitor
   hoangsa-cli verify [projectDir]
   hoangsa-cli media probe <file>
   hoangsa-cli media frames <video> [--interval <s>] [--max-frames <n>] [--output-dir <dir>]
