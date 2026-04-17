@@ -83,14 +83,20 @@ fn main() {
             let project_dir = if sub.is_empty() { &cwd } else { sub };
             cmd::verify::cmd_verify(project_dir);
         }
+        #[cfg(feature = "media")]
         ("media", "probe") => cmd::media::cmd_probe(rest.first().unwrap_or(&"")),
+        #[cfg(feature = "media")]
         ("media", "frames") => {
             let owned: Vec<String> = rest.iter().map(|s| s.to_string()).collect();
             cmd::media::cmd_frames(&owned);
         }
+        #[cfg(feature = "media")]
         ("media", "montage") => cmd::media::cmd_montage(&rest),
+        #[cfg(feature = "media")]
         ("media", "diff") => cmd::media::cmd_diff(&rest),
+        #[cfg(feature = "media")]
         ("media", "check-ffmpeg") => cmd::media::cmd_check_ffmpeg(),
+        #[cfg(feature = "media")]
         ("media", "install-ffmpeg") => cmd::media::cmd_install_ffmpeg(),
         ("commit", _) => {
             // commit "<message>" --files f1 f2 ...
