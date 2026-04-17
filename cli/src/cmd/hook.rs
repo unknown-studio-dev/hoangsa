@@ -1,5 +1,4 @@
 use serde_json::{Value, json};
-use std::collections::HashSet;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -24,155 +23,6 @@ fn read_stdin() -> String {
 fn parse_stdin() -> Value {
     let input = read_stdin();
     serde_json::from_str(&input).unwrap_or(json!({}))
-}
-
-// ─── tracker ─────────────────────────────────────────────────────────────────
-
-const BASH_WRITE_PATTERNS: &[&str] = &[
-    ">",
-    "mv ",
-    "cp ",
-    "rm ",
-    "touch ",
-    "mkdir ",
-    "tee ",
-    "install ",
-    "chmod ",
-    "chown ",
-    "truncate ",
-    "dd ",
-    "rsync ",
-    "sed -i",
-    "npm install",
-    "npm ci",
-    "npm run",
-    "npm build",
-    "yarn install",
-    "yarn build",
-    "yarn add",
-    "yarn remove",
-    "pip install",
-    "git checkout",
-    "git reset",
-    "git restore",
-    "git clean",
-    "git merge",
-    "git rebase",
-    "git commit",
-    "git add",
-];
-
-fn bash_likely_writes(cmd: &str) -> bool {
-    if cmd.is_empty() {
-        return false;
-    }
-    // Check redirect operators
-    if cmd.contains('>') {
-        return true;
-    }
-    // Check command patterns (word-boundary aware)
-    for pat in BASH_WRITE_PATTERNS {
-        if pat == &">" {
-            continue;
-        }
-        // Simple word boundary check: pattern at start or preceded by space/pipe/;/&
-        if cmd.starts_with(pat)
-            || cmd.contains(&format!(" {pat}"))
-            || cmd.contains(&format!("|{pat}"))
-            || cmd.contains(&format!(";{pat}"))
-            || cmd.contains(&format!("&{pat}"))
-        {
-            return true;
-        }
-    }
-    false
-}
-
-pub fn cmd_tracker() {
-    let data = parse_stdin();
-    let tool_name = data["tool_name"].as_str().unwrap_or("");
-    let tool_input = &data["tool_input"];
-    let workspace_dir = data["workspace"]["current_dir"]
-        .as_str()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            std::env::current_dir()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string()
-        });
-
-    match tool_name {
-        "Write" | "Edit" | "NotebookEdit" | "Bash" => {}
-        _ => return,
-    }
-
-    // For Bash, only proceed if likely writes files
-    if tool_name == "Bash" {
-        let command = tool_input["command"].as_str().unwrap_or("");
-        if !bash_likely_writes(command) {
-            return;
-        }
-    }
-
-    let gn_dir = Path::new(&workspace_dir).join(".gitnexus");
-    let outdated_path = gn_dir.join(".outdated");
-
-    if !gn_dir.exists() {
-        let _ = fs::create_dir_all(&gn_dir);
-    }
-
-    // Read existing or start fresh
-    let mut outdated: Value = if outdated_path.exists() {
-        fs::read_to_string(&outdated_path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_else(
-                || json!({"marked_at": now_iso(), "changed_files": [], "tool_events": 0}),
-            )
-    } else {
-        json!({"marked_at": now_iso(), "changed_files": [], "tool_events": 0})
-    };
-
-    // Extract file paths
-    let file_path = match tool_name {
-        "Write" | "Edit" => tool_input["file_path"].as_str(),
-        "NotebookEdit" => tool_input["notebook_path"].as_str(),
-        _ => None,
-    };
-
-    // Merge and deduplicate
-    let mut file_set: HashSet<String> = outdated["changed_files"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    if let Some(fp) = file_path {
-        file_set.insert(fp.to_string());
-    }
-
-    // Only write .outdated if there are actual changed files tracked
-    // Exception: Bash commands that pass bash_likely_writes() should still
-    // mark the index as outdated even without specific file paths, since
-    // we know they likely modify files but can't determine which ones.
-    let is_bash_write = tool_name == "Bash";
-    if file_set.is_empty() && !is_bash_write {
-        return;
-    }
-
-    let events = outdated["tool_events"].as_u64().unwrap_or(0) + 1;
-    outdated["marked_at"] = json!(now_iso());
-    outdated["changed_files"] = json!(file_set.into_iter().collect::<Vec<_>>());
-    outdated["tool_events"] = json!(events);
-
-    let _ = fs::write(
-        &outdated_path,
-        serde_json::to_string_pretty(&outdated).unwrap(),
-    );
 }
 
 // ─── statusline ──────────────────────────────────────────────────────────────
@@ -257,10 +107,6 @@ pub fn cmd_statusline() {
     // Update check
     let hoangsa_update = get_update_banner();
 
-    // GitNexus status
-    let workspace_path = data["workspace"]["cwd"].as_str().unwrap_or(dir);
-    let gn_status = get_gitnexus_status(workspace_path);
-
     // Output
     let dirname = Path::new(dir)
         .file_name()
@@ -269,11 +115,11 @@ pub fn cmd_statusline() {
 
     if task.is_empty() {
         print!(
-            "{hoangsa_update}\x1b[2m{model}\x1b[0m \u{2502} \x1b[2m{dirname}\x1b[0m{ctx} \u{2502} {gn_status}"
+            "{hoangsa_update}\x1b[2m{model}\x1b[0m \u{2502} \x1b[2m{dirname}\x1b[0m{ctx}"
         );
     } else {
         print!(
-            "{hoangsa_update}\x1b[2m{model}\x1b[0m \u{2502} \x1b[1m{task}\x1b[0m \u{2502} \x1b[2m{dirname}\x1b[0m{ctx} \u{2502} {gn_status}"
+            "{hoangsa_update}\x1b[2m{model}\x1b[0m \u{2502} \x1b[1m{task}\x1b[0m \u{2502} \x1b[2m{dirname}\x1b[0m{ctx}"
         );
     }
 }
@@ -335,47 +181,6 @@ fn get_update_banner() -> String {
     String::new()
 }
 
-fn get_gitnexus_status(workspace: &str) -> String {
-    let gn_dir = Path::new(workspace).join(".gitnexus");
-    if !gn_dir.exists() {
-        return "\u{26AA} GN: no index".to_string();
-    }
-    let outdated_file = gn_dir.join(".outdated");
-    if outdated_file.exists() {
-        if let Ok(content) = fs::read_to_string(&outdated_file) {
-            if let Ok(outdated) = serde_json::from_str::<Value>(&content) {
-                let count = outdated["changed_files"]
-                    .as_array()
-                    .map(|a| a.len())
-                    .unwrap_or(0);
-                // If changed_files is empty, treat as fresh and clean up stale file
-                if count == 0 {
-                    let _ = fs::remove_file(&outdated_file);
-                } else {
-                    let duration = outdated["marked_at"]
-                        .as_str()
-                        .and_then(parse_iso_timestamp)
-                        .map(|t| format_duration(now_unix().saturating_sub(t)))
-                        .unwrap_or_default();
-                    return format!("\u{1f7e1} GN: outdated ({count} files, {duration})");
-                }
-            } else {
-                return "\u{1f7e1} GN: outdated".to_string();
-            }
-        }
-    }
-    // Fresh — show age from directory mtime
-    if let Ok(meta) = fs::metadata(&gn_dir) {
-        if let Ok(mtime) = meta.modified() {
-            let age_secs = std::time::SystemTime::now()
-                .duration_since(mtime)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            return format!("\u{1f7e2} GN: fresh ({} ago)", format_duration(age_secs));
-        }
-    }
-    "\u{1f7e2} GN: fresh".to_string()
-}
 
 // ─── check-update ────────────────────────────────────────────────────────────
 
@@ -553,106 +358,11 @@ pub fn cmd_context_monitor() {
 
 // ─── util ────────────────────────────────────────────────────────────────────
 
-fn now_iso() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    // Simple ISO 8601 without external crate
-    let secs = now.as_secs();
-    let (y, m, d, h, min, s) = unix_to_ymdhms(secs);
-    format!(
-        "{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}.000Z"
-    )
-}
-
 fn now_unix() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
-}
-
-fn unix_to_ymdhms(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
-    let s = secs % 60;
-    let total_min = secs / 60;
-    let min = total_min % 60;
-    let total_hours = total_min / 60;
-    let h = total_hours % 24;
-    let mut days = (total_hours / 24) as i64;
-
-    // Compute year/month/day from days since epoch (1970-01-01)
-    let mut y: i64 = 1970;
-    loop {
-        let days_in_year = if is_leap(y) { 366 } else { 365 };
-        if days < days_in_year {
-            break;
-        }
-        days -= days_in_year;
-        y += 1;
-    }
-
-    let month_days = if is_leap(y) {
-        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-
-    let mut m = 0;
-    for md in &month_days {
-        if days < *md {
-            break;
-        }
-        days -= md;
-        m += 1;
-    }
-
-    (y as u64, m as u64 + 1, days as u64 + 1, h, min, s)
-}
-
-fn is_leap(y: i64) -> bool {
-    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
-}
-
-fn parse_iso_timestamp(s: &str) -> Option<u64> {
-    // Parse "2026-03-14T15:00:00.000Z" → unix seconds
-    let s = s.trim();
-    if s.len() < 19 {
-        return None;
-    }
-    let y: u64 = s[0..4].parse().ok()?;
-    let m: u64 = s[5..7].parse().ok()?;
-    let d: u64 = s[8..10].parse().ok()?;
-    let h: u64 = s[11..13].parse().ok()?;
-    let min: u64 = s[14..16].parse().ok()?;
-    let sec: u64 = s[17..19].parse().ok()?;
-
-    let mut days: u64 = 0;
-    for yr in 1970..y {
-        days += if is_leap(yr as i64) { 366 } else { 365 };
-    }
-    let month_days = if is_leap(y as i64) {
-        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-    for item in month_days.iter().take((m as usize - 1).min(11)) {
-        days += item;
-    }
-    days += d - 1;
-
-    Some(days * 86400 + h * 3600 + min * 60 + sec)
-}
-
-fn format_duration(secs: u64) -> String {
-    if secs < 60 {
-        return format!("{secs}s");
-    }
-    let min = secs / 60;
-    if min < 60 {
-        return format!("{min}m");
-    }
-    let hours = min / 60;
-    format!("{hours}h")
 }
 
 fn dirs_home() -> String {

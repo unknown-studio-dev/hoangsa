@@ -23,48 +23,36 @@ All user-facing text — questions, options, explanations, reports, status updat
 
 ---
 
-## Step 0b: GitNexus index check (interactive)
+## Step 0b: Thoth index check (interactive)
 
 ```bash
-if [ ! -d ".gitnexus" ]; then
-  echo "GITNEXUS_MISSING"
-elif [ -f ".gitnexus/.outdated" ] && [ "$(cat .gitnexus/.outdated 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); print(len(d.get("changed_files",[])))' 2>/dev/null)" != "0" ]; then
-  echo "GITNEXUS_OUTDATED"
+if [ ! -f ".thoth/graph.redb" ]; then
+  echo "THOTH_NOT_INDEXED"
 else
-  echo "GITNEXUS_AVAILABLE"
+  echo "THOTH_AVAILABLE"
 fi
 ```
 
-Store result as `GITNEXUS_STATUS`.
+Store result as `THOTH_STATUS`.
 
-If `GITNEXUS_AVAILABLE` or after sync completes, resolve the repo name:
-
-```bash
-GITNEXUS_REPO=$(cat .gitnexus/meta.json 2>/dev/null | python3 -c 'import sys,json,os; m=json.load(sys.stdin); print(os.path.basename(m.get("repoPath","")))' 2>/dev/null || basename "$(pwd)")
-# Validate: only alphanumeric, hyphens, underscores allowed
-[[ "$GITNEXUS_REPO" =~ ^[a-zA-Z0-9_-]+$ ]] || GITNEXUS_REPO=$(basename "$(pwd)")
-```
-
-Store as `GITNEXUS_REPO`. Pass both `GITNEXUS_STATUS` and `GITNEXUS_REPO` to all agent prompts.
-
-- If `GITNEXUS_AVAILABLE` → continue. Use GitNexus for codebase exploration during design.
-- If `GITNEXUS_MISSING` or `GITNEXUS_OUTDATED` → ask the user:
+- If `THOTH_AVAILABLE` → continue. Use Thoth tools for codebase exploration during design.
+- If `THOTH_NOT_INDEXED` → ask the user:
 
   Use AskUserQuestion:
-    question: "GitNexus index bị outdated/missing. Sync lại để design spec chính xác hơn?"
-    header: "GitNexus"
+    question: "Thoth index chưa có. Chạy index để design spec chính xác hơn?"
+    header: "Thoth"
     options:
-      - label: "Sync ngay", description: "Chạy gitnexus analyze (~30s) — hiểu architecture, dependencies, execution flows tốt hơn"
+      - label: "Index ngay", description: "Chạy thoth index . (~30s) — hiểu architecture, dependencies, execution flows tốt hơn"
       - label: "Bỏ qua", description: "Dùng Grep/Glob — vẫn thiết kế được nhưng có thể thiếu context về impact"
     multiSelect: false
 
-  If user chọn "Sync ngay":
+  If user chọn "Index ngay":
     ```bash
-    npx gitnexus analyze --embeddings
+    thoth index .
     ```
-    Set `GITNEXUS_STATUS` = `GITNEXUS_AVAILABLE`.
+    Set `THOTH_STATUS` = `THOTH_AVAILABLE`.
 
-  If user chọn "Bỏ qua" → set `GITNEXUS_STATUS` = `GITNEXUS_UNAVAILABLE`, continue.
+  If user chọn "Bỏ qua" → set `THOTH_STATUS` = `THOTH_UNAVAILABLE`, continue.
 
 ---
 
@@ -424,10 +412,10 @@ Invoke /hoangsa:research with:
   - Scope: "codebase"
   - Mode: "auto"
   - Session: use the current $SESSION_DIR (research output goes to $SESSION_DIR/RESEARCH.md)
-  - GitNexus: pass GITNEXUS_STATUS so research agents use gitnexus tools when available
+  - Thoth: pass THOTH_STATUS so research agents use Thoth tools when available
 ```
 
-This avoids duplicating the parallel research agents — the research workflow handles structure, patterns, dependencies, and tests analysis with GitNexus-first fallback.
+This avoids duplicating the parallel research agents — the research workflow handles structure, patterns, dependencies, and tests analysis with Thoth-first fallback.
 
 Set a soft timeout of 120 seconds for research. If research does not complete, proceed with available context and note in DESIGN-SPEC that research was incomplete.
 
@@ -559,7 +547,7 @@ status: "draft"
 
 ### Affected Files
 
-**If GitNexus available:** Use `gitnexus_impact({target: "symbolName", direction: "upstream", repo: GITNEXUS_REPO})` for each symbol being modified to discover all affected files (direct callers at d=1, indirect at d=2). This prevents missing files that import or call the changed code.
+**If Thoth available:** Use `thoth_impact({target: "symbolName", direction: "upstream"})` for each symbol being modified to discover all affected files (direct callers at d=1, indirect at d=2). This prevents missing files that import or call the changed code.
 
 | File | Action | Description | Impact |
 |------|--------|-------------|--------|

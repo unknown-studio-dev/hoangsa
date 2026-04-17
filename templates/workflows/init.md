@@ -999,19 +999,19 @@ Otherwise → save based on choice.
 
 ---
 
-## Step 7: GitNexus index
+## Step 7: Thoth index
 
 If project has code (Flow A or A-lite):
 
 ```
-Indexing codebase with GitNexus...
+Indexing codebase with Thoth...
 ```
 
 ```bash
-timeout 120 npx gitnexus analyze --embeddings && rm -f .gitnexus/.outdated && echo "GITNEXUS_OK" || echo "GITNEXUS_FAIL"
+timeout 120 thoth index . && rm -f .thoth/.outdated && echo "THOTH_OK" || echo "THOTH_FAIL"
 ```
 
-If `gitnexus analyze` fails or times out (>120s), warn user: "GitNexus indexing failed. You can retry later with `/hoangsa:index`." Continue with remaining steps — indexing is non-blocking.
+If `thoth index` fails or times out (>120s), warn user: "Thoth indexing failed. You can retry later with `/hoangsa:index`." Continue with remaining steps — indexing is non-blocking.
 
 If project is empty (Flow B):
 
@@ -1031,7 +1031,7 @@ Project mới — skip indexing. Chạy /hoangsa:index sau khi có code.
    Stacks:       [TypeScript, Python]
    Packages:     3
    Worker rules: .hoangsa/worker-rules.md (addons: react, typescript, python)
-   GitNexus:     ✅ indexed (148 symbols)
+   Thoth:        ✅ indexed (148 symbols)
 
    Get started:
      /hoangsa:menu     — design a new feature

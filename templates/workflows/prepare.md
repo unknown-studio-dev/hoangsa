@@ -65,48 +65,36 @@ If `$SESSION_DIR/EXTERNAL-TASK.md` exists, read it and include external task ref
 
 ---
 
-## Step 1d: GitNexus index check
+## Step 1d: Thoth index check
 
 ```bash
-if [ ! -d ".gitnexus" ]; then
-  echo "GITNEXUS_MISSING"
-elif [ -f ".gitnexus/.outdated" ] && [ "$(cat .gitnexus/.outdated 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); print(len(d.get("changed_files",[])))' 2>/dev/null)" != "0" ]; then
-  echo "GITNEXUS_OUTDATED"
+if [ -f ".thoth/graph.redb" ]; then
+  echo "THOTH_AVAILABLE"
 else
-  echo "GITNEXUS_AVAILABLE"
+  echo "THOTH_NOT_INDEXED"
 fi
 ```
 
-Store result as `GITNEXUS_STATUS`.
+Store result as `THOTH_STATUS`.
 
-If `GITNEXUS_AVAILABLE` or after sync completes, resolve the repo name:
-
-```bash
-GITNEXUS_REPO=$(cat .gitnexus/meta.json 2>/dev/null | python3 -c 'import sys,json,os; m=json.load(sys.stdin); print(os.path.basename(m.get("repoPath","")))' 2>/dev/null || basename "$(pwd)")
-# Validate: only alphanumeric, hyphens, underscores allowed
-[[ "$GITNEXUS_REPO" =~ ^[a-zA-Z0-9_-]+$ ]] || GITNEXUS_REPO=$(basename "$(pwd)")
-```
-
-Store as `GITNEXUS_REPO`. Pass both `GITNEXUS_STATUS` and `GITNEXUS_REPO` to all agent prompts.
-
-- If `GITNEXUS_AVAILABLE` → continue. Use GitNexus in Step 3 for dependency analysis.
-- If `GITNEXUS_MISSING` or `GITNEXUS_OUTDATED` → ask the user:
+- If `THOTH_AVAILABLE` → continue. Use Thoth in Step 3 for dependency analysis.
+- If `THOTH_NOT_INDEXED` → ask the user:
 
   Use AskUserQuestion:
-    question: "GitNexus index bị outdated/missing. Sync lại để plan có dependency graph chính xác hơn?"
-    header: "GitNexus"
+    question: "Thoth index chưa có. Tạo index để plan có dependency graph chính xác hơn?"
+    header: "Thoth"
     options:
-      - label: "Sync ngay", description: "Chạy gitnexus analyze (~30s) — hiểu callers, callees, impact để tạo depends_on và context_pointers chính xác"
+      - label: "Index ngay", description: "Chạy thoth index (~30s) — hiểu callers, callees, impact để tạo depends_on và context_pointers chính xác"
       - label: "Bỏ qua", description: "Dùng Grep/Glob — vẫn tạo plan được nhưng depends_on có thể thiếu"
     multiSelect: false
 
-  If user chọn "Sync ngay":
+  If user chọn "Index ngay":
     ```bash
-    npx gitnexus analyze --embeddings
+    npx thoth index
     ```
-    Set `GITNEXUS_STATUS` = `GITNEXUS_AVAILABLE`.
+    Set `THOTH_STATUS` = `THOTH_AVAILABLE`.
 
-  If user chọn "Bỏ qua" → set `GITNEXUS_STATUS` = `GITNEXUS_UNAVAILABLE`, continue.
+  If user chọn "Bỏ qua" → set `THOTH_STATUS` = `THOTH_NOT_INDEXED`, continue.
 
 ---
 
@@ -170,15 +158,15 @@ Within a phase → maximize parallel, minimize sequential chains.
 
 ### 3e. Context pointers & dependency analysis
 
-**If GitNexus available:** For each key symbol mentioned in the DESIGN-SPEC (types, functions, classes to create or modify):
+**If Thoth available:** For each key symbol mentioned in the DESIGN-SPEC (types, functions, classes to create or modify):
 
-1. Run `gitnexus_context({name: "symbolName", repo: GITNEXUS_REPO})` to get callers, callees, and process participation
+1. Run `thoth_symbol_context({name: "symbolName"})` to get callers, callees, and process participation
 2. Use callers/callees to:
    - Identify correct `depends_on` between tasks (if task A modifies a symbol called by task B's symbol → B depends on A)
    - Generate precise `context_pointers` — include caller definitions that workers need to see
-3. Run `gitnexus_impact({target: "symbolName", direction: "upstream", repo: GITNEXUS_REPO})` for symbols being modified → if HIGH/CRITICAL risk, flag in the plan and consider splitting the task
+3. Run `thoth_impact({target: "symbolName", direction: "upstream"})` for symbols being modified → if HIGH/CRITICAL risk, flag in the plan and consider splitting the task
 
-**If GitNexus unavailable:** Use Grep/Glob to find references and imports. Less precise but functional.
+**If Thoth unavailable:** Use Grep/Glob to find references and imports. Less precise but functional.
 
 **Context pointer format:** `absolute/path/to/file:START_LINE-END_LINE`
 

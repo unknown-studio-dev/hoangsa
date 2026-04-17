@@ -2,7 +2,7 @@
 
 Conduct deep research on a topic — codebase structure, patterns, or external knowledge — and produce a structured RESEARCH.md report.
 
-**Principles:** Ask before assuming. Use GitNexus when available, fall back gracefully. Support both auto and confirm modes. Use AskUserQuestion for all user interactions.
+**Principles:** Ask before assuming. Use Thoth when available, fall back gracefully. Support both auto and confirm modes. Use AskUserQuestion for all user interactions.
 
 ---
 
@@ -23,48 +23,36 @@ All user-facing text — questions, reports, summaries, status updates — **MUS
 
 ---
 
-## Step 0b: GitNexus index check (interactive)
+## Step 0b: Thoth index check (interactive)
 
 ```bash
-if [ ! -d ".gitnexus" ]; then
-  echo "GITNEXUS_MISSING"
-elif [ -f ".gitnexus/.outdated" ] && [ "$(cat .gitnexus/.outdated 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); print(len(d.get("changed_files",[])))' 2>/dev/null)" != "0" ]; then
-  echo "GITNEXUS_OUTDATED"
+if [ -f ".thoth/graph.redb" ]; then
+  echo "THOTH_AVAILABLE"
 else
-  echo "GITNEXUS_AVAILABLE"
+  echo "THOTH_NOT_INDEXED"
 fi
 ```
 
-Store result as `GITNEXUS_STATUS`.
+Store result as `THOTH_STATUS`.
 
-If `GITNEXUS_AVAILABLE` or after sync completes, resolve the repo name:
-
-```bash
-GITNEXUS_REPO=$(cat .gitnexus/meta.json 2>/dev/null | python3 -c 'import sys,json,os; m=json.load(sys.stdin); print(os.path.basename(m.get("repoPath","")))' 2>/dev/null || basename "$(pwd)")
-# Validate: only alphanumeric, hyphens, underscores allowed
-[[ "$GITNEXUS_REPO" =~ ^[a-zA-Z0-9_-]+$ ]] || GITNEXUS_REPO=$(basename "$(pwd)")
-```
-
-Store as `GITNEXUS_REPO`. Pass both `GITNEXUS_STATUS` and `GITNEXUS_REPO` to all research agent prompts.
-
-- If `GITNEXUS_AVAILABLE` → continue. Research agents will use GitNexus tools for codebase analysis.
-- If `GITNEXUS_MISSING` or `GITNEXUS_OUTDATED` → ask the user:
+- If `THOTH_AVAILABLE` → continue. Research agents will use Thoth tools for codebase analysis.
+- If `THOTH_NOT_INDEXED` → ask the user:
 
   Use AskUserQuestion:
-    question: "GitNexus index bị outdated/missing. Sync lại để research codebase sâu hơn?"
-    header: "GitNexus"
+    question: "Thoth index chưa có. Tạo index để research codebase sâu hơn?"
+    header: "Thoth"
     options:
-      - label: "Sync ngay", description: "Chạy gitnexus analyze (~30s) — research agents sẽ có execution flows, call graph, symbol context"
+      - label: "Index ngay", description: "Chạy thoth index (~30s) — research agents sẽ có execution flows, call graph, symbol context"
       - label: "Bỏ qua", description: "Research agents dùng Grep/Glob — vẫn chạy được nhưng thiếu execution flow analysis"
     multiSelect: false
 
-  If user chọn "Sync ngay":
+  If user chọn "Index ngay":
     ```bash
-    npx gitnexus analyze --embeddings
+    npx thoth index
     ```
-    Set `GITNEXUS_STATUS` = `GITNEXUS_AVAILABLE`.
+    Set `THOTH_STATUS` = `THOTH_AVAILABLE`.
 
-  If user chọn "Bỏ qua" → set `GITNEXUS_STATUS` = `GITNEXUS_UNAVAILABLE`, continue.
+  If user chọn "Bỏ qua" → set `THOTH_STATUS` = `THOTH_NOT_INDEXED`, continue.
 
 ---
 
@@ -171,21 +159,17 @@ Store as `RESEARCH_MODE`.
 
 Skip this step if `RESEARCH_SCOPE` is "external".
 
-First, check GitNexus availability:
+First, check Thoth availability:
 
 ```bash
-if [ -d ".gitnexus" ]; then
-  if [ -f ".gitnexus/.outdated" ] && [ "$(cat .gitnexus/.outdated 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); print(len(d.get("changed_files",[])))' 2>/dev/null)" != "0" ]; then
-    echo "GITNEXUS_UNAVAILABLE"
-  else
-    echo "GITNEXUS_AVAILABLE"
-  fi
+if [ -f ".thoth/graph.redb" ]; then
+  echo "THOTH_AVAILABLE"
 else
-  echo "GITNEXUS_UNAVAILABLE"
+  echo "THOTH_NOT_INDEXED"
 fi
 ```
 
-Store result as `GITNEXUS_STATUS`.
+Store result as `THOTH_STATUS`.
 
 ### Model selection
 
@@ -202,10 +186,10 @@ Launch 3 parallel research agents:
 Goal: Understand how the codebase is organized relative to the research topic.
 
 ```
-If GITNEXUS_STATUS == "GITNEXUS_AVAILABLE":
-  - Run gitnexus_query({query: "<RESEARCH_TOPIC>", repo: GITNEXUS_REPO}) to find relevant execution flows
-  - Run gitnexus_context({name: "<key symbol found>", repo: GITNEXUS_REPO}) for top symbols
-Else (GITNEXUS_UNAVAILABLE fallback):
+If THOTH_STATUS == "THOTH_AVAILABLE":
+  - Run thoth_recall({query: "<RESEARCH_TOPIC>"}) to find relevant execution flows
+  - Run thoth_symbol_context({name: "<key symbol found>"}) for top symbols
+Else (THOTH_NOT_INDEXED fallback):
   - Use Glob to find project entry points (index.*, main.*, app.*, server.*)
   - Use Grep to find files referencing the research topic keywords
   - Map module/package layout from directory structure
@@ -221,10 +205,10 @@ Output:
 Goal: Identify coding patterns and conventions used in the codebase.
 
 ```
-If GITNEXUS_STATUS == "GITNEXUS_AVAILABLE":
-  - Use gitnexus_context({name: "<relevant function or class>", repo: GITNEXUS_REPO}) for key symbols
+If THOTH_STATUS == "THOTH_AVAILABLE":
+  - Use thoth_symbol_context({name: "<relevant function or class>"}) for key symbols
   - Trace callers and callees to understand patterns
-Else (GITNEXUS_UNAVAILABLE fallback):
+Else (THOTH_NOT_INDEXED fallback):
   - Use Grep to find error handling patterns (try/catch, Result, Option, etc.)
   - Use Grep to find async patterns (async/await, Promise, Future, goroutine)
   - Sample 2–3 similar implementations for naming conventions
@@ -397,9 +381,9 @@ Next steps:
 | Rule | Detail |
 |------|--------|
 | **AskUserQuestion for all interactions** | Every user-facing question uses AskUserQuestion — no plain text prompts |
-| **GitNexus first, fallback gracefully** | Always try gitnexus tools first; use Grep/Glob if index unavailable |
+| **Thoth first, fallback gracefully** | Always try Thoth tools first; use Grep/Glob if index unavailable |
 | **WebSearch/WebFetch as fallback** | For external research, MCP first, then WebSearch/WebFetch |
-| **Non-blocking index check** | GitNexus warning in Step 0 never halts the workflow |
+| **Non-blocking index check** | Thoth warning in Step 0 never halts the workflow |
 | **Session-flexible** | Works inside a HOANGSA session or standalone — Step 1 handles both |
 | **auto and confirm modes** | Confirm mode adds Step 5 review loop; auto skips it |
 | **RESEARCH.md always produced** | Output file is always written, regardless of scope or mode |

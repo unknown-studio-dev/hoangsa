@@ -1,6 +1,6 @@
 # HOANGSA Index Workflow
 
-You are the indexing agent. Mission: ensure the workspace gitnexus index is up-to-date and the .outdated flag is cleared.
+You are the indexing agent. Mission: ensure the workspace thoth index is up-to-date and the .outdated flag is cleared.
 
 **Principles:** Be fast and silent on success. Only surface errors if something fails. Report a clear summary when done.
 
@@ -29,33 +29,33 @@ All user-facing text **MUST** use the language from `lang` preference (`vi` → 
 
 ---
 
-## Step 1: Check gitnexus installation
+## Step 1: Check thoth installation
 
 Run:
 ```bash
-which gitnexus || npx gitnexus --version
+which thoth || thoth --version
 ```
 
 If the command fails (exit code non-zero) → proceed to Step 2. Otherwise skip to Step 3.
 
 ---
 
-## Step 2: Install gitnexus
+## Step 2: Install thoth
 
 ```bash
-npm install -g gitnexus
+npm install -g @thothpkg/cli
 ```
 
 Wait for completion. If this fails, report the error and stop.
 
 ---
 
-## Step 3: Run gitnexus analyze
+## Step 3: Run thoth index
 
 Record start time, then run:
 ```bash
 START_TIME=$(date +%s)
-OUTPUT=$(gitnexus analyze --embeddings 2>&1)
+OUTPUT=$(thoth index . 2>&1)
 EXIT_CODE=$?
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
@@ -64,7 +64,7 @@ echo "EXIT_CODE=$EXIT_CODE"
 echo "ELAPSED=${ELAPSED}s"
 ```
 
-Parse gitnexus analyze output for lines matching patterns like `X files` or `X symbols` (e.g., "Indexed 148 symbols from 42 files"). Use regex to extract numbers. If output format is unrecognizable, use "unknown" for counts.
+Parse thoth index output for lines matching patterns like `X files` or `X symbols` (e.g., "Indexed 148 symbols from 42 files"). Use regex to extract numbers. If output format is unrecognizable, use "unknown" for counts.
 
 ---
 
@@ -77,7 +77,7 @@ Wait until the command exits. If exit code is non-zero, report the error output 
 ## Step 5: Clear .outdated flag
 
 ```bash
-rm -f .gitnexus/.outdated
+rm -f .thoth/.outdated
 ```
 
 ---
@@ -89,7 +89,7 @@ Output exactly:
 ✅ Index complete! X files indexed in Ys
 ```
 
-Where X is the file count extracted from gitnexus output (look for lines matching `(\d+)\s*files?` or `(\d+)\s*symbols?`), and Y is elapsed seconds. If the output format is unrecognizable and no counts can be extracted, report: `✅ Indexing complete in Ys` without counts.
+Where X is the file count extracted from thoth output (look for lines matching `(\d+)\s*files?` or `(\d+)\s*symbols?`), and Y is elapsed seconds. If the output format is unrecognizable and no counts can be extracted, report: `✅ Indexing complete in Ys` without counts.
 
 ---
 
@@ -98,6 +98,6 @@ Where X is the file count extracted from gitnexus output (look for lines matchin
 | Rule | Detail |
 |------|--------|
 | **Silent on success** | Only show the final summary line, not verbose output |
-| **Auto-install** | Install gitnexus automatically if missing |
+| **Auto-install** | Install thoth automatically if missing |
 | **Clear .outdated** | Always remove the flag after successful indexing |
-| **Report errors clearly** | Show raw error output if analyze fails |
+| **Report errors clearly** | Show raw error output if index fails |

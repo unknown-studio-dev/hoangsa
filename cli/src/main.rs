@@ -70,7 +70,6 @@ fn main() {
         }
         ("context", "pack") => cmd::context::cmd_pack(rest.first().copied(), rest.get(1).copied()),
         ("context", "get") => cmd::context::cmd_get(rest.first().copied(), rest.get(1).copied()),
-        ("hook", "tracker") => cmd::hook::cmd_tracker(),
         ("hook", "statusline") => cmd::hook::cmd_statusline(),
         ("hook", "check-update") => cmd::hook::cmd_check_update(),
         ("hook", "context-monitor") => cmd::hook::cmd_context_monitor(),

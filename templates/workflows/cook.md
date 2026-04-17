@@ -23,50 +23,38 @@ All user-facing text — status updates, questions, reports, error messages, esc
 
 ---
 
-## Step 0b: GitNexus index check (interactive)
+## Step 0b: Thoth index check (interactive)
 
-Check if the GitNexus index is present and up-to-date:
+Check if the Thoth index is present and up-to-date:
 
 ```bash
-if [ ! -d ".gitnexus" ]; then
-  echo "GITNEXUS_MISSING"
-elif [ -f ".gitnexus/.outdated" ] && [ "$(cat .gitnexus/.outdated 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); print(len(d.get("changed_files",[])))' 2>/dev/null)" != "0" ]; then
-  echo "GITNEXUS_OUTDATED"
+if [ -f ".thoth/graph.redb" ]; then
+  echo "THOTH_AVAILABLE"
 else
-  echo "GITNEXUS_AVAILABLE"
+  echo "THOTH_NOT_INDEXED"
 fi
 ```
 
-Store result as `GITNEXUS_STATUS`.
+Store result as `THOTH_STATUS`.
 
-If `GITNEXUS_AVAILABLE` or after sync completes, resolve the repo name:
-
-```bash
-GITNEXUS_REPO=$(cat .gitnexus/meta.json 2>/dev/null | python3 -c 'import sys,json,os; m=json.load(sys.stdin); print(os.path.basename(m.get("repoPath","")))' 2>/dev/null || basename "$(pwd)")
-# Validate: only alphanumeric, hyphens, underscores allowed
-[[ "$GITNEXUS_REPO" =~ ^[a-zA-Z0-9_-]+$ ]] || GITNEXUS_REPO=$(basename "$(pwd)")
-```
-
-Store as `GITNEXUS_REPO`. Pass both `GITNEXUS_STATUS` and `GITNEXUS_REPO` to all worker prompts.
-
-- If `GITNEXUS_AVAILABLE` → continue. Pass `GITNEXUS_STATUS` and `GITNEXUS_REPO` to all worker prompts so they can use GitNexus tools.
-- If `GITNEXUS_MISSING` or `GITNEXUS_OUTDATED` → ask the user:
+- If `THOTH_AVAILABLE` → continue. Pass `THOTH_STATUS` to all worker prompts so they can use Thoth tools.
+- If `THOTH_NOT_INDEXED` → ask the user:
 
   Use AskUserQuestion:
-    question: "GitNexus index bị outdated/missing. Sync lại để workers có code intelligence tốt hơn?"
-    header: "GitNexus"
+    question: "Thoth index chưa có. Index lại để workers có code intelligence tốt hơn?"
+    header: "Thoth"
     options:
-      - label: "Sync ngay", description: "Chạy gitnexus analyze (~30s) — workers sẽ có impact analysis, call graph, execution flows"
+      - label: "Index ngay", description: "Chạy thoth index (~30s) — workers sẽ có impact analysis, call graph, execution flows"
       - label: "Bỏ qua", description: "Workers sẽ dùng Grep/Glob thay thế — vẫn chạy được nhưng thiếu blast radius analysis"
     multiSelect: false
 
-  If user chọn "Sync ngay":
+  If user chọn "Index ngay":
     ```bash
-    npx gitnexus analyze --embeddings
+    npx thoth index
     ```
-    Set `GITNEXUS_STATUS` = `GITNEXUS_AVAILABLE` after sync completes.
+    Set `THOTH_STATUS` = `THOTH_AVAILABLE` after index completes.
 
-  If user chọn "Bỏ qua" → set `GITNEXUS_STATUS` = `GITNEXUS_UNAVAILABLE`, continue.
+  If user chọn "Bỏ qua" → set `THOTH_STATUS` = `THOTH_UNAVAILABLE`, continue.
 
 ---
 
@@ -185,8 +173,7 @@ You are a HOANGSA worker. Execute this task precisely.
 Task: <task.name>
 ID: <task.id>
 Workspace: <workspace_dir>
-GitNexus: <GITNEXUS_STATUS — GITNEXUS_AVAILABLE or GITNEXUS_UNAVAILABLE>
-GitNexus Repo: <GITNEXUS_REPO — pass this as repo parameter in all gitnexus_* tool calls>
+Thoth: <THOTH_STATUS — THOTH_AVAILABLE or THOTH_UNAVAILABLE>
 
 Files to modify:
 <task.files — list>
@@ -199,7 +186,7 @@ Requirements covered:
 
 Instructions:
 1. Read all context_pointers files first
-2. Before modifying any function/class/method, run gitnexus_impact({target: "symbolName", direction: "upstream", repo: GITNEXUS_REPO}) to check blast radius (if GitNexus is available)
+2. Before modifying any function/class/method, run thoth_impact({target: "symbolName", direction: "upstream"}) to check blast radius (if Thoth is available)
 3. If impact returns HIGH or CRITICAL risk — report it, do not proceed without orchestrator acknowledgment
 4. Implement the task
 5. Run the acceptance command to verify: <task.acceptance>

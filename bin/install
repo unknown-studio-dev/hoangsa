@@ -153,7 +153,7 @@ const HOOK_DEFINITIONS = [
     hookName: "context-monitor",
     label: "context monitor hook",
   },
-  { event: "PostToolUse", hookName: "tracker", label: "GitNexus tracker hook" },
+  { event: "PostToolUse", hookName: "tracker", label: "Thoth tracker hook" },
 ];
 
 /** Add hook to settings[event] if no existing entry already contains matchStr. */
@@ -706,35 +706,28 @@ function install(isGlobal) {
 
   configureHooks(settings, targetDir, isGlobal);
 
-  // Install GitNexus globally (skip if already installed)
+  // Install Thoth globally (skip if already installed)
   try {
-    execSync("npx gitnexus --version", { stdio: "pipe" });
-    console.log(`  ${green}✓${reset} gitnexus already installed`);
+    execSync("thoth --version", { stdio: "pipe" });
+    console.log(`  ${green}✓${reset} thoth already installed`);
   } catch {
     try {
-      execSync("npm install -g gitnexus", { stdio: "pipe" });
-      console.log(`  ${green}✓${reset} Installed gitnexus globally`);
+      execSync("npx @unknownstudio/thoth", { stdio: "pipe" });
+      console.log(`  ${green}✓${reset} Installed thoth`);
     } catch (e) {
       console.log(
-        `  ${yellow}⚠${reset} Could not install gitnexus globally: ${e.message}`,
+        `  ${yellow}⚠${reset} Could not install thoth: ${e.message}`,
       );
     }
   }
 
-  // Configure GitNexus MCP server for Claude Code
-  // `npx gitnexus setup` doesn't auto-add MCP for Claude Code — it only prints the command.
-  // So we run `claude mcp add` directly, but skip if already configured.
+  // Index the project with Thoth
   try {
-    const mcpList = execSync("claude mcp list", { stdio: "pipe" }).toString();
-    if (mcpList.includes("gitnexus")) {
-      console.log(`  ${green}✓${reset} gitnexus MCP server already configured`);
-    } else {
-      execSync("claude mcp add gitnexus -- npx -y gitnexus mcp", { stdio: "pipe" });
-      console.log(`  ${green}✓${reset} Configured gitnexus MCP server`);
-    }
+    execSync("thoth index .", { stdio: "pipe" });
+    console.log(`  ${green}✓${reset} Indexed project with thoth`);
   } catch (e) {
     console.log(
-      `  ${yellow}⚠${reset} Could not configure gitnexus MCP: ${e.message}`,
+      `  ${yellow}⚠${reset} Could not index project with thoth: ${e.message}`,
     );
   }
 

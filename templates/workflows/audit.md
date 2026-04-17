@@ -2,7 +2,7 @@
 
 Perform a comprehensive codebase audit across 8 dimensions, producing a detailed AUDIT-REPORT.md that teams can use as a refactoring roadmap.
 
-**Principles:** Parallel scanning for speed. Evidence-based — every finding must include file paths, line numbers, and concrete examples. Severity-rated so teams can prioritize. Actionable — each finding includes a suggested fix. Use GitNexus when available, fall back gracefully.
+**Principles:** Parallel scanning for speed. Evidence-based — every finding must include file paths, line numbers, and concrete examples. Severity-rated so teams can prioritize. Actionable — each finding includes a suggested fix. Use Thoth when available, fall back gracefully.
 
 ---
 
@@ -23,48 +23,38 @@ All user-facing text — questions, reports, summaries, error messages — **MUS
 
 ---
 
-## Step 0b: GitNexus index check (interactive)
+## Step 0b: Thoth index check (interactive)
 
 ```bash
-if [ ! -d ".gitnexus" ]; then
-  echo "GITNEXUS_MISSING"
-elif [ -f ".gitnexus/.outdated" ] && [ "$(cat .gitnexus/.outdated 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); print(len(d.get("changed_files",[])))' 2>/dev/null)" != "0" ]; then
-  echo "GITNEXUS_OUTDATED"
+if [ ! -d ".thoth" ]; then
+  echo "THOTH_MISSING"
+elif [ -f ".thoth/.outdated" ] && [ "$(cat .thoth/.outdated 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); print(len(d.get("changed_files",[])))' 2>/dev/null)" != "0" ]; then
+  echo "THOTH_OUTDATED"
 else
-  echo "GITNEXUS_AVAILABLE"
+  echo "THOTH_AVAILABLE"
 fi
 ```
 
-Store result as `GITNEXUS_STATUS`.
+Store result as `THOTH_STATUS`.
 
-If `GITNEXUS_AVAILABLE` or after sync completes, resolve the repo name:
-
-```bash
-GITNEXUS_REPO=$(cat .gitnexus/meta.json 2>/dev/null | python3 -c 'import sys,json,os; m=json.load(sys.stdin); print(os.path.basename(m.get("repoPath","")))' 2>/dev/null || basename "$(pwd)")
-# Validate: only alphanumeric, hyphens, underscores allowed
-[[ "$GITNEXUS_REPO" =~ ^[a-zA-Z0-9_-]+$ ]] || GITNEXUS_REPO=$(basename "$(pwd)")
-```
-
-Store as `GITNEXUS_REPO`. Pass both `GITNEXUS_STATUS` and `GITNEXUS_REPO` to all audit agent prompts.
-
-- If `GITNEXUS_AVAILABLE` → continue. Audit agents will use GitNexus for dependency graph, dead code detection, and architectural analysis.
-- If `GITNEXUS_MISSING` or `GITNEXUS_OUTDATED` → ask the user:
+- If `THOTH_AVAILABLE` → continue. Audit agents will use Thoth for dependency graph, dead code detection, and architectural analysis.
+- If `THOTH_MISSING` or `THOTH_OUTDATED` → ask the user:
 
   Use AskUserQuestion:
-    question: "GitNexus index bị outdated/missing. Sync lại để audit sâu hơn?"
-    header: "GitNexus"
+    question: "Thoth index bị outdated/missing. Sync lại để audit sâu hơn?"
+    header: "Thoth"
     options:
-      - label: "Sync ngay", description: "Chạy gitnexus analyze (~30s) — có dependency graph, dead code detection, architecture analysis"
+      - label: "Sync ngay", description: "Chạy thoth index (~30s) — có dependency graph, dead code detection, architecture analysis"
       - label: "Bỏ qua", description: "Audit dùng Grep/Glob — vẫn scan được nhưng thiếu dependency graph analysis"
     multiSelect: false
 
   If user chọn "Sync ngay":
     ```bash
-    npx gitnexus analyze --embeddings
+    npx thoth index
     ```
-    Set `GITNEXUS_STATUS` = `GITNEXUS_AVAILABLE`.
+    Set `THOTH_STATUS` = `THOTH_AVAILABLE`.
 
-  If user chọn "Bỏ qua" → set `GITNEXUS_STATUS` = `GITNEXUS_UNAVAILABLE`, continue.
+  If user chọn "Bỏ qua" → set `THOTH_STATUS` = `THOTH_UNAVAILABLE`, continue.
 
 ---
 
@@ -225,7 +215,7 @@ done
 node_modules/    dist/          build/         target/
 .next/           .nuxt/         .output/       out/
 vendor/          __pycache__/   .venv/         venv/
-.git/            .gitnexus/     .hoangsa/
+.git/            .thoth/        .hoangsa/
 *.min.js         *.min.css      *.bundle.js
 *.map            *.lock         package-lock.json
 *.generated.*    *.pb.go        *_generated.rs
@@ -291,8 +281,8 @@ Scan for:
    - Trace import graphs: A → B → C → A
    - For JS/TS: follow import/require statements across files
    - For Rust: check mod/use relationships in modules
-   - If GitNexus available: use gitnexus_cypher({repo: GITNEXUS_REPO}) to query dependency cycles
-   - If GitNexus unavailable: use Grep to trace import/require statements across files, building a dependency graph manually. Start from high-fan-in files and follow import chains.
+   - If Thoth available: use thoth_impact({target: "symbol", direction: "down"}) to query dependency cycles, then check for circular refs in the results
+   - If Thoth unavailable: use Grep to trace import/require statements across files, building a dependency graph manually. Start from high-fan-in files and follow import chains.
    - Evidence: list the cycle chain with file paths
 
 2. BLOATED FILES / GOD FILES / GOD CLASSES
@@ -354,7 +344,7 @@ Scan for:
      - Rate severity by how confusing it is for a new developer
 
 5. DEAD CODE & ZOMBIE CODE
-   - Exported symbols with zero importers (if GitNexus available: gitnexus_cypher({repo: GITNEXUS_REPO}) to find orphan nodes; if GitNexus unavailable: Grep for `export` declarations, then Grep for each exported name across all files — zero matches = dead export)
+   - Exported symbols with zero importers (if Thoth available: use thoth_symbol_context({name: "symbol"}) to check references count = 0 for each export; if Thoth unavailable: Grep for `export` declarations, then Grep for each exported name across all files — zero matches = dead export)
    - Files not imported anywhere — entire modules nobody calls
    - Functions defined but never invoked (grep for definition, then grep for usage — 0 hits = dead)
    - Feature flags that are always on/off (grep for the flag, check all branches — if only one branch ever runs, the other is dead)
@@ -491,8 +481,8 @@ Scan for:
 
 5. SHOTGUN SURGERY INDICATORS
    - A single logical change requires touching >5 files
-   - If GitNexus available: check impact analysis for high-fan-out symbols
-   - If GitNexus unavailable: use Grep to find a symbol's usages across files; if >5 files reference it, flag as high fan-out
+   - If Thoth available: use thoth_impact({target: "symbol", direction: "upstream"}) to check impact for high-fan-out symbols
+   - If Thoth unavailable: use Grep to find a symbol's usages across files; if >5 files reference it, flag as high fan-out
    - Evidence: symbol name, list of files that would need changes
 
 6. FEATURE ENVY
@@ -1134,7 +1124,7 @@ Next steps:
 | **Actionable fixes** | Every finding must include a specific suggested fix, not just "refactor this" |
 | **Effort estimation** | S=<1hr, M=1-4hr, L=4-8hr, XL=>8hr — estimate for a developer familiar with the codebase |
 | **Parallel scanning** | Run dimension agents in parallel — do not scan sequentially |
-| **GitNexus first** | Use GitNexus tools when available for more accurate dependency/impact analysis |
+| **Thoth first** | Use Thoth tools when available for more accurate dependency/impact analysis |
 | **Redact secrets** | If secrets are found, report their existence but NEVER include actual values |
 | **AskUserQuestion for all interactions** | Every user-facing question uses AskUserQuestion |
 | **Respect scope** | Only scan dimensions the user selected — don't add unrequested dimensions |
