@@ -424,6 +424,24 @@ Also log the fix event for background review context:
 thoth_episode_append({event: "bug_fixed", data: {root_cause: "<summary>", files_changed: [<list>], layers_affected: [<list>]}})
 ```
 
+### Track lesson outcomes
+
+After fix is verified, update confidence scores on lessons that guided the fix:
+
+1. Read `.thoth/LESSONS.md` and find lessons whose triggers match the bug's domain/module
+2. For lessons that **helped** find or fix the bug:
+   - `thoth_lesson_outcome({signal: "success", triggers: ["<lesson trigger>"], note: "guided fix for <bug summary>"})`
+3. For lessons that **should have prevented** this bug but didn't:
+   - `thoth_lesson_outcome({signal: "failure", triggers: ["<lesson trigger>"], note: "bug occurred despite lesson: <bug summary>"})`
+
+### Skill proposal check
+
+If this fix revealed a pattern seen in ≥5 existing lessons (e.g., same module keeps breaking, same root cause pattern):
+
+1. Check LESSONS.md for clusters of related lessons
+2. If cluster ≥5 with good success rates → `thoth_skill_propose({slug: "<pattern-name>", body: "<SKILL.md content>", source_triggers: ["<trigger1>", "<trigger2>", ...]})`
+3. Report draft to user
+
 Skip this step if Thoth is unavailable or the fix was trivial (typo, missing import).
 
 ---

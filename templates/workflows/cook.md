@@ -220,6 +220,17 @@ Acceptance command: <task.acceptance>
 
 After task completion (pass or fail):
   thoth_episode_append({event: "task_completed", data: {task_id: "<task.id>", status: "<pass|fail>", files_changed: [<list>]}})
+
+After task passes acceptance — track lesson outcomes:
+  1. Read .thoth/LESSONS.md, find lessons whose triggers match this task's domain/modules
+  2. For each relevant lesson:
+     - thoth_lesson_outcome({signal: "success", triggers: ["<lesson trigger>"], note: "task <task.id> passed"})
+  3. Skip if no lessons match — this is lightweight, not exhaustive
+
+After task fails all retries — track lesson failures:
+  1. Find lessons whose triggers should have prevented this kind of failure
+  2. For each:
+     - thoth_lesson_outcome({signal: "failure", triggers: ["<lesson trigger>"], note: "task <task.id> failed: <error>"})
 ```
 
 **THOTH_ACTOR:** Set `THOTH_ACTOR=hoangsa/cook-wave-<N>` environment variable when spawning workers. This selects the `hoangsa/cook-*` gate policy (longer recall window, lower relevance threshold) so workers have less friction during implementation.
