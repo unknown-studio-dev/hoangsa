@@ -125,22 +125,6 @@ pub fn cmd_pack(session_dir: Option<&str>, task_id: Option<&str>) {
         }
     }
 
-    // Read project memory for conventions
-    let mut conventions_subset = json!({});
-    if let Some(workspace_dir) = plan.get("workspace_dir").and_then(|v| v.as_str()) {
-        let memory_file = Path::new(workspace_dir)
-            .join(".hoangsa")
-            .join("project-memory.json");
-        if memory_file.exists() {
-            let memory = read_json(memory_file.to_str().unwrap_or(""));
-            if memory.get("error").is_none() {
-                if let Some(conv) = memory.get("conventions") {
-                    conventions_subset = conv.clone();
-                }
-            }
-        }
-    }
-
     // Normalise acceptance to array
     let acceptance: Vec<Value> =
         if let Some(arr) = task.get("acceptance").and_then(|v| v.as_array()) {
@@ -158,7 +142,6 @@ pub fn cmd_pack(session_dir: Option<&str>, task_id: Option<&str>) {
         "acceptance": acceptance,
         "file_segments": file_segments,
         "dependency_signatures": [],
-        "conventions_subset": conventions_subset,
         "estimated_tokens": 0,
     });
 

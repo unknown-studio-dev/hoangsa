@@ -130,7 +130,6 @@ Artifacts:
   ✅ DESIGN-SPEC.md
   ✅ TEST-SPEC.md
   ✅ plan.json
-  ⬜ project-memory.json
 ```
 
 ---

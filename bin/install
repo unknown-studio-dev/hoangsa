@@ -637,9 +637,19 @@ function copyAllFiles(src, targetDir, attribution) {
   return failures;
 }
 
-/** Remove legacy artifacts during install (agents + hoangsa-*.md pattern + package.json). */
+/** Remove .hoangsa/project-memory.json from current project (dead since v2.x — conventions now handled by worker-rules + addons). */
+function cleanupProjectMemory() {
+  const memoryFile = path.join(process.cwd(), ".hoangsa", "project-memory.json");
+  if (fs.existsSync(memoryFile)) {
+    fs.unlinkSync(memoryFile);
+    console.log(`  ${green}✓${reset} Removed deprecated .hoangsa/project-memory.json`);
+  }
+}
+
+/** Remove legacy artifacts during install (agents + hoangsa-*.md pattern + package.json + project-memory). */
 function cleanupLegacy(targetDir) {
   cleanupLegacyAgents(targetDir, true);
+  cleanupProjectMemory();
 }
 
 /** Add all HOOK_DEFINITIONS entries to settings (idempotent). */

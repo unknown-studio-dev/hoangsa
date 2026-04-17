@@ -127,7 +127,7 @@ fn set_active_addons(project_dir: &str, addons: &[String]) -> bool {
 fn copy_addon_file(hoangsa_root: &str, addon_name: &str, project_dir: &str) -> bool {
     let source = Path::new(hoangsa_root)
         .join("workflows/worker-rules/addons")
-        .join(format!("{}.md", addon_name));
+        .join(format!("{addon_name}.md"));
     if !source.exists() {
         return false;
     }
@@ -135,7 +135,7 @@ fn copy_addon_file(hoangsa_root: &str, addon_name: &str, project_dir: &str) -> b
     if fs::create_dir_all(&target_dir).is_err() {
         return false;
     }
-    let target = target_dir.join(format!("{}.md", addon_name));
+    let target = target_dir.join(format!("{addon_name}.md"));
     fs::copy(&source, &target).is_ok()
 }
 
@@ -143,7 +143,7 @@ fn copy_addon_file(hoangsa_root: &str, addon_name: &str, project_dir: &str) -> b
 fn remove_addon_file(addon_name: &str, project_dir: &str) -> bool {
     let target = Path::new(project_dir)
         .join(".hoangsa/worker-rules/addons")
-        .join(format!("{}.md", addon_name));
+        .join(format!("{addon_name}.md"));
     if !target.exists() {
         return false;
     }
@@ -169,7 +169,7 @@ fn sync_worker_rules(project_dir: &str, active_addons: &[Value]) -> bool {
                     .join(", ")
             })
             .unwrap_or_default();
-        addon_lines.push_str(&format!("- **{}** — matches: {}\n", name, frameworks));
+        addon_lines.push_str(&format!("- **{name}** — matches: {frameworks}\n"));
     }
 
     let content = format!(

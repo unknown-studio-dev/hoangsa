@@ -51,25 +51,13 @@ If errors → show errors, ask user to fix spec first.
 
 ---
 
-## Step 1b: Initialize project memory
-
-Run `memory init` to ensure `project-memory.json` exists before plan generation. Use the **project root** (cwd), not the session dir:
-
-```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" memory init "$(pwd)"
-```
-
-This creates `<project_root>/.hoangsa/project-memory.json` if it does not already exist. The memory file stores cross-task knowledge (discovered conventions, resolved ambiguities) that workers can read during cook phase.
-
----
-
-## Step 1c: Load external task reference
+## Step 1b: Load external task reference
 
 If `$SESSION_DIR/EXTERNAL-TASK.md` exists, read it and include external task reference (provider, task_id, acceptance criteria) in plan metadata. This ensures traceability from external task to plan.
 
 ---
 
-## Step 1d: Thoth index check
+## Step 1c: Thoth index check
 
 ```bash
 if [ -f ".thoth/graph.redb" ]; then

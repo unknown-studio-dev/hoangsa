@@ -75,11 +75,6 @@ fn main() {
         }
         ("config", "get") => cmd::config::cmd_get(rest.first().copied()),
         ("config", "set") => cmd::config::cmd_set(rest.first().copied(), rest.get(1).copied()),
-        ("memory", "init") => cmd::memory::cmd_init(rest.first().copied()),
-        ("memory", "get") => cmd::memory::cmd_get(rest.first().copied()),
-        ("memory", "update") => {
-            cmd::memory::cmd_update(rest.first().copied(), rest.get(1).copied())
-        }
         ("context", "pack") => cmd::context::cmd_pack(rest.first().copied(), rest.get(1).copied()),
         ("context", "get") => cmd::context::cmd_get(rest.first().copied(), rest.get(1).copied()),
         ("hook", "statusline") => cmd::hook::cmd_statusline(),
@@ -135,9 +130,6 @@ Usage:
   hoangsa-cli pref set [projectDir] <key> <value>
   hoangsa-cli config get <projectDir>
   hoangsa-cli config set <projectDir> <jsonPatch>
-  hoangsa-cli memory init <projectDir>
-  hoangsa-cli memory get <projectDir>
-  hoangsa-cli memory update <projectDir> <jsonPatch>
   hoangsa-cli context pack <sessionDir> <taskId>
   hoangsa-cli context get <sessionDir> <taskId>
   hoangsa-cli hook tracker

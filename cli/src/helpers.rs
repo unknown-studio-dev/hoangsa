@@ -81,11 +81,11 @@ pub fn resolve_cwd(args: &[String]) -> String {
             if let Some(dir) = args.get(i + 1) {
                 let p = Path::new(dir);
                 if !p.is_absolute() {
-                    eprintln!("Warning: --cwd must be an absolute path, ignoring: {}", dir);
+                    eprintln!("Warning: --cwd must be an absolute path, ignoring: {dir}");
                 } else if let Ok(canonical) = std::fs::canonicalize(p) {
                     return canonical.to_string_lossy().to_string();
                 } else {
-                    eprintln!("Warning: --cwd path does not exist, ignoring: {}", dir);
+                    eprintln!("Warning: --cwd path does not exist, ignoring: {dir}");
                 }
             }
         }

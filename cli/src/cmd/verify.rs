@@ -795,64 +795,6 @@ fn test_config(t: &mut TestRunner) {
     cleanup(&dir);
 }
 
-fn test_memory(t: &mut TestRunner) {
-    eprintln!("\n\x1b[1m● memory\x1b[0m");
-
-    let dir = tmp_project();
-    fs::write(
-        dir.join("package.json"),
-        json!({"name":"test-project","devDependencies":{}}).to_string(),
-    )
-    .unwrap();
-
-    // init
-    {
-        let out = t.run_json(&["memory", "init", dir.to_str().unwrap()], &dir);
-        let m = &out["memory"];
-        let ok = out["success"] == true
-            && m["project"] == "test-project"
-            && m["stack"] == "node"
-            && m["conventions"].is_object()
-            && m["key_types"].is_array()
-            && m["key_interfaces"].is_array()
-            && m["updated_at"].is_string();
-        t.check("memory init", ok, &format!("got {out:?}"));
-    }
-
-    // get
-    {
-        let out = t.run_json(&["memory", "get", dir.to_str().unwrap()], &dir);
-        t.check(
-            "memory get",
-            out["project"] == "test-project" && out["stack"] == "node",
-            &format!("got {out:?}"),
-        );
-    }
-
-    // update
-    {
-        let before = t.run_json(&["memory", "get", dir.to_str().unwrap()], &dir);
-        let patch = json!({"stack":"bun"});
-        let out = t.run_json(
-            &[
-                "memory",
-                "update",
-                dir.to_str().unwrap(),
-                &patch.to_string(),
-            ],
-            &dir,
-        );
-        let m = &out["memory"];
-        let ok = out["success"] == true
-            && m["stack"] == "bun"
-            && m["updated_at"].as_str().unwrap_or("")
-                >= before["updated_at"].as_str().unwrap_or("")
-            && m["project"] == "test-project";
-        t.check("memory update merge", ok, &format!("got {out:?}"));
-    }
-
-    cleanup(&dir);
-}
 
 fn test_context(t: &mut TestRunner) {
     eprintln!("\n\x1b[1m● context\x1b[0m");
@@ -1023,11 +965,6 @@ fn test_integration_workflow_refs(t: &mut TestRunner) {
     }
 
     if let Ok(c) = fs::read_to_string(tpl.join("workflows/prepare.md")) {
-        t.check(
-            "prepare → memory init",
-            c.contains("memory init") || c.contains("memory_init"),
-            "missing",
-        );
         t.check(
             "prepare → context pack",
             c.contains("context pack") || c.contains("context_pack"),
@@ -1669,7 +1606,6 @@ pub fn cmd_verify(project_dir: &str) {
     test_state(&mut t);
     test_pref(&mut t);
     test_config(&mut t);
-    test_memory(&mut t);
     test_context(&mut t);
     test_unknown_command(&mut t);
     test_integration_templates(&mut t);
