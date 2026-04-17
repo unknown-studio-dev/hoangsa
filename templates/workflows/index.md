@@ -52,10 +52,10 @@ Wait for completion. If this fails, report the error and stop.
 
 ## Step 3: Run thoth index
 
-Record start time, then run:
+Record start time, then run with `--json` for structured output:
 ```bash
 START_TIME=$(date +%s)
-OUTPUT=$(thoth index . 2>&1)
+OUTPUT=$(thoth --json index . 2>&1)
 EXIT_CODE=$?
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
@@ -64,7 +64,7 @@ echo "EXIT_CODE=$EXIT_CODE"
 echo "ELAPSED=${ELAPSED}s"
 ```
 
-Parse thoth index output for lines matching patterns like `X files` or `X symbols` (e.g., "Indexed 148 symbols from 42 files"). Use regex to extract numbers. If output format is unrecognizable, use "unknown" for counts.
+Parse the output as structured key=value pairs (e.g., `indexed .: files=17 chunks=42 symbols=42 calls=743 imports=17`). Extract counts by matching `files=(\d+)` and `symbols=(\d+)`. If output format is unrecognizable, use "unknown" for counts.
 
 ---
 
@@ -89,7 +89,7 @@ Output exactly:
 ✅ Index complete! X files indexed in Ys
 ```
 
-Where X is the file count extracted from thoth output (look for lines matching `(\d+)\s*files?` or `(\d+)\s*symbols?`), and Y is elapsed seconds. If the output format is unrecognizable and no counts can be extracted, report: `✅ Indexing complete in Ys` without counts.
+Where X is the file count extracted from thoth output (match `files=(\d+)` from the key=value output), and Y is elapsed seconds. If the output format is unrecognizable and no counts can be extracted, report: `✅ Indexing complete in Ys` without counts.
 
 ---
 

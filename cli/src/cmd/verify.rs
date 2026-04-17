@@ -1020,9 +1020,15 @@ fn test_media(t: &mut TestRunner) {
 
     let dir = tmp_project();
 
-    // check-ffmpeg returns valid JSON with "available" field (works with or without ffmpeg)
+    // Skip media tests if binary was built without the "media" feature
     {
-        let out = t.run_json(&["media", "check-ffmpeg"], &dir);
+        let (ok, stdout, _) = t.run_cli(&["media", "check-ffmpeg"], &dir);
+        if !ok && stdout.is_empty() {
+            eprintln!("  (skipped — binary built without media feature)");
+            cleanup(&dir);
+            return;
+        }
+        let out = parse_last_json(&stdout);
         t.check(
             "media check-ffmpeg has available field",
             out["available"].is_boolean(),

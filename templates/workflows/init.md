@@ -1065,7 +1065,7 @@ Indexing codebase with Thoth...
 ```
 
 ```bash
-timeout 120 thoth index . && rm -f .thoth/.outdated && echo "THOTH_OK" || echo "THOTH_FAIL"
+timeout 120 thoth --json index . && rm -f .thoth/.outdated && echo "THOTH_OK" || echo "THOTH_FAIL"
 ```
 
 If `thoth index` fails or times out (>120s), warn user: "Thoth indexing failed. You can retry later with `/hoangsa:index`." Continue with remaining steps — indexing is non-blocking.

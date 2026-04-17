@@ -767,7 +767,7 @@ function install(isGlobal) {
 
   // Index the project with Thoth
   try {
-    execSync("thoth index .", { stdio: "pipe" });
+    execSync("thoth --json index .", { stdio: "pipe" });
     console.log(`  ${green}✓${reset} Indexed project with thoth`);
   } catch (e) {
     console.log(

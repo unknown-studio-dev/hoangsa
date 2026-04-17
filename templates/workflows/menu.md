@@ -52,7 +52,7 @@ Store result as `THOTH_STATUS`.
 
   If user chọn "Index ngay":
     ```bash
-    thoth index .
+    thoth --json index .
     ```
     Set `THOTH_STATUS` = `THOTH_AVAILABLE`.
 
