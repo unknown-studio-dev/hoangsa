@@ -35,6 +35,7 @@
   },
   "scripts": {
     "build": "cd cli && cargo build --release",
+    "build:media": "cd cli && cargo build --release --features media",
     "test": "cd cli && cargo build --release && ./target/release/hoangsa-cli verify $(cd .. && pwd)",
     "verify": "cd cli && ./target/release/hoangsa-cli verify $(cd .. && pwd)",
     "format": "prettier --write 'bin/**' '*.json'",
