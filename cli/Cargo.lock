@@ -127,7 +127,7 @@ dependencies = [
 
 [[package]]
 name = "hoangsa-cli"
-version = "0.0.7"
+version = "0.1.0"
 dependencies = [
  "ab_glyph",
  "image",

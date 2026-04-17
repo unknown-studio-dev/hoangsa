@@ -1,6 +1,6 @@
 {
   "name": "@hoangsa-cc/cli-linux-arm64",
-  "version": "0.0.7",
+  "version": "0.1.0",
   "description": "A lean 3-phase (menu → prepare → cook) context engineering system for Claude Code by Zan. (Linux arm64)",
   "author": "Zan",
   "license": "MIT",

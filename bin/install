@@ -32,6 +32,7 @@ const hasGlobal = args.includes("--global") || args.includes("-g");
 const hasLocal = args.includes("--local") || args.includes("-l");
 const hasUninstall = args.includes("--uninstall") || args.includes("-u");
 const hasMedia = args.includes("--media");
+const hasJoke = args.includes("--joke");
 
 /** Resolve global config dir: ~/.claude */
 function getGlobalDir() {
@@ -65,7 +66,7 @@ console.log(banner);
 // Show help if requested
 if (hasHelp) {
   console.log(
-    `  ${yellow}Usage:${reset} npx hoangsa-cc [options]\n\n  ${yellow}Options:${reset}\n    ${cyan}-g, --global${reset}              Install globally (to ~/.claude/)\n    ${cyan}-l, --local${reset}               Install locally (to ./.claude/)\n    ${cyan}    --media${reset}               Include video debugging support (montage/diff)\n    ${cyan}-u, --uninstall${reset}           Uninstall HOANGSA (remove all HOANGSA files)\n    ${cyan}-h, --help${reset}                Show this help message\n\n  ${yellow}Examples:${reset}\n    ${dim}# Interactive install (prompts for location)${reset}\n    npx hoangsa-cc\n\n    ${dim}# Install globally${reset}\n    npx hoangsa-cc --global\n\n    ${dim}# Install with video debugging support${reset}\n    npx hoangsa-cc --global --media\n\n    ${dim}# Install to current project only${reset}\n    npx hoangsa-cc --local\n\n    ${dim}# Uninstall HOANGSA globally${reset}\n    npx hoangsa-cc --global --uninstall\n`,
+    `  ${yellow}Usage:${reset} npx hoangsa-cc [options]\n\n  ${yellow}Options:${reset}\n    ${cyan}-g, --global${reset}              Install globally (to ~/.claude/)\n    ${cyan}-l, --local${reset}               Install locally (to ./.claude/)\n    ${cyan}    --media${reset}               Include video debugging support (montage/diff)\n    ${cyan}-u, --uninstall${reset}           Uninstall HOANGSA (remove all HOANGSA files)\n    ${cyan}    --joke${reset}                Easter egg 🥚\n    ${cyan}-h, --help${reset}                Show this help message\n\n  ${yellow}Examples:${reset}\n    ${dim}# Interactive install (prompts for location)${reset}\n    npx hoangsa-cc\n\n    ${dim}# Install globally${reset}\n    npx hoangsa-cc --global\n\n    ${dim}# Install with video debugging support${reset}\n    npx hoangsa-cc --global --media\n\n    ${dim}# Install to current project only${reset}\n    npx hoangsa-cc --local\n\n    ${dim}# Uninstall HOANGSA globally${reset}\n    npx hoangsa-cc --global --uninstall\n`,
   );
   process.exit(0);
 }
@@ -870,35 +871,62 @@ function promptLocation() {
   });
 }
 
-// Main logic — skip when running in test mode
-if (!process.env.HOANGSA_TEST_MODE) {
-  if (hasGlobal && hasLocal) {
-    console.error(
-      `  ${yellow}Cannot specify both --global and --local${reset}`,
-    );
-    process.exit(1);
-  } else if (hasUninstall) {
-    if (!hasGlobal && !hasLocal) {
-      console.error(
-        `  ${yellow}--uninstall requires --global or --local${reset}`,
+const red = "\x1b[31m";
+
+/** If --joke flag is present, ask for user's name first. */
+function jokePrompt(callback) {
+  if (!hasJoke) return callback();
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  rl.question(`\n  ${cyan}Bạn tên là gì?${reset} `, (name) => {
+    rl.close();
+    const trimmed = name.trim();
+    if (trimmed.toLowerCase().startsWith("h")) {
+      console.log(
+        `\n  ${red}⚠ CẢNH BÁO:${reset} Những người tên bắt đầu bằng chữ H thì không nên sử dụng tool này! 🙅\n`,
       );
       process.exit(1);
     }
-    uninstall(hasGlobal);
-  } else if (hasGlobal || hasLocal) {
-    const isGlobal = hasGlobal;
-    const result = install(isGlobal);
-    runPostInstall(result, false);
-  } else {
-    // Interactive
-    if (!process.stdin.isTTY) {
-      console.log(
-        `  ${yellow}Non-interactive terminal detected, defaulting to global install${reset}\n`,
+    console.log(`\n  ${green}Chào ${trimmed}!${reset} Tiếp tục cài đặt...\n`);
+    callback();
+  });
+}
+
+// Main logic — skip when running in test mode
+if (!process.env.HOANGSA_TEST_MODE) {
+  jokePrompt(() => {
+    if (hasGlobal && hasLocal) {
+      console.error(
+        `  ${yellow}Cannot specify both --global and --local${reset}`,
       );
-      const result = install(true);
+      process.exit(1);
+    } else if (hasUninstall) {
+      if (!hasGlobal && !hasLocal) {
+        console.error(
+          `  ${yellow}--uninstall requires --global or --local${reset}`,
+        );
+        process.exit(1);
+      }
+      uninstall(hasGlobal);
+    } else if (hasGlobal || hasLocal) {
+      const isGlobal = hasGlobal;
+      const result = install(isGlobal);
       runPostInstall(result, false);
     } else {
-      promptLocation();
+      // Interactive
+      if (!process.stdin.isTTY) {
+        console.log(
+          `  ${yellow}Non-interactive terminal detected, defaulting to global install${reset}\n`,
+        );
+        const result = install(true);
+        runPostInstall(result, false);
+      } else {
+        promptLocation();
+      }
     }
-  }
+  });
 }
