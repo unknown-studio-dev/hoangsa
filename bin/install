@@ -153,7 +153,6 @@ const HOOK_DEFINITIONS = [
     hookName: "context-monitor",
     label: "context monitor hook",
   },
-  { event: "PostToolUse", hookName: "tracker", label: "Thoth tracker hook" },
 ];
 
 /** Add hook to settings[event] if no existing entry already contains matchStr. */
@@ -646,10 +645,22 @@ function cleanupProjectMemory() {
   }
 }
 
-/** Remove legacy artifacts during install (agents + hoangsa-*.md pattern + package.json + project-memory). */
+/** Remove legacy tracker hook from settings.json (tracker is now handled by Thoth's own PreToolUse gate). */
+function cleanupLegacyTrackerHook(targetDir) {
+  const settingsPath = path.join(targetDir, "settings.json");
+  if (!fs.existsSync(settingsPath)) return;
+  const settings = readSettings(settingsPath);
+  if (removeHook(settings, "PostToolUse", "hook tracker")) {
+    writeSettings(settingsPath, settings);
+    console.log(`  ${green}✓${reset} Removed legacy tracker hook (now handled by Thoth)`);
+  }
+}
+
+/** Remove legacy artifacts during install (agents + hoangsa-*.md pattern + package.json + project-memory + tracker hook). */
 function cleanupLegacy(targetDir) {
   cleanupLegacyAgents(targetDir, true);
   cleanupProjectMemory();
+  cleanupLegacyTrackerHook(targetDir);
 }
 
 /** Add all HOOK_DEFINITIONS entries to settings (idempotent). */

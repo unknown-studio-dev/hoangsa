@@ -132,7 +132,6 @@ Usage:
   hoangsa-cli config set <projectDir> <jsonPatch>
   hoangsa-cli context pack <sessionDir> <taskId>
   hoangsa-cli context get <sessionDir> <taskId>
-  hoangsa-cli hook tracker
   hoangsa-cli hook statusline
   hoangsa-cli hook check-update
   hoangsa-cli hook context-monitor
