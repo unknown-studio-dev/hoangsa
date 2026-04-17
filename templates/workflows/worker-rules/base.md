@@ -152,3 +152,14 @@ Apply these checks to every async, stateful, or resource-owning piece of code yo
 - **Event listener removal.** Every `addEventListener` MUST have a corresponding `removeEventListener` in the cleanup path. Attach listeners with named references so they can be removed precisely.
 - **Resource disposal.** File handles, database connections, WebSockets, and similar resources MUST be closed in a `finally` block or equivalent teardown. Do not rely on garbage collection for timely release.
 - **Race conditions and stale closures.** In async code, verify that captured variables (state, props, refs) are still valid when the async operation resolves. Use cancellation flags, AbortController, or ref-based patterns to guard against stale results being applied after component unmount or re-render.
+
+---
+
+## 11. Prompt Cache Optimization
+
+Maximize Anthropic prompt cache hit rates by keeping tool and prompt structures deterministic:
+
+- **Deterministic tool ordering.** When registering or listing tools (MCP tools, custom tools), always sort them **alphabetically by name** before injection. Changing tool order between requests invalidates the prompt cache prefix.
+- **Static-before-dynamic.** Structure system prompts so static content (base rules, skill registry) comes first and dynamic content (task-specific context, file contents) comes last. Cache prefix matching works left-to-right — stable prefixes = higher hit rates.
+- **Stable MCP tool definitions.** If loading tools from MCP servers, cache the tool list and only refresh when the server config changes. Do not re-fetch tool definitions on every request.
+- **Sort addon rules by name.** When composing middleware chain (base + addons), sort addon content alphabetically by addon name before appending. This ensures the same addon set always produces the same prompt prefix.

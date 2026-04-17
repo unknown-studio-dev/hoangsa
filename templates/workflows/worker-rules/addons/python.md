@@ -2,6 +2,10 @@
 name: python
 frameworks: ["python", "django", "fastapi", "flask", "starlette", "celery"]
 test_frameworks: ["pytest", "unittest", "hypothesis"]
+priority: 50
+inject_position: after_base
+allowed_tools: []
+pre_invoke_gate: null
 ---
 
 # Testing Rules: Python

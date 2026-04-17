@@ -2,6 +2,10 @@
 name: nextjs
 frameworks: ["nextjs", "next"]
 test_frameworks: ["jest", "vitest", "testing-library", "playwright"]
+priority: 50
+inject_position: after_base
+allowed_tools: []
+pre_invoke_gate: null
 ---
 
 # Testing Rules: Next.js

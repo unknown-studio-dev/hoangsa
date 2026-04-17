@@ -2,6 +2,10 @@
 name: rust
 frameworks: ["rust", "axum", "actix-web", "rocket", "warp", "tokio", "leptos", "tauri"]
 test_frameworks: ["cargo-test", "tokio-test"]
+priority: 50
+inject_position: after_base
+allowed_tools: []
+pre_invoke_gate: null
 ---
 
 # Testing Rules: Rust

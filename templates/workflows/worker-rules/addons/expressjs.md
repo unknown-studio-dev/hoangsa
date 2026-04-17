@@ -2,6 +2,10 @@
 name: expressjs
 frameworks: ["express", "koa", "fastify", "hono"]
 test_frameworks: ["jest", "vitest", "supertest", "mocha"]
+priority: 50
+inject_position: after_base
+allowed_tools: []
+pre_invoke_gate: null
 ---
 
 # Testing Rules: Express / Koa / Fastify / Hono

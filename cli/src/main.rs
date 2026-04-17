@@ -79,6 +79,22 @@ fn main() {
         ("config", "set") => cmd::config::cmd_set(rest.first().copied(), rest.get(1).copied()),
         ("context", "pack") => cmd::context::cmd_pack(rest.first().copied(), rest.get(1).copied()),
         ("context", "get") => cmd::context::cmd_get(rest.first().copied(), rest.get(1).copied()),
+        ("trust", "check") => {
+            let dir = rest.first().copied().unwrap_or(&cwd);
+            cmd::trust::cmd_check(dir);
+        }
+        ("trust", "approve") => {
+            let fp = rest.first().copied().unwrap_or("");
+            let name = rest.get(1).copied().unwrap_or("unknown");
+            cmd::trust::cmd_approve(fp, name);
+        }
+        ("trust", "revoke") => {
+            let fp = rest.first().copied().unwrap_or("");
+            cmd::trust::cmd_revoke(fp);
+        }
+        ("trust", "list") => {
+            cmd::trust::cmd_list();
+        }
         ("verify", _) => {
             let project_dir = if sub.is_empty() { &cwd } else { sub };
             cmd::verify::cmd_verify(project_dir);
@@ -101,6 +117,9 @@ fn main() {
         ("hook", "stop-check") => {
             cmd::hook::cmd_stop_check(rest.first().copied(), &cwd);
         }
+        ("hook", "lesson-guard") => {
+            cmd::hook::cmd_lesson_guard(&cwd);
+        }
         ("commit", _) => {
             // commit "<message>" --files f1 f2 ...
             let message = sub;
@@ -117,39 +136,32 @@ fn main() {
             eprintln!(
                 "
 Usage:
-  hoangsa-cli addon list <projectDir>
-  hoangsa-cli addon add <projectDir> '<json_array>'
-  hoangsa-cli addon remove <projectDir> '<json_array>'
-  hoangsa-cli plan task-ids <plan_path>
-  hoangsa-cli plan resolve <plan_path>
-  hoangsa-cli validate plan <path>
-  hoangsa-cli validate spec <path>
-  hoangsa-cli validate tests <path>
-  hoangsa-cli dag check <plan_path>
-  hoangsa-cli dag waves <plan_path>
-  hoangsa-cli session latest [sessions_dir]
-  hoangsa-cli session list [sessions_dir]
-  hoangsa-cli session init <type> <name> [sessions_dir]
-  hoangsa-cli commit \"<message>\" --files <f1> <f2> ...
-  hoangsa-cli resolve-model <role>    (researcher|designer|planner|orchestrator|worker|reviewer|tester|committer)
-  hoangsa-cli resolve-model --all     (show all role→model mappings)
-  hoangsa-cli state init <sessionDir>
-  hoangsa-cli state get <sessionDir>
-  hoangsa-cli state update <sessionDir> <jsonPatch>
-  hoangsa-cli pref get [projectDir] [key]
-  hoangsa-cli pref set [projectDir] <key> <value>
-  hoangsa-cli config get <projectDir>
-  hoangsa-cli config set <projectDir> <jsonPatch>
-  hoangsa-cli context pack <sessionDir> <taskId>
-  hoangsa-cli context get <sessionDir> <taskId>
-  hoangsa-cli hook stop-check [sessions_dir]
-  hoangsa-cli verify [projectDir]
-  hoangsa-cli media probe <file>
-  hoangsa-cli media frames <video> [--interval <s>] [--max-frames <n>] [--output-dir <dir>]
-  hoangsa-cli media montage <frames_dir> [--cols <n>] [--timestamps] [--output <path>]
-  hoangsa-cli media diff <frames_dir> [--cols <n>] [--output <path>]
-  hoangsa-cli media check-ffmpeg
-  hoangsa-cli media install-ffmpeg
+  addon list <projectDir>
+  addon add <projectDir> '<json_array>'
+  addon remove <projectDir> '<json_array>'
+  plan task-ids <plan_path>
+  plan resolve <plan_path>
+  validate plan|spec|tests <path>
+  dag check|waves <plan_path>
+  session init <type> <name> [sessions_dir]
+  session latest|list [sessions_dir]
+  commit \"<message>\" --files <f1> <f2> ...
+  resolve-model <role>
+  resolve-model --all
+  state init|get <sessionDir>
+  state update <sessionDir> <jsonPatch>
+  pref get [projectDir] [key]
+  pref set [projectDir] <key> <value>
+  config get|set <projectDir> [jsonPatch]
+  context pack|get <sessionDir> <taskId>
+  trust check <projectDir>
+  trust approve <fingerprint> <name>
+  trust revoke <fingerprint>
+  trust list
+  hook stop-check [sessions_dir]
+  hook lesson-guard
+  verify [projectDir]
+  media probe|frames|montage|diff|check-ffmpeg|install-ffmpeg
 "
             );
             std::process::exit(1);

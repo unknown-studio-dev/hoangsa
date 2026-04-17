@@ -169,10 +169,19 @@ If the file `$SESSION_DIR/task-<task.id>.context.json` exists (created by `/hoan
 
 ### Worker prompt template:
 
-For each task, spawn a subagent with this context:
+For each task, spawn a subagent with this context. **State filtering:** Only pass the task envelope below — do NOT include session history, other tasks' results, plan metadata, or orchestrator conversation. Each worker gets a clean, focused context.
+
+**Excluded state** (never pass to workers):
+- `messages` — orchestrator conversation history
+- `plan.json` — full plan with all tasks (worker only needs its own task)
+- Other tasks' results or context packs
+- Session-level metadata (state.json, DESIGN-SPEC frontmatter)
+- Skill content (workers get the registry, load on demand — see below)
 
 ```
 You are a HOANGSA worker. Execute this task precisely.
+
+## Task Envelope
 
 Task: <task.name>
 ID: <task.id>
@@ -188,7 +197,17 @@ Context to read first:
 Requirements covered:
 <task.covers — list>
 
-Instructions:
+## Skill Registry (load on demand)
+
+Available skills — read the full SKILL.md only if relevant to your task:
+- git-flow: Git branching, task switching, PR creation → .claude/skills/hoangsa/git-flow/SKILL.md
+- visual-debug: Screenshot/video analysis for visual bugs → .claude/skills/hoangsa/visual-debug/SKILL.md
+
+To use a skill: read_file("<path>") to get full instructions, then follow them.
+Do NOT read skills unless your task specifically requires them.
+
+## Instructions
+
 1. Read all context_pointers files first
 2. Before modifying any function/class/method, run thoth_impact({target: "symbolName", direction: "upstream"}) to check blast radius (if Thoth is available)
 3. If impact returns HIGH or CRITICAL risk — report it, do not proceed without orchestrator acknowledgment
@@ -207,13 +226,26 @@ After task completion (pass or fail):
 
 **Token budget tracking:** Track token usage per task. If a task approaches 80% of its budget_tokens, warn. If it exceeds budget, the worker should wrap up current work and report partial completion rather than continuing.
 
-### Worker rules:
+### Worker rules — Middleware Chain:
 
-Load worker rules before dispatching using a base + addons approach:
+Load worker rules using a **middleware composition chain** (inspired by Deep Agents pattern). Each addon is a middleware unit with explicit priority and injection position.
+
+#### Chain composition order:
+
+```
+┌─────────────────────────────────────────────────────┐
+│  1. before_base addons  (priority-sorted, ascending) │
+│  2. BASE rules          (worker-rules/base.md)       │
+│  3. after_base addons   (priority-sorted, ascending) │  ← default position
+│  4. PROJECT overrides   (.hoangsa/worker-rules.md)   │
+│  5. tail addons         (priority-sorted, ascending) │  ← security/permission addons
+└─────────────────────────────────────────────────────┘
+```
+
+#### Steps:
 
 1. **Read base rules:**
-   - If `.hoangsa/worker-rules.md` exists in workspace → use it as base (project override)
-   - Otherwise → use `$HOANGSA_ROOT/workflows/worker-rules/base.md`
+   - Use `$HOANGSA_ROOT/workflows/worker-rules/base.md` as base
 
 2. **Detect applicable addons:**
    - Read `tech_stack` from config.json preferences
@@ -221,15 +253,25 @@ Load worker rules before dispatching using a base + addons approach:
    - Read `test_frameworks` from config.json `codebase.testing.frameworks`
    - Match against addon file frontmatter `frameworks` field
 
-3. **Load matching addons:**
+3. **Load matching addons with middleware metadata:**
    - For each matching addon: read `$HOANGSA_ROOT/workflows/worker-rules/addons/<name>.md`
    - Project-level addons override: `.hoangsa/worker-rules/addons/<name>.md`
+   - Parse frontmatter for `priority` (default: 50), `inject_position` (default: `after_base`), `pre_invoke_gate`, `allowed_tools`
 
-4. **Compose final rules:**
-   - Base rules + `"\n---\n"` + each addon content (frontmatter stripped)
+4. **Sort addons deterministically:**
+   - Group by `inject_position`: `before_base`, `after_base`, `tail`
+   - Within each group: sort by `priority` ascending, then by `name` alphabetically (for same priority)
+   - This deterministic ordering maximizes Anthropic prompt cache hit rates
+
+5. **Apply pre-invoke gates** (if any addon has `pre_invoke_gate`):
+   - Run the gate command. If it fails, skip this addon with a warning.
+
+6. **Compose final rules:**
+   - Concatenate in chain order: `before_base addons + "\n---\n" + base + "\n---\n" + after_base addons + "\n---\n" + project overrides + "\n---\n" + tail addons`
+   - Strip frontmatter from each addon before concatenation
    - Append to worker prompt
 
-Include the composed rules in every worker prompt, appended after the task context above.
+Include the composed rules in every worker prompt, appended after the task envelope above.
 
 ### Post-task: Simplify pass
 
@@ -613,6 +655,16 @@ Update `state.json` at key checkpoints so progress survives context compaction o
 Claude's output quality degrades as the context window fills up ("context rot"). By giving each task its own fresh 200k context, every task gets Claude's best performance. The plan's `context_pointers` tell each worker exactly what to read — no more, no less.
 
 This is HOANGSA's core value proposition. Never compromise on it.
+
+**Context optimization techniques (adapted from Deep Agents):**
+
+1. **State filtering** — Workers receive only their task envelope. Excluded: orchestrator messages, other tasks' results, plan metadata, session state. This keeps worker context focused and clean.
+
+2. **Progressive skill disclosure** — Workers receive a skill registry (name + 1-line description + path), not full skill content. Skills are loaded on-demand only when the task requires them. This saves ~500-1000 tokens per unused skill.
+
+3. **Middleware chain composition** — Worker rules are composed in a deterministic order (before_base → base → after_base → project → tail), sorted by priority then name within each group. Deterministic ordering maximizes Anthropic prompt cache hit rates.
+
+4. **Deterministic tool sorting** — MCP tools and addon rules are always sorted alphabetically by name. This ensures the same configuration always produces the same prompt prefix, enabling efficient prompt caching (~90% cost savings on cached portions).
 
 ---
 

@@ -1,6 +1,18 @@
 ---
 name: git-flow
 description: "This skill should be used when the user wants to start a new task, switch between tasks, park or resume work, finish a task (push + PR), clean up merged branches, or sync with upstream. Triggers on phrases like 'start task', 'new task', 'work on', 'switch to', 'park this', 'resume', 'continue where I left off', 'done with this', 'finish task', 'create PR', 'clean branches', 'delete merged', 'rebase', 'pull latest', or 'sync with main'."
+allowed-tools:
+  - Bash
+  - Read
+  - Glob
+  - Grep
+license: MIT
+compatibility: "Claude Code >= 1.0"
+metadata:
+  author: hoangsa
+  version: 1.0.0
+  category: git
+  spec: agentskills.io/1.0
 ---
 
 <objective>

@@ -65,10 +65,31 @@ fn scan_available_addons(hoangsa_root: &str) -> Vec<Value> {
             .and_then(|f| serde_json::from_str(f).ok())
             .unwrap_or(json!([]));
 
+        let priority: i64 = fm
+            .get("priority")
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(50);
+        let inject_position = fm
+            .get("inject_position")
+            .cloned()
+            .unwrap_or_else(|| "after_base".to_string());
+        let allowed_tools: Value = fm
+            .get("allowed_tools")
+            .and_then(|f| serde_json::from_str(f).ok())
+            .unwrap_or(json!([]));
+        let pre_invoke_gate = fm
+            .get("pre_invoke_gate")
+            .filter(|v| v != &"null")
+            .cloned();
+
         result.push(json!({
             "name": name,
             "frameworks": frameworks,
             "test_frameworks": test_frameworks,
+            "priority": priority,
+            "inject_position": inject_position,
+            "allowed_tools": allowed_tools,
+            "pre_invoke_gate": pre_invoke_gate,
         }));
     }
 

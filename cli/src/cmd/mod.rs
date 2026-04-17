@@ -10,5 +10,6 @@ pub mod model;
 pub mod pref;
 pub mod session;
 pub mod state;
+pub mod trust;
 pub mod validate;
 pub mod verify;

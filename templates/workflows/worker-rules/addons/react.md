@@ -2,6 +2,10 @@
 name: react
 frameworks: ["react", "react-native", "expo"]
 test_frameworks: ["jest", "vitest", "testing-library"]
+priority: 50
+inject_position: after_base
+allowed_tools: []
+pre_invoke_gate: null
 ---
 
 # Testing Rules: React

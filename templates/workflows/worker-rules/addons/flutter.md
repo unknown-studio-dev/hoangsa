@@ -2,6 +2,10 @@
 name: flutter
 frameworks: ["flutter", "dart"]
 test_frameworks: ["flutter_test", "mockito", "bloc_test"]
+priority: 50
+inject_position: after_base
+allowed_tools: []
+pre_invoke_gate: null
 ---
 
 # Testing Rules: Flutter

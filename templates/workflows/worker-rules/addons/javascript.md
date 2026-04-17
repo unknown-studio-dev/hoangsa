@@ -2,6 +2,10 @@
 name: javascript
 frameworks: ["javascript", "nodejs", "node", "bun"]
 test_frameworks: ["jest", "vitest", "mocha", "node:test"]
+priority: 50
+inject_position: after_base
+allowed_tools: []
+pre_invoke_gate: null
 ---
 
 # Testing Rules: JavaScript / Node.js / Bun

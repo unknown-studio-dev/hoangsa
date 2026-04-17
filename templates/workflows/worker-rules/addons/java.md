@@ -2,6 +2,10 @@
 name: java
 frameworks: ["java", "kotlin", "spring", "spring-boot", "quarkus", "micronaut"]
 test_frameworks: ["junit", "mockito", "testcontainers"]
+priority: 50
+inject_position: after_base
+allowed_tools: []
+pre_invoke_gate: null
 ---
 
 # Testing Rules: Java

@@ -657,32 +657,50 @@ function cleanupLegacy(targetDir) {
   }
 }
 
-/** Install HOANGSA Stop hook into settings.json.
- *  Uses runtime resolution: tries local binary first, falls back to global.
- *  Replaces any existing _hoangsa_managed Stop hook (including legacy prompt-type). */
-function ensureHoangsaHooks(settings) {
+/** Install HOANGSA hooks into settings.json.
+ *  Uses absolute path resolved at install time — no runtime path guessing.
+ *  Replaces any existing _hoangsa_managed hooks (including legacy prompt-type). */
+function ensureHoangsaHooks(settings, targetDir) {
   if (!settings.hooks) settings.hooks = {};
-  if (!settings.hooks.Stop) settings.hooks.Stop = [];
 
-  // Remove any existing _hoangsa_managed Stop hooks (prompt or command type)
+  // Resolve binary absolute path at install time
+  const cli = path.join(targetDir, "hoangsa", "bin", "hoangsa-cli");
+
+  // --- Stop hook (workflow completion guard) ---
+  if (!settings.hooks.Stop) settings.hooks.Stop = [];
   settings.hooks.Stop = settings.hooks.Stop.filter(
     (entry) => !entry._hoangsa_managed,
   );
-
-  // Add the deterministic command-type Stop hook
   settings.hooks.Stop.push({
     _hoangsa_managed: true,
     hooks: [
       {
         type: "command",
-        command:
-          'sh -c \'h=./.claude/hoangsa/bin/hoangsa-cli;[ -x "$h" ]||h=$HOME/.claude/hoangsa/bin/hoangsa-cli;"$h" hook stop-check\'',
+        command: `${cli} hook stop-check`,
         timeout: 5,
       },
     ],
   });
-
   console.log(`  ${green}✓${reset} Installed Stop hook (workflow completion guard)`);
+
+  // --- PreToolUse lesson-guard hook (surfaces relevant lessons before edits) ---
+  if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
+  settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter(
+    (entry) => !entry._hoangsa_managed,
+  );
+  settings.hooks.PreToolUse.push({
+    _hoangsa_managed: true,
+    hooks: [
+      {
+        type: "command",
+        command: `${cli} hook lesson-guard`,
+        timeout: 10,
+      },
+    ],
+    matcher: "Edit|Write",
+  });
+  console.log(`  ${green}✓${reset} Installed lesson-guard hook (recalls lessons before edits)`);
+
   return true;
 }
 
@@ -732,7 +750,7 @@ function install(isGlobal) {
   // Read settings and install HOANGSA hooks
   const settingsPath = path.join(targetDir, "settings.json");
   const settings = readSettings(settingsPath);
-  ensureHoangsaHooks(settings);
+  ensureHoangsaHooks(settings, targetDir);
 
   // Install Thoth globally (skip if already installed)
   try {

@@ -2,6 +2,10 @@
 name: angular
 frameworks: ["angular"]
 test_frameworks: ["jasmine", "karma", "jest"]
+priority: 50
+inject_position: after_base
+allowed_tools: []
+pre_invoke_gate: null
 ---
 
 # Testing Rules: Angular

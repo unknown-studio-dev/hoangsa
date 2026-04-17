@@ -1,6 +1,17 @@
 ---
 name: visual-debug
 description: "This skill should be used when the user provides screenshots, videos, screen recordings, or mentions visual bugs, UI glitches, layout shifts, animation issues, or visual regressions. Analyzes media files to create annotated montage grids with diff overlays for visual debugging."
+allowed-tools:
+  - Bash
+  - Read
+  - Glob
+license: MIT
+compatibility: "Claude Code >= 1.0, ffmpeg (optional, for video)"
+metadata:
+  author: hoangsa
+  version: 1.0.0
+  category: debugging
+  spec: agentskills.io/1.0
 ---
 
 <objective>

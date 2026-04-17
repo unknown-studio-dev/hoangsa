@@ -2,6 +2,10 @@
 name: nestjs
 frameworks: ["nestjs"]
 test_frameworks: ["jest", "supertest"]
+priority: 50
+inject_position: after_base
+allowed_tools: []
+pre_invoke_gate: null
 ---
 
 # Testing Rules: NestJS

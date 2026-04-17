@@ -2,6 +2,10 @@
 name: swift
 frameworks: ["swift", "swiftui", "uikit", "combine"]
 test_frameworks: ["xctest", "quick", "nimble"]
+priority: 50
+inject_position: after_base
+allowed_tools: []
+pre_invoke_gate: null
 ---
 
 # Testing Rules: Swift

@@ -2,6 +2,10 @@
 name: go
 frameworks: ["go", "gin", "echo", "fiber", "chi", "gorilla", "grpc-go"]
 test_frameworks: ["testing", "testify", "gomock"]
+priority: 50
+inject_position: after_base
+allowed_tools: []
+pre_invoke_gate: null
 ---
 
 # Testing Rules: Go
