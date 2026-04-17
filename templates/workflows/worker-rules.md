@@ -66,16 +66,14 @@ These rules are non-negotiable unless explicitly overridden by project config.
 
 ---
 
-## 7. GitNexus — Code Intelligence
+## 7. Thoth — Code Intelligence
 
-If the orchestrator tells you GitNexus is available (`GITNEXUS_AVAILABLE`), use it to understand code before modifying it. GitNexus provides a pre-indexed knowledge graph of the codebase — it's faster and more accurate than grepping.
-
-The orchestrator passes `GITNEXUS_REPO` — **always include `repo: GITNEXUS_REPO`** in every GitNexus tool call. This is required because the MCP server may index multiple repositories.
+If the orchestrator tells you Thoth is available (`THOTH_AVAILABLE`), use it to understand code before modifying it. Thoth provides a pre-indexed knowledge graph of the codebase — it's faster and more accurate than grepping.
 
 ### Before editing a symbol (function, class, method):
 
 ```
-gitnexus_impact({target: "symbolName", direction: "upstream", repo: GITNEXUS_REPO})
+thoth_impact({target: "symbolName", direction: "upstream"})
 ```
 
 Check the blast radius. If risk is HIGH or CRITICAL, report it to the orchestrator before proceeding — do not silently push through.
@@ -83,7 +81,7 @@ Check the blast radius. If risk is HIGH or CRITICAL, report it to the orchestrat
 ### When you need to understand a symbol's callers/callees:
 
 ```
-gitnexus_context({name: "symbolName", repo: GITNEXUS_REPO})
+thoth_symbol_context({name: "symbolName"})
 ```
 
 This gives you the full picture — who calls it, what it calls, which execution flows it participates in. Use this instead of grepping for function names.
@@ -91,17 +89,17 @@ This gives you the full picture — who calls it, what it calls, which execution
 ### When tracing a bug or finding related code:
 
 ```
-gitnexus_query({query: "description of what you're looking for", repo: GITNEXUS_REPO})
+thoth_recall({query: "description of what you're looking for"})
 ```
 
 Returns execution flows ranked by relevance. Better than `Grep` for understanding how pieces connect.
 
 ### Rules:
 
-- **Impact before edit.** Run `gitnexus_impact` on every symbol you're about to modify. This is not optional — it prevents breaking callers you didn't know about.
+- **Impact before edit.** Run `thoth_impact` on every symbol you're about to modify. This is not optional — it prevents breaking callers you didn't know about.
 - **HIGH/CRITICAL = report.** If impact analysis returns HIGH or CRITICAL risk, report it to the orchestrator with the affected symbols. Do not proceed without acknowledgment.
-- **Fallback gracefully.** If a GitNexus tool call fails (timeout, error), fall back to Grep/Glob. Do not block on it.
-- **GitNexus unavailable = skip.** If the orchestrator does not pass `GITNEXUS_AVAILABLE`, use Grep/Glob as usual. Do not attempt GitNexus calls.
+- **Fallback gracefully.** If a Thoth tool call fails (timeout, error), fall back to Grep/Glob. Do not block on it.
+- **Thoth unavailable = skip.** If the orchestrator does not pass `THOTH_AVAILABLE`, use Grep/Glob as usual. Do not attempt Thoth calls.
 
 ---
 
