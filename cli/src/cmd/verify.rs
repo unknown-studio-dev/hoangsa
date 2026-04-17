@@ -147,30 +147,6 @@ fn find_files_matching(dir: &Path, prefix: &str) -> Vec<String> {
     results
 }
 
-fn run_hook_cli(cli: &Path, hook_name: &str, payload: &Value, cwd: &Path) -> Option<Value> {
-    let _ = Command::new(cli)
-        .args(["hook", hook_name])
-        .current_dir(cwd)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            if let Some(ref mut stdin) = child.stdin {
-                let _ = stdin.write_all(payload.to_string().as_bytes());
-            }
-            child.wait_with_output()
-        });
-    let outdated_path = cwd.join(".gitnexus/.outdated");
-    if outdated_path.exists() {
-        let content = fs::read_to_string(&outdated_path).ok()?;
-        serde_json::from_str(&content).ok()
-    } else {
-        None
-    }
-}
-
 fn run_statusline_cli(cli: &Path, payload: &Value, cwd: &Path) -> String {
     Command::new(cli)
         .args(["hook", "statusline"])
@@ -1021,8 +997,8 @@ fn test_integration_templates(t: &mut TestRunner) {
     t.check("workflows/index.md exists", idx_wf.exists(), "missing");
     if let Ok(content) = fs::read_to_string(&idx_wf) {
         t.check(
-            "index workflow gitnexus analyze",
-            content.contains("gitnexus analyze"),
+            "index workflow thoth index",
+            content.contains("thoth index"),
             "missing",
         );
     }
@@ -1040,13 +1016,8 @@ fn test_integration_workflow_refs(t: &mut TestRunner) {
             "missing",
         );
         t.check(
-            "menu → gitnexus",
-            c.contains("gitnexus") || c.contains(".outdated"),
-            "missing",
-        );
-        t.check(
-            "menu → .gitnexus/.outdated",
-            c.contains(".gitnexus/.outdated"),
+            "menu → thoth",
+            c.contains("thoth") || c.contains("THOTH"),
             "missing",
         );
     }
@@ -1124,201 +1095,6 @@ fn test_full_state_lifecycle(t: &mut TestRunner) {
     );
 
     cleanup(&dir);
-}
-
-fn test_gitnexus_tracker(t: &mut TestRunner) {
-    eprintln!("\n\x1b[1m● gitnexus tracker hook\x1b[0m");
-
-    let cli = t.cli.clone();
-
-    // Write creates .outdated
-    {
-        let dir = tmp_project();
-        let fp = dir.join("src/index.js");
-        let payload = json!({"tool_name":"Write","tool_input":{"file_path":fp.to_str().unwrap(),"content":"console.log(\"hello\");"},"workspace":{"current_dir":dir.to_str().unwrap()}});
-        let outdated = run_hook_cli(&cli, "tracker", &payload, &dir);
-        t.check(
-            "Write → .outdated",
-            outdated.is_some() && dir.join(".gitnexus/.outdated").exists(),
-            "not created",
-        );
-        cleanup(&dir);
-    }
-
-    // Write records correct file
-    {
-        let dir = tmp_project();
-        let fp = dir.join("src/main.js");
-        let payload = json!({"tool_name":"Write","tool_input":{"file_path":fp.to_str().unwrap(),"content":"export default {};"},"workspace":{"current_dir":dir.to_str().unwrap()}});
-        let outdated = run_hook_cli(&cli, "tracker", &payload, &dir);
-        let ok = outdated
-            .as_ref()
-            .and_then(|o| o["changed_files"].as_array())
-            .is_some_and(|f| {
-                f.iter()
-                    .any(|x| x.as_str().unwrap_or("") == fp.to_str().unwrap())
-            });
-        t.check("Write records file", ok, &format!("got {outdated:?}"));
-        cleanup(&dir);
-    }
-
-    // Edit creates .outdated
-    {
-        let dir = tmp_project();
-        let fp = dir.join("README.md");
-        let payload = json!({"tool_name":"Edit","tool_input":{"file_path":fp.to_str().unwrap(),"old_string":"foo","new_string":"bar"},"workspace":{"current_dir":dir.to_str().unwrap()}});
-        let outdated = run_hook_cli(&cli, "tracker", &payload, &dir);
-        t.check("Edit → .outdated", outdated.is_some(), "not created");
-        cleanup(&dir);
-    }
-
-    // Edit records correct file
-    {
-        let dir = tmp_project();
-        let fp = dir.join("config.json");
-        let payload = json!({"tool_name":"Edit","tool_input":{"file_path":fp.to_str().unwrap(),"old_string":"a","new_string":"b"},"workspace":{"current_dir":dir.to_str().unwrap()}});
-        let outdated = run_hook_cli(&cli, "tracker", &payload, &dir);
-        let ok = outdated
-            .as_ref()
-            .and_then(|o| o["changed_files"].as_array())
-            .is_some_and(|f| {
-                f.iter()
-                    .any(|x| x.as_str().unwrap_or("") == fp.to_str().unwrap())
-            });
-        t.check("Edit records file", ok, &format!("got {outdated:?}"));
-        cleanup(&dir);
-    }
-
-    // NotebookEdit
-    {
-        let dir = tmp_project();
-        let fp = dir.join("analysis.ipynb");
-        let payload = json!({"tool_name":"NotebookEdit","tool_input":{"notebook_path":fp.to_str().unwrap(),"new_source":"print(\"hello\")"},"workspace":{"current_dir":dir.to_str().unwrap()}});
-        let outdated = run_hook_cli(&cli, "tracker", &payload, &dir);
-        let ok = outdated
-            .as_ref()
-            .and_then(|o| o["changed_files"].as_array())
-            .is_some_and(|f| {
-                f.iter()
-                    .any(|x| x.as_str().unwrap_or("") == fp.to_str().unwrap())
-            });
-        t.check(
-            "NotebookEdit → .outdated",
-            ok,
-            &format!("got {outdated:?}"),
-        );
-        cleanup(&dir);
-    }
-
-    // Bash with redirect
-    {
-        let dir = tmp_project();
-        let payload = json!({"tool_name":"Bash","tool_input":{"command":"echo hello > /tmp/test.txt"},"workspace":{"current_dir":dir.to_str().unwrap()}});
-        let outdated = run_hook_cli(&cli, "tracker", &payload, &dir);
-        let ok = outdated
-            .as_ref()
-            .is_some_and(|o| o["tool_events"].as_u64().unwrap_or(0) >= 1);
-        t.check(
-            "Bash redirect → .outdated",
-            ok,
-            &format!("got {outdated:?}"),
-        );
-        cleanup(&dir);
-    }
-
-    // Bash mv
-    {
-        let dir = tmp_project();
-        let payload = json!({"tool_name":"Bash","tool_input":{"command":"mv old.txt new.txt"},"workspace":{"current_dir":dir.to_str().unwrap()}});
-        let outdated = run_hook_cli(&cli, "tracker", &payload, &dir);
-        t.check("Bash mv → .outdated", outdated.is_some(), "not created");
-        cleanup(&dir);
-    }
-
-    // Bash read-only (ls) should NOT create .outdated
-    {
-        let dir = tmp_project();
-        let payload = json!({"tool_name":"Bash","tool_input":{"command":"ls -la /tmp"},"workspace":{"current_dir":dir.to_str().unwrap()}});
-        run_hook_cli(&cli, "tracker", &payload, &dir);
-        t.check(
-            "Bash ls → no .outdated",
-            !dir.join(".gitnexus/.outdated").exists(),
-            "should not exist",
-        );
-        cleanup(&dir);
-    }
-
-    // Bash read-only (cat) should NOT create .outdated
-    {
-        let dir = tmp_project();
-        let payload = json!({"tool_name":"Bash","tool_input":{"command":"cat /tmp/somefile.txt"},"workspace":{"current_dir":dir.to_str().unwrap()}});
-        run_hook_cli(&cli, "tracker", &payload, &dir);
-        t.check(
-            "Bash cat → no .outdated",
-            !dir.join(".gitnexus/.outdated").exists(),
-            "should not exist",
-        );
-        cleanup(&dir);
-    }
-
-    // deduplication
-    {
-        let dir = tmp_project();
-        let fp = dir.join("src/dedupe.js");
-        let p1 = json!({"tool_name":"Write","tool_input":{"file_path":fp.to_str().unwrap(),"content":"v1"},"workspace":{"current_dir":dir.to_str().unwrap()}});
-        run_hook_cli(&cli, "tracker", &p1, &dir);
-        let p2 = json!({"tool_name":"Write","tool_input":{"file_path":fp.to_str().unwrap(),"content":"v2"},"workspace":{"current_dir":dir.to_str().unwrap()}});
-        let outdated = run_hook_cli(&cli, "tracker", &p2, &dir);
-        let count = outdated
-            .as_ref()
-            .and_then(|o| o["changed_files"].as_array())
-            .map_or(0, |f| {
-                f.iter()
-                    .filter(|x| x.as_str().unwrap_or("") == fp.to_str().unwrap())
-                    .count()
-            });
-        t.check(
-            "dedup changed_files",
-            count == 1,
-            &format!("got {count} occurrences"),
-        );
-        cleanup(&dir);
-    }
-
-    // tool_events increments
-    {
-        let dir = tmp_project();
-        let make = |f: &str| json!({"tool_name":"Write","tool_input":{"file_path":dir.join(f).to_str().unwrap(),"content":"x"},"workspace":{"current_dir":dir.to_str().unwrap()}});
-        run_hook_cli(&cli, "tracker", &make("a.js"), &dir);
-        let a1 = run_hook_cli(&cli, "tracker", &make("b.js"), &dir);
-        let a2 = run_hook_cli(&cli, "tracker", &make("c.js"), &dir);
-        let e1 = a1
-            .as_ref()
-            .and_then(|o| o["tool_events"].as_u64())
-            .unwrap_or(0);
-        let e2 = a2
-            .as_ref()
-            .and_then(|o| o["tool_events"].as_u64())
-            .unwrap_or(0);
-        t.check(
-            "tool_events increments",
-            e2 > e1,
-            &format!("{e1} → {e2}"),
-        );
-        cleanup(&dir);
-    }
-
-    // positive after first write
-    {
-        let dir = tmp_project();
-        let payload = json!({"tool_name":"Write","tool_input":{"file_path":dir.join("check.js").to_str().unwrap(),"content":"y"},"workspace":{"current_dir":dir.to_str().unwrap()}});
-        let outdated = run_hook_cli(&cli, "tracker", &payload, &dir);
-        let ok = outdated
-            .as_ref()
-            .is_some_and(|o| o["tool_events"].as_u64().unwrap_or(0) >= 1);
-        t.check("tool_events >= 1", ok, &format!("got {outdated:?}"));
-        cleanup(&dir);
-    }
 }
 
 fn test_statusline_context(t: &mut TestRunner) {
@@ -1595,67 +1371,6 @@ fn test_statusline_integration(t: &mut TestRunner) {
     cleanup(&dir);
 }
 
-fn test_gitnexus_statusline(t: &mut TestRunner) {
-    eprintln!("\n\x1b[1m● gitnexus statusline hook\x1b[0m");
-
-    let cli = t.cli.clone();
-
-    let base_payload = |dir: &Path| {
-        json!({
-            "model": {"display_name":"claude-test"},
-            "workspace": {"current_dir":dir.to_str().unwrap(),"cwd":dir.to_str().unwrap()},
-            "context_window": {"remaining_percentage":80},
-            "session_id": "test"
-        })
-    };
-
-    // no index
-    {
-        let dir = tmp_project();
-        let _ = fs::remove_dir_all(dir.join(".gitnexus"));
-        let output = run_statusline_cli(&cli, &base_payload(&dir), &dir);
-        t.check(
-            "no index \u{2192} \u{26AA}",
-            output.contains("\u{26AA} GN: no index"),
-            &format!("got: {}", output.trim()),
-        );
-        cleanup(&dir);
-    }
-
-    // fresh
-    {
-        let dir = tmp_project();
-        fs::create_dir_all(dir.join(".gitnexus")).unwrap();
-        let output = run_statusline_cli(&cli, &base_payload(&dir), &dir);
-        t.check(
-            "fresh \u{2192} \u{1f7e2}",
-            output.contains("\u{1f7e2} GN: fresh"),
-            &format!("got: {}", output.trim()),
-        );
-        cleanup(&dir);
-    }
-
-    // outdated
-    {
-        let dir = tmp_project();
-        let gn = dir.join(".gitnexus");
-        fs::create_dir_all(&gn).unwrap();
-        fs::write(
-            gn.join(".outdated"),
-            json!({"marked_at":"2026-03-14T00:00:00Z","changed_files":["x.js"],"tool_events":1})
-                .to_string(),
-        )
-        .unwrap();
-        let output = run_statusline_cli(&cli, &base_payload(&dir), &dir);
-        t.check(
-            "outdated \u{2192} \u{1f7e1}",
-            output.contains("\u{1f7e1} GN: outdated"),
-            &format!("got: {}", output.trim()),
-        );
-        cleanup(&dir);
-    }
-}
-
 fn test_media(t: &mut TestRunner) {
     eprintln!("\n\x1b[1m● media\x1b[0m");
 
@@ -1747,10 +1462,8 @@ pub fn cmd_verify(project_dir: &str) {
     test_integration_templates(&mut t);
     test_integration_workflow_refs(&mut t);
     test_full_state_lifecycle(&mut t);
-    test_gitnexus_tracker(&mut t);
     test_statusline_context(&mut t);
     test_statusline_integration(&mut t);
-    test_gitnexus_statusline(&mut t);
     test_media(&mut t);
 
     eprintln!("\n\x1b[1m─── results ───\x1b[0m");
