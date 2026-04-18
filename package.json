@@ -1,6 +1,6 @@
 {
   "name": "hoangsa-cc",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "A lean 3-phase (menu → prepare → cook) context engineering system for Claude Code by Zan.",
   "bin": {
@@ -43,12 +43,12 @@
     "format:check": "prettier --check 'bin/**' '*.json'"
   },
   "optionalDependencies": {
-    "@hoangsa-cc/cli-linux-x64": "0.1.0",
-    "@hoangsa-cc/cli-linux-arm64": "0.1.0",
-    "@hoangsa-cc/cli-linux-x64-musl": "0.1.0",
-    "@hoangsa-cc/cli-darwin-x64": "0.1.0",
-    "@hoangsa-cc/cli-darwin-arm64": "0.1.0",
-    "@hoangsa-cc/cli-windows-x64": "0.1.0"
+    "@hoangsa-cc/cli-linux-x64": "0.1.1",
+    "@hoangsa-cc/cli-linux-arm64": "0.1.1",
+    "@hoangsa-cc/cli-linux-x64-musl": "0.1.1",
+    "@hoangsa-cc/cli-darwin-x64": "0.1.1",
+    "@hoangsa-cc/cli-darwin-arm64": "0.1.1",
+    "@hoangsa-cc/cli-windows-x64": "0.1.1"
   },
   "devDependencies": {
     "prettier": "^3.8.1"

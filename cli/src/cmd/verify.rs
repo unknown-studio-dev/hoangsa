@@ -554,6 +554,35 @@ fn test_state(t: &mut TestRunner) {
         t.check("state init schema", ok, &format!("got {out:?}"));
     }
 
+    // init with config prefs
+    {
+        let config = json!({
+            "preferences": {
+                "lang": "vi",
+                "auto_taste": true,
+                "auto_plate": false,
+                "auto_serve": null,
+            }
+        });
+        fs::write(
+            dir.join(".hoangsa/config.json"),
+            serde_json::to_string_pretty(&config).unwrap(),
+        )
+        .unwrap();
+        let sd2 = dir.join(".hoangsa/sessions/typed/test-prefs");
+        fs::create_dir_all(&sd2).unwrap();
+        let out = t.run_json(&["state", "init", sd2.to_str().unwrap()], &dir);
+        let s = &out["state"];
+        let ok = out["success"] == true
+            && s["language"] == "vi"
+            && s["task_type"] == "typed"
+            && s["preferences"]["auto_taste"] == true
+            && s["preferences"]["auto_plate"] == false
+            && s["preferences"]["auto_serve"].is_null();
+        t.check("state init reads config prefs", ok, &format!("got {out:?}"));
+        fs::remove_file(dir.join(".hoangsa/config.json")).unwrap();
+    }
+
     // get
     {
         let sd = dir.join(".hoangsa/sessions/test-session");

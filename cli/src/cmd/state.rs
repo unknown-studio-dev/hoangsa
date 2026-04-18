@@ -5,6 +5,44 @@ use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 use time::macros::format_description;
 
+struct ConfigPrefs {
+    language: String,
+    auto_taste: Value,
+    auto_plate: Value,
+    auto_serve: Value,
+}
+
+fn read_config_prefs(cwd: &str) -> ConfigPrefs {
+    let config_file = Path::new(cwd).join(".hoangsa").join("config.json");
+    let prefs = fs::read_to_string(&config_file)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .and_then(|v| v.get("preferences").cloned());
+
+    let pref = |key: &str| -> Value {
+        prefs
+            .as_ref()
+            .and_then(|p| p.get(key))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+
+    let language = prefs
+        .as_ref()
+        .and_then(|p| p.get("lang"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .unwrap_or_else(|| "en".to_string());
+
+    ConfigPrefs {
+        language,
+        auto_taste: pref("auto_taste"),
+        auto_plate: pref("auto_plate"),
+        auto_serve: pref("auto_serve"),
+    }
+}
+
 fn now_iso() -> String {
     let now = OffsetDateTime::now_utc();
     now.format(format_description!(
@@ -67,27 +105,30 @@ pub fn cmd_init(session_dir: Option<&str>, cwd: &str) {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("");
-    let session_id = session_path
+    let type_prefix = session_path
         .parent()
         .and_then(|p| p.file_name())
         .and_then(|t| t.to_str())
-        .filter(|t| !["sessions", ".hoangsa"].contains(t))
+        .filter(|t| !["sessions", ".hoangsa"].contains(t));
+    let session_id = type_prefix
         .map(|t| format!("{t}/{session_name}"))
         .unwrap_or_else(|| session_name.to_string());
+    let task_type = type_prefix.unwrap_or("feat").to_string();
+    let prefs = read_config_prefs(cwd);
     let now = now_iso();
 
     let state = json!({
         "session_id": session_id,
         "status": "design",
         "current_command": null,
-        "task_type": "feat",
+        "task_type": task_type,
         "stack": "",
-        "language": "en",
+        "language": prefs.language,
         "tasks": [],
         "preferences": {
-            "auto_taste": null,
-            "auto_plate": null,
-            "auto_serve": null,
+            "auto_taste": prefs.auto_taste,
+            "auto_plate": prefs.auto_plate,
+            "auto_serve": prefs.auto_serve,
         },
         "created_at": now,
         "updated_at": now,
