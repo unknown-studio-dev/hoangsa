@@ -65,6 +65,9 @@ const KNOWN_KEYS: &[&str] = &[
     "research_scope",
     "research_mode",
     "review_style",
+    "auto_compact",
+    "auto_compact_interval",
+    "auto_compact_cooldown_secs",
 ];
 
 /// `pref get <projectDir> <key>` — read a preference from config.json

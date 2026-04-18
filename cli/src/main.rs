@@ -120,6 +120,9 @@ fn main() {
         ("hook", "lesson-guard") => {
             cmd::hook::cmd_lesson_guard(&cwd);
         }
+        ("hook", "compact-check") => {
+            cmd::hook::cmd_compact_check(&cwd);
+        }
         ("commit", _) => {
             // commit "<message>" --files f1 f2 ...
             let message = sub;
@@ -160,6 +163,7 @@ Usage:
   trust list
   hook stop-check [sessions_dir]
   hook lesson-guard
+  hook compact-check
   verify [projectDir]
   media probe|frames|montage|diff|check-ffmpeg|install-ffmpeg
 "

@@ -18,6 +18,9 @@ fn default_config() -> Value {
             "research_scope": null,
             "research_mode": null,
             "review_style": null,
+            "auto_compact": true,
+            "auto_compact_interval": 500,
+            "auto_compact_cooldown_secs": 86400,
         },
         "codebase": {
             "monorepo": false,
@@ -41,7 +44,7 @@ fn default_config() -> Value {
             "message_queue": [],
             "cloud": [],
             "documentation": [],
-            "ci": [],
+            "ci": null,
             "git_convention": null,
             "git_hooks": [],
             "linters": [],
@@ -49,6 +52,7 @@ fn default_config() -> Value {
             "infra": [],
             "entry_points": [],
             "scripts": {},
+            "active_addons": [],
         },
         "task_manager": {
             "provider": null,

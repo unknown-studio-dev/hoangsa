@@ -683,6 +683,24 @@ function ensureHoangsaHooks(settings, targetDir) {
   });
   console.log(`  ${green}✓${reset} Installed Stop hook (workflow completion guard)`);
 
+  // --- PostToolUse auto-compact hook (periodic thoth compact of MEMORY + LESSONS) ---
+  if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
+  settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter(
+    (entry) => !entry._hoangsa_managed,
+  );
+  settings.hooks.PostToolUse.push({
+    _hoangsa_managed: true,
+    hooks: [
+      {
+        type: "command",
+        command: `${cli} hook compact-check`,
+        timeout: 5,
+      },
+    ],
+    matcher: "Bash|Write|Edit|NotebookEdit",
+  });
+  console.log(`  ${green}✓${reset} Installed auto-compact hook (periodic thoth compact)`);
+
   // --- PreToolUse lesson-guard hook (surfaces relevant lessons before edits) ---
   if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
   settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter(

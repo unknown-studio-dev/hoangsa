@@ -1,7 +1,8 @@
 use crate::helpers::{out, read_json};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// `hook stop-check [sessions_dir]`
 ///
@@ -259,6 +260,165 @@ pub fn cmd_lesson_guard(cwd: &str) {
     } else {
         out(&json!({"decision": "approve"}));
     }
+}
+
+/// `hook compact-check`
+///
+/// PostToolUse hook. Increments a mutation counter and, when the counter
+/// crosses `auto_compact_interval` (default 500) with at least
+/// `auto_compact_cooldown_secs` (default 86400) since the last run,
+/// spawns `thoth compact` in a detached background process.
+///
+/// Silent by design — it always emits `{"decision":"approve"}` so it never
+/// blocks tool calls. Failures log to `.hoangsa/state/compact-check.log`.
+pub fn cmd_compact_check(cwd: &str) {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+
+    // Always approve — this hook must never block.
+    // We still read stdin to drain the pipe cleanly.
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input).ok();
+
+    // Check preferences (opt-out + tuning).
+    let (enabled, interval, cooldown) = read_compact_prefs(cwd);
+    if !enabled {
+        out(&json!({"decision": "approve"}));
+        return;
+    }
+
+    // Only count mutation tool calls.
+    let parsed: Value = serde_json::from_str(&input).unwrap_or(json!({}));
+    let tool = parsed
+        .get("tool_name")
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+    if !matches!(tool, "Bash" | "Write" | "Edit" | "NotebookEdit") {
+        out(&json!({"decision": "approve"}));
+        return;
+    }
+
+    // Require a .thoth/ dir — nothing to compact otherwise.
+    if !Path::new(cwd).join(".thoth").exists() {
+        out(&json!({"decision": "approve"}));
+        return;
+    }
+
+    let state_dir = Path::new(cwd).join(".hoangsa").join("state");
+    if fs::create_dir_all(&state_dir).is_err() {
+        out(&json!({"decision": "approve"}));
+        return;
+    }
+    let counter_path = state_dir.join("compact-counter.json");
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let current = read_json(counter_path.to_str().unwrap_or(""));
+    let prev_count = current
+        .get("count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let last_ts = current
+        .get("last_ts")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    let new_count = prev_count + 1;
+    let should_run = new_count >= interval && now.saturating_sub(last_ts) >= cooldown;
+
+    let (count_to_write, ts_to_write) = if should_run {
+        (0u64, now)
+    } else {
+        (new_count, last_ts)
+    };
+
+    let _ = fs::write(
+        &counter_path,
+        serde_json::to_string_pretty(&json!({
+            "count": count_to_write,
+            "last_ts": ts_to_write,
+        }))
+        .unwrap_or_default(),
+    );
+
+    if should_run {
+        if let Some(thoth_bin) = find_thoth_bin() {
+            let thoth_root = Path::new(cwd).join(".thoth");
+            let log_path = state_dir.join("compact-check.log");
+            let log_file = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+                .ok();
+            let stdout_redirect = log_file
+                .as_ref()
+                .and_then(|f| f.try_clone().ok())
+                .map(Stdio::from)
+                .unwrap_or_else(Stdio::null);
+            let stderr_redirect = log_file
+                .map(Stdio::from)
+                .unwrap_or_else(Stdio::null);
+            let _ = Command::new(&thoth_bin)
+                .args(["--root", &thoth_root.to_string_lossy()])
+                .arg("compact")
+                .stdin(Stdio::null())
+                .stdout(stdout_redirect)
+                .stderr(stderr_redirect)
+                .spawn();
+        }
+    }
+
+    out(&json!({"decision": "approve"}));
+}
+
+/// Read compact prefs from `.hoangsa/config.json` with defaults.
+/// Returns `(enabled, interval, cooldown_secs)`.
+fn read_compact_prefs(cwd: &str) -> (bool, u64, u64) {
+    let config_path = Path::new(cwd).join(".hoangsa").join("config.json");
+    let default = (true, 500u64, 86_400u64);
+    if !config_path.exists() {
+        return default;
+    }
+    let config = read_json(config_path.to_str().unwrap_or(""));
+    if config.get("error").is_some() {
+        return default;
+    }
+    let prefs = match config.get("preferences") {
+        Some(p) => p,
+        None => return default,
+    };
+    let enabled = prefs
+        .get("auto_compact")
+        .map(coerce_bool)
+        .unwrap_or(None)
+        .unwrap_or(default.0);
+    let interval = prefs
+        .get("auto_compact_interval")
+        .and_then(coerce_u64)
+        .filter(|&n| n > 0)
+        .unwrap_or(default.1);
+    let cooldown = prefs
+        .get("auto_compact_cooldown_secs")
+        .and_then(coerce_u64)
+        .unwrap_or(default.2);
+    (enabled, interval, cooldown)
+}
+
+/// Coerce a JSON value to u64, accepting both numbers and numeric strings
+/// (since `hoangsa-cli pref set` stores everything as strings).
+fn coerce_u64(v: &Value) -> Option<u64> {
+    v.as_u64().or_else(|| v.as_str()?.parse().ok())
+}
+
+fn coerce_bool(v: &Value) -> Option<bool> {
+    v.as_bool().or_else(|| match v.as_str()? {
+        "true" | "1" | "yes" => Some(true),
+        "false" | "0" | "no" => Some(false),
+        _ => None,
+    })
 }
 
 /// Build a recall query from a file path.
