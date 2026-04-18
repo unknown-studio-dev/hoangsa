@@ -88,7 +88,9 @@ function resolvePlatformBinary(wantMedia = false) {
   const platform = process.platform; // 'darwin', 'linux', 'win32'
   const arch = process.arch; // 'x64', 'arm64'
   const ext = platform === "win32" ? ".exe" : "";
-  const binaryName = wantMedia ? `hoangsa-cli-media${ext}` : `hoangsa-cli${ext}`;
+  const binaryName = wantMedia
+    ? `hoangsa-cli-media${ext}`
+    : `hoangsa-cli${ext}`;
   const fallbackName = `hoangsa-cli${ext}`; // if media binary not found, fall back to default
 
   // Only x64 and arm64 have published packages
@@ -174,6 +176,20 @@ function readSettings(settingsPath) {
 /** Write settings.json with 2-space indentation. */
 function writeSettings(settingsPath, settings) {
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+}
+
+/** Read and parse .mcp.json; return { mcpServers: {} } on missing/invalid. */
+function readMcpJson(mcpJsonPath) {
+  try {
+    return JSON.parse(fs.readFileSync(mcpJsonPath, "utf8"));
+  } catch {
+    return { mcpServers: {} };
+  }
+}
+
+/** Write .mcp.json with 2-space indentation. */
+function writeMcpJson(mcpJsonPath, data) {
+  fs.writeFileSync(mcpJsonPath, JSON.stringify(data, null, 2) + "\n");
 }
 
 /** Get commit attribution from global settings: null=remove, undefined=default, string=custom. */
@@ -681,7 +697,9 @@ function ensureHoangsaHooks(settings, targetDir) {
       },
     ],
   });
-  console.log(`  ${green}✓${reset} Installed Stop hook (workflow completion guard)`);
+  console.log(
+    `  ${green}✓${reset} Installed Stop hook (workflow completion guard)`,
+  );
 
   // --- PostToolUse auto-compact hook (periodic thoth compact of MEMORY + LESSONS) ---
   if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
@@ -699,7 +717,9 @@ function ensureHoangsaHooks(settings, targetDir) {
     ],
     matcher: "Bash|Write|Edit|NotebookEdit",
   });
-  console.log(`  ${green}✓${reset} Installed auto-compact hook (periodic thoth compact)`);
+  console.log(
+    `  ${green}✓${reset} Installed auto-compact hook (periodic thoth compact)`,
+  );
 
   // --- PreToolUse lesson-guard hook (surfaces relevant lessons before edits) ---
   if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
@@ -717,7 +737,9 @@ function ensureHoangsaHooks(settings, targetDir) {
     ],
     matcher: "Edit|Write",
   });
-  console.log(`  ${green}✓${reset} Installed lesson-guard hook (recalls lessons before edits)`);
+  console.log(
+    `  ${green}✓${reset} Installed lesson-guard hook (recalls lessons before edits)`,
+  );
 
   return true;
 }
@@ -776,7 +798,7 @@ function install(isGlobal) {
     console.log(`  ${green}✓${reset} thoth already installed`);
   } catch {
     try {
-      execSync("npx @unknownstudio/thoth", { stdio: "pipe" });
+      execSync("npm i -g @unknownstudio/thoth", { stdio: "pipe" });
       console.log(`  ${green}✓${reset} Installed thoth`);
     } catch (e) {
       console.log(`  ${yellow}⚠${reset} Could not install thoth: ${e.message}`);
@@ -796,8 +818,9 @@ function install(isGlobal) {
   return { settingsPath, settings };
 }
 
-/** Prompt user to configure a task manager MCP server (ClickUp/Asana), or skip. */
-function handleTaskManager(settings, isInteractive, callback) {
+/** Prompt user to configure a task manager MCP server (ClickUp/Asana), or skip.
+ *  Reads/writes .mcp.json at mcpJsonPath (Claude Code only reads MCP from .mcp.json, not settings.json). */
+function handleTaskManager(mcpJsonPath, isInteractive, callback) {
   const TASK_MANAGER_MCP = {
     clickup: {
       label: "ClickUp",
@@ -816,10 +839,11 @@ function handleTaskManager(settings, isInteractive, callback) {
       docUrl: "https://github.com/roychri/mcp-server-asana",
     },
   };
-  // Skip if already configured
+  // Skip if already configured in .mcp.json
+  const existingMcp = readMcpJson(mcpJsonPath);
   if (
-    settings.mcpServers &&
-    Object.keys(settings.mcpServers).some((k) =>
+    existingMcp.mcpServers &&
+    Object.keys(existingMcp.mcpServers).some((k) =>
       ["clickup", "asana"].some((p) => k.toLowerCase().includes(p)),
     )
   ) {
@@ -863,8 +887,9 @@ function handleTaskManager(settings, isInteractive, callback) {
       const provider = providers[idx];
       const mcpConfig = TASK_MANAGER_MCP[provider];
 
-      if (!settings.mcpServers) settings.mcpServers = {};
-      settings.mcpServers[provider] =
+      const mcpData = readMcpJson(mcpJsonPath);
+      if (!mcpData.mcpServers) mcpData.mcpServers = {};
+      mcpData.mcpServers[provider] =
         mcpConfig.transport === "http"
           ? { type: "http", url: mcpConfig.url }
           : {
@@ -872,9 +897,10 @@ function handleTaskManager(settings, isInteractive, callback) {
               args: mcpConfig.args,
               env: mcpConfig.env,
             };
+      writeMcpJson(mcpJsonPath, mcpData);
 
       console.log(
-        `  ${green}✓${reset} Added ${mcpConfig.label} MCP server to settings`,
+        `  ${green}✓${reset} Added ${mcpConfig.label} MCP server to .mcp.json`,
       );
       if (mcpConfig.envHint) {
         console.log(`  ${yellow}!${reset} Set your API key in settings.json:`);
@@ -897,7 +923,8 @@ function handleTaskManager(settings, isInteractive, callback) {
  * Chain: task manager setup → write settings → print completion
  */
 function runPostInstall(result, isInteractive) {
-  handleTaskManager(result.settings, isInteractive, () => {
+  const mcpJsonPath = path.join(process.cwd(), ".mcp.json");
+  handleTaskManager(mcpJsonPath, isInteractive, () => {
     writeSettings(result.settingsPath, result.settings);
     console.log(
       `\n  ${green}Done!${reset} Start Claude Code and run ${cyan}/hoangsa:menu${reset} to begin.\n`,
