@@ -23,36 +23,16 @@ All user-facing text — questions, reports, summaries, status updates — **MUS
 
 ---
 
-## Step 0b: Thoth index check (interactive)
+## Step 0b: Thoth install check
 
 ```bash
-if [ -f ".thoth/graph.redb" ]; then
-  echo "THOTH_AVAILABLE"
-else
-  echo "THOTH_NOT_INDEXED"
-fi
+command -v thoth &>/dev/null && echo "THOTH_AVAILABLE" || echo "THOTH_NOT_INSTALLED"
 ```
 
 Store result as `THOTH_STATUS`.
 
 - If `THOTH_AVAILABLE` → continue. Research agents will use Thoth tools for codebase analysis.
-- If `THOTH_NOT_INDEXED` → ask the user:
-
-  Use AskUserQuestion:
-    question: "Thoth index chưa có. Tạo index để research codebase sâu hơn?"
-    header: "Thoth"
-    options:
-      - label: "Index ngay", description: "Chạy thoth index (~30s) — research agents sẽ có execution flows, call graph, symbol context"
-      - label: "Bỏ qua", description: "Research agents dùng Grep/Glob — vẫn chạy được nhưng thiếu execution flow analysis"
-    multiSelect: false
-
-  If user chọn "Index ngay":
-    ```bash
-    npx thoth --json index
-    ```
-    Set `THOTH_STATUS` = `THOTH_AVAILABLE`.
-
-  If user chọn "Bỏ qua" → set `THOTH_STATUS` = `THOTH_NOT_INDEXED`, continue.
+- If `THOTH_NOT_INSTALLED` → set `THOTH_STATUS` = `THOTH_UNAVAILABLE`, continue. Research agents will use Grep/Glob instead.
 
 ---
 
@@ -162,11 +142,7 @@ Skip this step if `RESEARCH_SCOPE` is "external".
 First, check Thoth availability:
 
 ```bash
-if [ -f ".thoth/graph.redb" ]; then
-  echo "THOTH_AVAILABLE"
-else
-  echo "THOTH_NOT_INDEXED"
-fi
+command -v thoth &>/dev/null && echo "THOTH_AVAILABLE" || echo "THOTH_NOT_INSTALLED"
 ```
 
 Store result as `THOTH_STATUS`.
@@ -191,7 +167,7 @@ Goal: Understand how the codebase is organized relative to the research topic.
 If THOTH_STATUS == "THOTH_AVAILABLE":
   - Run thoth_recall({query: "<RESEARCH_TOPIC>"}) to find relevant execution flows
   - Run thoth_symbol_context({name: "<key symbol found>"}) for top symbols
-Else (THOTH_NOT_INDEXED fallback):
+Else (THOTH_NOT_INSTALLED fallback):
   - Use Glob to find project entry points (index.*, main.*, app.*, server.*)
   - Use Grep to find files referencing the research topic keywords
   - Map module/package layout from directory structure
@@ -210,7 +186,7 @@ Goal: Identify coding patterns and conventions used in the codebase.
 If THOTH_STATUS == "THOTH_AVAILABLE":
   - Use thoth_symbol_context({name: "<relevant function or class>"}) for key symbols
   - Trace callers and callees to understand patterns
-Else (THOTH_NOT_INDEXED fallback):
+Else (THOTH_NOT_INSTALLED fallback):
   - Use Grep to find error handling patterns (try/catch, Result, Option, etc.)
   - Use Grep to find async patterns (async/await, Promise, Future, goroutine)
   - Sample 2–3 similar implementations for naming conventions

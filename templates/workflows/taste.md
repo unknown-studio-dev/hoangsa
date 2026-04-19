@@ -162,9 +162,7 @@ The taste workflow does NOT attempt to fix failures itself — that is the fix w
 After all tests are run, update lesson outcome scores based on results. This feeds Thoth's auto-quarantine system — lessons that consistently lead to failures get demoted automatically.
 
 ```bash
-if [ -f ".thoth/graph.redb" ]; then
-  echo "THOTH_AVAILABLE"
-fi
+command -v thoth &>/dev/null && echo "THOTH_AVAILABLE" || echo "THOTH_NOT_INSTALLED"
 ```
 
 If Thoth is available:
@@ -223,9 +221,12 @@ Run this for each task after testing.
 ```
 🍽️  Taste results: <plan name>
 
-  [T-01] Define UserSchema         ✅ passed
-  [T-02] Define ErrorTypes         ✅ passed
-  [T-03] Implement create_user     ❌ failed (3 attempts)
+  ┌─────────────────────────────────────────────────────┐
+  │  [T-01] Define UserSchema              ✅ passed    │
+  │  [T-02] Define ErrorTypes              ✅ passed    │
+  │  [T-03] Implement create_user          ❌ failed    │
+  │                                        (3 attempts) │
+  └─────────────────────────────────────────────────────┘
 
   Summary: 2/3 passed
 

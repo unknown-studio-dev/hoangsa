@@ -73,36 +73,16 @@ If `$SESSION_DIR/EXTERNAL-TASK.md` exists, read it and include external task ref
 
 ---
 
-## Step 1c: Thoth index check
+## Step 1c: Thoth install check
 
 ```bash
-if [ -f ".thoth/graph.redb" ]; then
-  echo "THOTH_AVAILABLE"
-else
-  echo "THOTH_NOT_INDEXED"
-fi
+command -v thoth &>/dev/null && echo "THOTH_AVAILABLE" || echo "THOTH_NOT_INSTALLED"
 ```
 
 Store result as `THOTH_STATUS`.
 
 - If `THOTH_AVAILABLE` → continue. Use Thoth in Step 3 for dependency analysis.
-- If `THOTH_NOT_INDEXED` → ask the user:
-
-  Use AskUserQuestion:
-    question: "Thoth index chưa có. Tạo index để plan có dependency graph chính xác hơn?"
-    header: "Thoth"
-    options:
-      - label: "Index ngay", description: "Chạy thoth index (~30s) — hiểu callers, callees, impact để tạo depends_on và context_pointers chính xác"
-      - label: "Bỏ qua", description: "Dùng Grep/Glob — vẫn tạo plan được nhưng depends_on có thể thiếu"
-    multiSelect: false
-
-  If user chọn "Index ngay":
-    ```bash
-    npx thoth --json index
-    ```
-    Set `THOTH_STATUS` = `THOTH_AVAILABLE`.
-
-  If user chọn "Bỏ qua" → set `THOTH_STATUS` = `THOTH_NOT_INDEXED`, continue.
+- If `THOTH_NOT_INSTALLED` → set `THOTH_STATUS` = `THOTH_UNAVAILABLE`, continue. Will use Grep/Glob instead.
 
 ---
 
@@ -266,8 +246,7 @@ After all checker loops pass, generate a context pack for each task using `conte
 ```bash
 for TASK_ID in $("$HOANGSA_ROOT/bin/hoangsa-cli" plan task-ids "$SESSION_DIR/plan.json"); do
   "$HOANGSA_ROOT/bin/hoangsa-cli" context pack \
-    "$SESSION_DIR/plan.json" "$TASK_ID" \
-    --output "$SESSION_DIR/task-${TASK_ID}.context.json"
+    "$SESSION_DIR" "$TASK_ID"
 done
 ```
 
@@ -294,24 +273,31 @@ Display:
    Tasks:   <N> total
    Checker: ✅ all checks passed
 
-──────────────────────────────────────────
-Wave 1 (parallel):
-  [T-01] Define UserSchema                      [low,  10k]
-  [T-02] Define ErrorTypes                      [low,   8k]
+  ┌───────────────────────────────────────────────────────────┐
+  │ Wave 1 (parallel)                                        │
+  │  [T-01] Define UserSchema                   [low,  10k]  │
+  │  [T-02] Define ErrorTypes                   [low,   8k]  │
+  └────────┬──────────────────────────┬──────────────────────┘
+           │                          │
+           ▼                          ▼
+  ┌───────────────────────────────────────────────────────────┐
+  │ Wave 2 (parallel)                                        │
+  │  [T-03] Implement UserService.create_user   [med,  25k]  │
+  │  [T-04] Implement validation middleware     [med,  20k]  │
+  └────────┬──────────────────────────┬──────────────────────┘
+           │                          │
+           └────────────┬─────────────┘
+                        ▼
+  ┌───────────────────────────────────────────────────────────┐
+  │ Wave 3                                                   │
+  │  [T-05] Write unit tests: user_service_*    [med,  20k]  │
+  │  [T-06] Write integration tests: auth_flow  [high, 35k]  │
+  └───────────────────────────────────────────────────────────┘
 
-Wave 2 (parallel):
-  [T-03] Implement UserService.create_user      [med,  25k]  ← T-01
-  [T-04] Implement validation middleware        [med,  20k]  ← T-02
+  Traceability:
+    REQ-01 ──► T-03    REQ-02 ──► T-04    REQ-03 ──► T-05, T-06
 
-Wave 3:
-  [T-05] Write unit tests: user_service_*       [med,  20k]  ← T-03, T-04
-  [T-06] Write integration tests: auth_flow     [high, 35k]  ← T-05
-
-──────────────────────────────────────────
-Traceability:
-  REQ-01 → T-03  REQ-02 → T-04  REQ-03 → T-05, T-06
-
-Budget: 118,000 tokens total
+  Budget: 118,000 tokens total
 ```
 
 ---

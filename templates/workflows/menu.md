@@ -37,36 +37,16 @@ Use the `designer` model for spec writing and design discussions. This respects 
 
 ---
 
-## Step 0c: Thoth index check (interactive)
+## Step 0c: Thoth install check
 
 ```bash
-if [ ! -f ".thoth/graph.redb" ]; then
-  echo "THOTH_NOT_INDEXED"
-else
-  echo "THOTH_AVAILABLE"
-fi
+command -v thoth &>/dev/null && echo "THOTH_AVAILABLE" || echo "THOTH_NOT_INSTALLED"
 ```
 
 Store result as `THOTH_STATUS`.
 
 - If `THOTH_AVAILABLE` → continue. Use Thoth tools for codebase exploration during design.
-- If `THOTH_NOT_INDEXED` → ask the user:
-
-  Use AskUserQuestion:
-    question: "Thoth index chưa có. Chạy index để design spec chính xác hơn?"
-    header: "Thoth"
-    options:
-      - label: "Index ngay", description: "Chạy thoth index . (~30s) — hiểu architecture, dependencies, execution flows tốt hơn"
-      - label: "Bỏ qua", description: "Dùng Grep/Glob — vẫn thiết kế được nhưng có thể thiếu context về impact"
-    multiSelect: false
-
-  If user chọn "Index ngay":
-    ```bash
-    thoth --json index .
-    ```
-    Set `THOTH_STATUS` = `THOTH_AVAILABLE`.
-
-  If user chọn "Bỏ qua" → set `THOTH_STATUS` = `THOTH_UNAVAILABLE`, continue.
+- If `THOTH_NOT_INSTALLED` → set `THOTH_STATUS` = `THOTH_UNAVAILABLE`, continue. Will use Grep/Glob instead.
 
 ---
 

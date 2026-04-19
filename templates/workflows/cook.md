@@ -27,38 +27,18 @@ All user-facing text — status updates, questions, reports, error messages, esc
 
 ---
 
-## Step 0b: Thoth index check (interactive)
+## Step 0b: Thoth install check
 
-Check if the Thoth index is present and up-to-date:
+Check if Thoth is installed:
 
 ```bash
-if [ -f ".thoth/graph.redb" ]; then
-  echo "THOTH_AVAILABLE"
-else
-  echo "THOTH_NOT_INDEXED"
-fi
+command -v thoth &>/dev/null && echo "THOTH_AVAILABLE" || echo "THOTH_NOT_INSTALLED"
 ```
 
 Store result as `THOTH_STATUS`.
 
 - If `THOTH_AVAILABLE` → continue. Pass `THOTH_STATUS` to all worker prompts so they can use Thoth tools.
-- If `THOTH_NOT_INDEXED` → ask the user:
-
-  Use AskUserQuestion:
-    question: "Thoth index chưa có. Index lại để workers có code intelligence tốt hơn?"
-    header: "Thoth"
-    options:
-      - label: "Index ngay", description: "Chạy thoth index (~30s) — workers sẽ có impact analysis, call graph, execution flows"
-      - label: "Bỏ qua", description: "Workers sẽ dùng Grep/Glob thay thế — vẫn chạy được nhưng thiếu blast radius analysis"
-    multiSelect: false
-
-  If user chọn "Index ngay":
-    ```bash
-    npx thoth --json index
-    ```
-    Set `THOTH_STATUS` = `THOTH_AVAILABLE` after index completes.
-
-  If user chọn "Bỏ qua" → set `THOTH_STATUS` = `THOTH_UNAVAILABLE`, continue.
+- If `THOTH_NOT_INSTALLED` → set `THOTH_STATUS` = `THOTH_UNAVAILABLE`, continue. Workers will use Grep/Glob instead.
 
 ---
 
@@ -118,13 +98,21 @@ echo $WAVES
    Budget:    <total> tokens
 
    Execution waves:
-   Wave 1 (parallel — <N> tasks):
-     [T-01] <name>  [<complexity>]
-     [T-02] <name>  [<complexity>]
 
-   Wave 2:
-     [T-03] <name>  [<complexity>]  ← T-01
-   ...
+   ┌─────────────────────────────────────────────────┐
+   │ Wave 1 (parallel — <N> tasks)                   │
+   │  [T-01] <name>              [<complexity>]      │
+   │  [T-02] <name>              [<complexity>]      │
+   └────────┬──────────────┬─────────────────────────┘
+            │              │
+            ▼              ▼
+   ┌─────────────────────────────────────────────────┐
+   │ Wave 2                                          │
+   │  [T-03] <name>              [<complexity>]      │
+   └────────┬────────────────────────────────────────┘
+            │
+            ▼
+          (...)
 
    Total: <N> tasks, <N> waves
 
@@ -347,17 +335,25 @@ Commit fixes with message: "refactor(<session_id>): simplify <task.id>"
 ```
 ⏳ Executing...
 
-  Wave 1:
-    ✅ T-01 — Define UserSchema              [completed ✨]
-    ✅ T-02 — Define ErrorTypes              [completed]
-
-  Wave 2:
-    🔄 T-03 — Implement create_user          [running...]
-    ⏳ T-04 — Implement validation           [running...]
-
-  Wave 3:
-    ⬜ T-05 — Unit tests                     [pending]
-    ⬜ T-06 — Integration tests              [pending]
+  ┌─────────────────────────────────────────────────────────┐
+  │ Wave 1                                                  │
+  │  ✅ T-01 — Define UserSchema         [completed ✨]     │
+  │  ✅ T-02 — Define ErrorTypes         [completed]        │
+  └────────┬──────────────────────┬─────────────────────────┘
+           │                      │
+           ▼                      ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │ Wave 2                                                  │
+  │  🔄 T-03 — Implement create_user     [running...]       │
+  │  ⏳ T-04 — Implement validation      [running...]       │
+  └────────┬──────────────────────┬─────────────────────────┘
+           │                      │
+           ▼                      ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │ Wave 3                                                  │
+  │  ⬜ T-05 — Unit tests                [pending]          │
+  │  ⬜ T-06 — Integration tests         [pending]          │
+  └─────────────────────────────────────────────────────────┘
 
   Progress: 2/6  |  Waves: 1/3 complete
 ```
@@ -371,10 +367,27 @@ States: `⬜ pending` · `⏳ running` · `✅ completed` · `✅ completed ✨`
 ### Escalation ladder (automatic):
 
 ```
-1. Retry — same context, fresh attempt
-2. Retry — enriched context (error details + traces)
-3. Escalate model — switch to more capable model
-4. Human escalation → orchestrator asks user
+  ┌──────────────────────────────────────┐
+  │ 1. Retry — same context              │
+  └──────────────┬───────────────────────┘
+                 │ fail
+                 ▼
+  ┌──────────────────────────────────────┐
+  │ 2. Retry — enriched context          │
+  │    (error details + traces)          │
+  └──────────────┬───────────────────────┘
+                 │ fail
+                 ▼
+  ┌──────────────────────────────────────┐
+  │ 3. Escalate model                    │
+  │    (switch to more capable model)    │
+  └──────────────┬───────────────────────┘
+                 │ fail
+                 ▼
+  ┌──────────────────────────────────────┐
+  │ 4. Human escalation                  │
+  │    (orchestrator asks user)          │
+  └──────────────────────────────────────┘
 ```
 
 ### When escalating to user:

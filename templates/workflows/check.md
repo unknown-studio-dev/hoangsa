@@ -82,18 +82,25 @@ Status / Trạng thái:  <overall status>
 Stack / Ngôn ngữ:   <language from plan>
 Budget / Ngân sách:  <used>k / <total>k tokens (<percent>%)
 
-──────────────────────────────────────────
-Wave 1:
-  ✅ T-01  <task name>          [passed]   [low,  10k]
-  ✅ T-02  <task name>          [passed]   [low,   8k]
-
-Wave 2:
-  🔄 T-03  <task name>          [running]  [med,  25k]  ← T-01
-  ⬜ T-04  <task name>          [pending]  [med,  20k]  ← T-02
-
-Wave 3:
-  ⬜ T-05  <task name>          [pending]  [med,  20k]  ← T-03, T-04
-──────────────────────────────────────────
+  ┌─────────────────────────────────────────────────────────────┐
+  │ Wave 1                                                      │
+  │  ✅ T-01  <task name>           [passed]    [low,  10k]     │
+  │  ✅ T-02  <task name>           [passed]    [low,   8k]     │
+  └────────┬──────────────────────────┬─────────────────────────┘
+           │                          │
+           ▼                          ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │ Wave 2                                                      │
+  │  🔄 T-03  <task name>           [running]   [med,  25k]     │
+  │  ⬜ T-04  <task name>           [pending]   [med,  20k]     │
+  └────────┬──────────────────────────┬─────────────────────────┘
+           │                          │
+           └────────────┬─────────────┘
+                        ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │ Wave 3                                                      │
+  │  ⬜ T-05  <task name>           [pending]   [med,  20k]     │
+  └─────────────────────────────────────────────────────────────┘
 
 Progress: 2/5 tasks  |  Waves: 1/3 complete
 

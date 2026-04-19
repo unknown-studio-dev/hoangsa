@@ -1,6 +1,5 @@
 node_modules/
 .DS_Store
-CLAUDE.md
 .claude/
 .zclaude/
 .hoangsa/
@@ -8,7 +7,8 @@ target/
 cli/target/
 coverage/
 .gitnexus
-AGENTS.md
 .idea
 .thoth
 .mcp.json
+CLAUDE.md
+AGENTS.md

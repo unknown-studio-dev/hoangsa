@@ -23,38 +23,16 @@ All user-facing text — questions, reports, summaries, error messages — **MUS
 
 ---
 
-## Step 0b: Thoth index check (interactive)
+## Step 0b: Thoth install check
 
 ```bash
-if [ ! -d ".thoth" ]; then
-  echo "THOTH_MISSING"
-elif [ -f ".thoth/.outdated" ] && [ "$(cat .thoth/.outdated 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); print(len(d.get("changed_files",[])))' 2>/dev/null)" != "0" ]; then
-  echo "THOTH_OUTDATED"
-else
-  echo "THOTH_AVAILABLE"
-fi
+command -v thoth &>/dev/null && echo "THOTH_AVAILABLE" || echo "THOTH_NOT_INSTALLED"
 ```
 
 Store result as `THOTH_STATUS`.
 
 - If `THOTH_AVAILABLE` → continue. Audit agents will use Thoth for dependency graph, dead code detection, and architectural analysis.
-- If `THOTH_MISSING` or `THOTH_OUTDATED` → ask the user:
-
-  Use AskUserQuestion:
-    question: "Thoth index bị outdated/missing. Sync lại để audit sâu hơn?"
-    header: "Thoth"
-    options:
-      - label: "Sync ngay", description: "Chạy thoth index (~30s) — có dependency graph, dead code detection, architecture analysis"
-      - label: "Bỏ qua", description: "Audit dùng Grep/Glob — vẫn scan được nhưng thiếu dependency graph analysis"
-    multiSelect: false
-
-  If user chọn "Sync ngay":
-    ```bash
-    npx thoth --json index
-    ```
-    Set `THOTH_STATUS` = `THOTH_AVAILABLE`.
-
-  If user chọn "Bỏ qua" → set `THOTH_STATUS` = `THOTH_UNAVAILABLE`, continue.
+- If `THOTH_NOT_INSTALLED` → set `THOTH_STATUS` = `THOTH_UNAVAILABLE`, continue. Audit will use Grep/Glob instead.
 
 ---
 

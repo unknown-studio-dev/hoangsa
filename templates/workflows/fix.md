@@ -25,38 +25,18 @@ All user-facing text — status updates, questions, reports, error messages, pro
 
 ---
 
-## Step 0b: Thoth index check (interactive)
+## Step 0b: Thoth install check
 
-Check if the Thoth index is present and up-to-date:
+Check if Thoth is installed:
 
 ```bash
-if [ -f ".thoth/graph.redb" ]; then
-  echo "THOTH_AVAILABLE"
-else
-  echo "THOTH_NOT_INDEXED"
-fi
+command -v thoth &>/dev/null && echo "THOTH_AVAILABLE" || echo "THOTH_NOT_INSTALLED"
 ```
 
 Store result as `THOTH_STATUS`.
 
 - If `THOTH_AVAILABLE` → continue. Pass `THOTH_STATUS` to all worker prompts so they can use Thoth tools.
-- If `THOTH_NOT_INDEXED` → ask the user:
-
-  Use AskUserQuestion:
-    question: "Thoth index chưa có. Index lại để bug tracing chính xác hơn?"
-    header: "Thoth"
-    options:
-      - label: "Index ngay", description: "Chạy thoth index (~30s) — có impact analysis, call graph để trace bug qua các layers"
-      - label: "Bỏ qua", description: "Dùng Grep/Glob thay thế — vẫn trace được nhưng có thể bỏ sót callers"
-    multiSelect: false
-
-  If user chọn "Index ngay":
-    ```bash
-    npx thoth --json index
-    ```
-    Set `THOTH_STATUS` = `THOTH_AVAILABLE` after index completes.
-
-  If user chọn "Bỏ qua" → set `THOTH_STATUS` = `THOTH_UNAVAILABLE`, continue.
+- If `THOTH_NOT_INSTALLED` → set `THOTH_STATUS` = `THOTH_UNAVAILABLE`, continue. Workers will use Grep/Glob instead.
 
 ---
 
@@ -212,8 +192,16 @@ Origin layer: <frontend / backend / API / database / shared>
 Symptom layer: <where the user sees the bug>
 
 Trace:
-  <symptom layer> → <intermediate> → <root cause layer>
-  Example: React component → API call → Express handler returns wrong shape
+  ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+  │  <symptom layer>  │────►│  <intermediate>   │────►│ <root cause>     │
+  └──────────────────┘     └──────────────────┘     └──────────────────┘
+
+  Example:
+  ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+  │ React component  │────►│   API call        │────►│ Express handler  │
+  └──────────────────┘     └──────────────────┘     │ returns wrong    │
+                                                     │ shape            │
+                                                     └──────────────────┘
 
 Affected files:
   - <file path> — <what needs to change> [ROOT CAUSE]
