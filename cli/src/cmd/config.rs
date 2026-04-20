@@ -21,6 +21,11 @@ fn default_config() -> Value {
             "auto_compact": true,
             "auto_compact_interval": 500,
             "auto_compact_cooldown_secs": 86400,
+            "simplify_pass": false,
+            "quality_gate": false,
+            "test_runs": 1,
+            "context_mode": "selective",
+            "thoth_strict": false,
         },
         "codebase": {
             "monorepo": false,

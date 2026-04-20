@@ -166,33 +166,30 @@ fn build_context_pack(session_dir: &str, task_id: &str) -> Result<Value, Value> 
                     workspace_canonical.join(file_path)
                 };
                 if full_path.exists() {
-                    match fs::read_to_string(&full_path) {
-                        Ok(content) => {
-                            let (lines, start_line, end_line) = if selective {
-                                if let Some((start, end)) = line_range {
-                                    let selected: Vec<&str> = content
-                                        .lines()
-                                        .skip(start.saturating_sub(1))
-                                        .take(end.saturating_sub(start.saturating_sub(1)))
-                                        .collect();
-                                    let actual_end = start.saturating_sub(1) + selected.len();
-                                    (selected.join("\n"), start, actual_end)
-                                } else {
-                                    let line_count = content.lines().count();
-                                    (content, 1, line_count)
-                                }
+                    if let Ok(content) = fs::read_to_string(&full_path) {
+                        let (lines, start_line, end_line) = if selective {
+                            if let Some((start, end)) = line_range {
+                                let selected: Vec<&str> = content
+                                    .lines()
+                                    .skip(start.saturating_sub(1))
+                                    .take(end.saturating_sub(start.saturating_sub(1)))
+                                    .collect();
+                                let actual_end = start.saturating_sub(1) + selected.len();
+                                (selected.join("\n"), start, actual_end)
                             } else {
                                 let line_count = content.lines().count();
                                 (content, 1, line_count)
-                            };
-                            context_pointer_segments.push(json!({
-                                "path": file_path,
-                                "lines": lines,
-                                "start_line": start_line,
-                                "end_line": end_line,
-                            }));
-                        }
-                        Err(_) => {}
+                            }
+                        } else {
+                            let line_count = content.lines().count();
+                            (content, 1, line_count)
+                        };
+                        context_pointer_segments.push(json!({
+                            "path": file_path,
+                            "lines": lines,
+                            "start_line": start_line,
+                            "end_line": end_line,
+                        }));
                     }
                 }
             }

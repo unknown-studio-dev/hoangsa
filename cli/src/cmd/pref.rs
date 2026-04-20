@@ -28,6 +28,11 @@ fn ensure_config(project_dir: &str) -> Option<Value> {
                 "research_scope": null,
                 "research_mode": null,
                 "review_style": null,
+                "simplify_pass": false,
+                "quality_gate": false,
+                "test_runs": 1,
+                "context_mode": "selective",
+                "thoth_strict": false,
             },
             "task_manager": {
                 "provider": null,
@@ -68,6 +73,12 @@ const KNOWN_KEYS: &[&str] = &[
     "auto_compact",
     "auto_compact_interval",
     "auto_compact_cooldown_secs",
+    "simplify_pass",
+    "quality_gate",
+    "test_runs",
+    "context_mode",
+    "thoth_strict",
+    "profile",
 ];
 
 /// `pref get <projectDir> <key>` — read a preference from config.json
@@ -152,6 +163,62 @@ pub fn cmd_set(project_dir: Option<&str>, key: Option<&str>, value: Option<&str>
         }
     };
 
+    // Handle profile preset — expands to 6 optimization keys
+    if key == "profile" {
+        let profile_name = value.unwrap_or("");
+        let preset: Option<[(&str, Value); 6]> = match profile_name {
+            "full" => Some([
+                ("simplify_pass", Value::Bool(true)),
+                ("quality_gate", Value::Bool(true)),
+                ("test_runs", Value::Number(3.into())),
+                ("research_mode", Value::String("full".to_string())),
+                ("context_mode", Value::String("full".to_string())),
+                ("thoth_strict", Value::Bool(true)),
+            ]),
+            "balanced" => Some([
+                ("simplify_pass", Value::Bool(false)),
+                ("quality_gate", Value::Bool(false)),
+                ("test_runs", Value::Number(1.into())),
+                ("research_mode", Value::String("inline".to_string())),
+                ("context_mode", Value::String("selective".to_string())),
+                ("thoth_strict", Value::Bool(false)),
+            ]),
+            "minimal" => Some([
+                ("simplify_pass", Value::Bool(false)),
+                ("quality_gate", Value::Bool(false)),
+                ("test_runs", Value::Number(1.into())),
+                ("research_mode", Value::String("inline".to_string())),
+                ("context_mode", Value::String("selective".to_string())),
+                ("thoth_strict", Value::Bool(false)),
+            ]),
+            _ => None,
+        };
+        let preset = match preset {
+            Some(p) => p,
+            None => {
+                out(&json!({ "error": format!("Unknown profile: {}. Known profiles: full, balanced, minimal", profile_name) }));
+                return;
+            }
+        };
+        if let Some(prefs) = config
+            .as_object_mut()
+            .and_then(|o| o.get_mut("preferences"))
+            .and_then(|v| v.as_object_mut())
+        {
+            for (k, v) in preset {
+                prefs.insert(k.to_string(), v);
+            }
+        }
+        let config_file = config_path(project_dir);
+        match fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap()) {
+            Ok(_) => {
+                out(&json!({ "success": true, "profile": profile_name }));
+            }
+            Err(e) => out(&json!({ "success": false, "error": e.to_string() })),
+        }
+        return;
+    }
+
     // Parse value with type coercion
     let parsed: Value = match value {
         Some("true") => Value::Bool(true),
@@ -161,6 +228,8 @@ pub fn cmd_set(project_dir: Option<&str>, key: Option<&str>, value: Option<&str>
             // Try parsing as JSON first (for arrays like tech_stack)
             if v.starts_with('[') || v.starts_with('{') {
                 serde_json::from_str(v).unwrap_or(Value::String(v.to_string()))
+            } else if let Ok(n) = v.parse::<i64>() {
+                Value::Number(n.into())
             } else {
                 Value::String(v.to_string())
             }
