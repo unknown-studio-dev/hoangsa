@@ -433,7 +433,7 @@ fn build_recall_query(path: &str) -> String {
     // Strip leading project dir — keep from first recognizable segment
     let clean = clean.trim_start_matches('/');
     // Keep path-like structure so ".claude/hoangsa" or "templates/" matches
-    format!("NEVER edit {}", clean)
+    format!("NEVER edit {clean}")
 }
 
 /// Find the thoth binary by searching PATH (cross-platform).
@@ -508,7 +508,7 @@ fn find_latest_session(sessions_root: &str) -> Option<String> {
                 .and_then(|m| m.modified())
                 .unwrap_or(std::time::UNIX_EPOCH);
 
-            if best.as_ref().map_or(true, |(t, _)| mtime > *t) {
+            if best.as_ref().is_none_or(|(t, _)| mtime > *t) {
                 best = Some((mtime, name_entry.path().to_string_lossy().to_string()));
             }
         }

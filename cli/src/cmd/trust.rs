@@ -31,7 +31,7 @@ fn fingerprint(server: &Value) -> String {
         hash ^= byte as u64;
         hash = hash.wrapping_mul(0x100000001b3);
     }
-    format!("{:016x}", hash)
+    format!("{hash:016x}")
 }
 
 /// Get the trust store path: ~/.hoangsa/trust.json
@@ -70,10 +70,8 @@ fn write_trust_store(trusted: &BTreeMap<String, Value>) -> bool {
         None => return false,
     };
     let parent = Path::new(&path).parent().unwrap();
-    if !parent.exists() {
-        if fs::create_dir_all(parent).is_err() {
-            return false;
-        }
+    if !parent.exists() && fs::create_dir_all(parent).is_err() {
+        return false;
     }
     let store = json!({
         "version": 1,

@@ -74,7 +74,7 @@ fn complexity_profile(complexity: &str) -> ComplexityProfile {
             expected_tool_calls_min: 15,
             expected_tool_calls_max: 25,
         },
-        "high" | _ => ComplexityProfile {
+        _ => ComplexityProfile {
             work_tokens_min: 30000,
             work_tokens_max: 45000,
             expected_tool_calls_min: 30,
@@ -113,10 +113,10 @@ fn estimate_system_prompt_tokens(cwd: &str) -> u64 {
             sorted_addons.iter().map(|addon_name| {
                 let local_addon = Path::new(cwd)
                     .join(".claude/hoangsa/worker-rules/addons")
-                    .join(format!("{}.md", addon_name));
+                    .join(format!("{addon_name}.md"));
                 let global_addon = Path::new(&home_dir)
                     .join(".claude/hoangsa/worker-rules/addons")
-                    .join(format!("{}.md", addon_name));
+                    .join(format!("{addon_name}.md"));
                 read_file(local_addon.to_str().unwrap_or(""))
                     .or_else(|| read_file(global_addon.to_str().unwrap_or("")))
                     .map(|c| count_tokens(&c))
@@ -280,7 +280,7 @@ fn load_context_pack_tokens(cwd: &str, session_id: Option<&str>, task_id: &str) 
     let pack_file = Path::new(cwd)
         .join(".hoangsa/sessions")
         .join(&sid)
-        .join(format!("context-{}.json", task_id));
+        .join(format!("context-{task_id}.json"));
 
     let pack = read_json(pack_file.to_str().unwrap_or(""));
     if pack.get("error").is_none() {
@@ -329,7 +329,7 @@ pub fn cmd_estimate(plan_path: Option<&str>, task_id: Option<&str>) {
         Some(t) => t,
         None => {
             let msg = if let Some(tid) = task_id {
-                format!("Task {} not found in plan", tid)
+                format!("Task {tid} not found in plan")
             } else {
                 "No tasks in plan".to_string()
             };

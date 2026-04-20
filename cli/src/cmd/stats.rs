@@ -139,7 +139,7 @@ pub fn cmd_record(json_data: Option<&str>) {
         }
     };
 
-    if let Err(e) = writeln!(file, "{}", line) {
+    if let Err(e) = writeln!(file, "{line}") {
         out(&json!({ "error": format!("Cannot write record: {}", e) }));
         return;
     }
@@ -294,7 +294,7 @@ fn compute_calibration(records: &[TaskUsageRecord]) -> CalibrationFactors {
             .sum();
         let avg = sum_ratio / count as f64;
         // Cap at 3.0 to avoid outlier drift
-        let capped = avg.min(3.0_f64).max(0.0);
+        let capped = avg.clamp(0.0, 3.0);
         (capped, count)
     };
 
