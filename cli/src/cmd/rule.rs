@@ -174,7 +174,7 @@ pub fn cmd_rule_gate() -> Result<(), Box<dyn std::error::Error>> {
         let reason = warnings
             .iter()
             .map(|(id, name, msg)| {
-                format!("⚠️ RULE WARNING: {}\n\nRule: {}\n\n{}", id, name, msg)
+                format!("⚠️ RULE WARNING: {id}\n\nRule: {name}\n\n{msg}")
             })
             .collect::<Vec<_>>()
             .join("\n\n---\n\n");
@@ -250,7 +250,7 @@ pub fn cmd_rule_remove(project_dir: &str, rule_id: &str) -> Result<(), Box<dyn s
     let before = config.rules.len();
     config.rules.retain(|r| r.id != rule_id);
     if config.rules.len() == before {
-        return Err(format!("Rule '{}' not found", rule_id).into());
+        return Err(format!("Rule '{rule_id}' not found").into());
     }
 
     let count = config.rules.len();
@@ -265,7 +265,7 @@ pub fn cmd_rule_enable(project_dir: &str, rule_id: &str) -> Result<(), Box<dyn s
         .ok_or("rules.json not found")?;
 
     let rule = config.rules.iter_mut().find(|r| r.id == rule_id)
-        .ok_or_else(|| format!("Rule '{}' not found", rule_id))?;
+        .ok_or_else(|| format!("Rule '{rule_id}' not found"))?;
     rule.enabled = true;
     let id = rule.id.clone();
 
@@ -280,7 +280,7 @@ pub fn cmd_rule_disable(project_dir: &str, rule_id: &str) -> Result<(), Box<dyn 
         .ok_or("rules.json not found")?;
 
     let rule = config.rules.iter_mut().find(|r| r.id == rule_id)
-        .ok_or_else(|| format!("Rule '{}' not found", rule_id))?;
+        .ok_or_else(|| format!("Rule '{rule_id}' not found"))?;
     rule.enabled = false;
     let id = rule.id.clone();
 
@@ -582,9 +582,9 @@ pub fn cmd_rule_sync(project_dir: &str) -> Result<(), Box<dyn std::error::Error>
     } else if existing.is_empty() {
         block
     } else if existing.ends_with('\n') {
-        format!("{}\n{}", existing, block)
+        format!("{existing}\n{block}")
     } else {
-        format!("{}\n\n{}", existing, block)
+        format!("{existing}\n\n{block}")
     };
 
     // 6. Write CLAUDE.md
