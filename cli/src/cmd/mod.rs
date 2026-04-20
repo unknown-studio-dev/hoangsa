@@ -8,6 +8,7 @@ pub mod hook;
 pub mod media;
 pub mod model;
 pub mod pref;
+pub mod rule;
 pub mod session;
 pub mod state;
 pub mod trust;

@@ -11,6 +11,8 @@ media = ["dep:ab_glyph", "dep:image", "dep:imageproc", "dep:walkdir"]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 time = { version = "0.3", features = ["formatting", "macros"] }
+glob = "0.3"
+regex = "1"
 ab_glyph = { version = "0.2", optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg"] }
 imageproc = { version = "0.25", optional = true, default-features = false }
