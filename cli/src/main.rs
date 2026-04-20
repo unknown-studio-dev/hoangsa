@@ -123,6 +123,9 @@ fn main() {
         ("hook", "compact-check") => {
             cmd::hook::cmd_compact_check(&cwd);
         }
+        ("hook", "thoth-gate-proxy") => {
+            cmd::hook::cmd_thoth_gate_proxy(&cwd);
+        }
         ("hook", "rule-gate") => {
             let _ = cmd::rule::cmd_rule_gate();
         }
@@ -208,6 +211,7 @@ Usage:
   hook stop-check [sessions_dir]
   hook lesson-guard
   hook compact-check
+  hook thoth-gate-proxy
   rule list|add|remove|enable|disable|sync|gate [projectDir] [args...]
   verify [projectDir]
   media probe|frames|montage|diff|check-ffmpeg|install-ffmpeg

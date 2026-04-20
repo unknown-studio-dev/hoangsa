@@ -436,6 +436,87 @@ fn build_recall_query(path: &str) -> String {
     format!("NEVER edit {clean}")
 }
 
+/// `hook thoth-gate-proxy`
+///
+/// Conditional wrapper for thoth-gate. Checks thoth_strict preference:
+/// - false → out({"decision":"approve"}) (bypass gate)
+/// - true → spawn thoth-gate binary, pipe stdin, capture stdout
+pub fn cmd_thoth_gate_proxy(cwd: &str) {
+    use std::io::{Read, Write};
+    use std::process::{Command, Stdio};
+
+    // 1. Read stdin (the hook receives JSON input from Claude Code)
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input).ok();
+
+    // 2. Read thoth_strict from .hoangsa/config.json preferences (default true for backward compat)
+    let thoth_strict = {
+        let config_path = Path::new(cwd).join(".hoangsa").join("config.json");
+        if config_path.exists() {
+            let config = read_json(config_path.to_str().unwrap_or(""));
+            config
+                .get("preferences")
+                .and_then(|p| p.get("thoth_strict"))
+                .and_then(coerce_bool)
+                .unwrap_or(true)
+        } else {
+            true
+        }
+    };
+
+    // 3. If thoth_strict is false → bypass gate
+    if !thoth_strict {
+        out(&json!({"decision": "approve"}));
+        return;
+    }
+
+    // 4. If thoth_strict is true → find thoth-gate binary and delegate
+    if let Some(gate_bin) = find_thoth_gate_bin() {
+        if let Ok(mut child) = Command::new(&gate_bin)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+        {
+            // Pipe original stdin content to thoth-gate
+            if let Some(mut stdin_handle) = child.stdin.take() {
+                stdin_handle.write_all(input.as_bytes()).ok();
+            }
+            // Capture stdout and forward it
+            if let Ok(o) = child.wait_with_output() {
+                if !o.stdout.is_empty() {
+                    print!("{}", String::from_utf8_lossy(&o.stdout));
+                    return;
+                }
+            }
+        }
+    }
+
+    // thoth-gate binary not found or failed — approve with a warning
+    eprintln!("hoangsa: thoth-gate-proxy: thoth-gate binary not found, approving");
+    out(&json!({"decision": "approve"}));
+}
+
+/// Find the thoth-gate binary by searching PATH (cross-platform).
+fn find_thoth_gate_bin() -> Option<String> {
+    let path_var = std::env::var("PATH").ok()?;
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let names = if cfg!(windows) {
+        vec!["thoth-gate.exe", "thoth-gate.cmd", "thoth-gate"]
+    } else {
+        vec!["thoth-gate"]
+    };
+    for dir in path_var.split(sep) {
+        for name in &names {
+            let candidate = Path::new(dir).join(name);
+            if candidate.exists() {
+                return Some(candidate.to_string_lossy().to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Find the thoth binary by searching PATH (cross-platform).
 fn find_thoth_bin() -> Option<String> {
     let path_var = std::env::var("PATH").ok()?;
