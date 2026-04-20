@@ -825,26 +825,17 @@ function install(isGlobal) {
   const settings = readSettings(settingsPath);
   ensureHoangsaHooks(settings, targetDir);
 
-  // Install Thoth globally (skip if already installed)
-  try {
-    execSync("thoth --version", { stdio: "pipe" });
-    console.log(`  ${green}✓${reset} thoth already installed`);
-  } catch {
-    try {
-      execSync("npm i -g @unknownstudio/thoth", { stdio: "pipe" });
-      console.log(`  ${green}✓${reset} Installed thoth`);
-    } catch (e) {
-      console.log(`  ${yellow}⚠${reset} Could not install thoth: ${e.message}`);
-    }
-  }
-
-  // Index the project with Thoth
-  try {
-    execSync("thoth --json index .", { stdio: "pipe" });
-    console.log(`  ${green}✓${reset} Indexed project with thoth`);
-  } catch (e) {
+  // Thoth binaries (thoth + thoth-mcp) now live in this monorepo.
+  // Build them once: `cargo build --release -p thoth-cli -p thoth-mcp`.
+  // The MCP file-watcher handles indexing automatically — no explicit
+  // `thoth index` step needed.
+  const thothBin = path.join(__dirname, "..", "target", "release",
+    process.platform === "win32" ? "thoth.exe" : "thoth");
+  if (fs.existsSync(thothBin)) {
+    console.log(`  ${green}✓${reset} Thoth binary available at ${thothBin}`);
+  } else {
     console.log(
-      `  ${yellow}⚠${reset} Could not index project with thoth: ${e.message}`,
+      `  ${yellow}⚠${reset} Thoth binary not built yet. Run: cargo build --release -p thoth-cli -p thoth-mcp`,
     );
   }
 
