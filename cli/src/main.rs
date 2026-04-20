@@ -163,7 +163,9 @@ fn main() {
         ("stats", "summary") => {
             cmd::stats::cmd_summary(&rest);
         }
-        ("budget", "estimate") => cmd::budget::cmd_estimate(rest.first().copied(), rest.get(1).copied()),
+        ("budget", "estimate") => {
+            cmd::budget::cmd_estimate(rest.first().copied(), rest.get(1).copied())
+        }
         ("budget", "breakdown") => cmd::budget::cmd_breakdown(rest.first().copied()),
         ("commit", _) => {
             // commit "<message>" --files f1 f2 ...
