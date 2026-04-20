@@ -17,6 +17,7 @@ ab_glyph = { version = "0.2", optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg"] }
 imageproc = { version = "0.25", optional = true, default-features = false }
 walkdir = { version = "2", optional = true }
+tiktoken-rs = "0.5"
 
 [profile.release]
 opt-level = 3
