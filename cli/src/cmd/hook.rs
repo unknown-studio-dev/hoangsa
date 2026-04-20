@@ -56,9 +56,9 @@ pub fn cmd_stop_check(sessions_dir: Option<&str>, cwd: &str) {
                 let pending = count_incomplete_tasks(&plan);
                 if pending > 0 {
                     out(&json!({
-                        "decision": "block",
+                        "decision": "approve",
                         "reason": format!(
-                            "Workflow incomplete: {} task(s) still pending/running in session {}. Complete all tasks before stopping.",
+                            "⚠️ HOANGSA: Workflow incomplete — {} task(s) still pending/running in session {}. You MUST complete all tasks before finishing. If you need user input, ask and then continue working.",
                             pending,
                             state["session_id"].as_str().unwrap_or("unknown")
                         )

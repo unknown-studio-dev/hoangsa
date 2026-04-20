@@ -29,7 +29,7 @@ fn slugify(name: &str) -> String {
     result
 }
 
-const KNOWN_TYPES: &[&str] = &["feat", "fix", "refactor", "perf", "test", "docs", "chore"];
+const KNOWN_TYPES: &[&str] = &["feat", "fix", "refactor", "perf", "test", "docs", "chore", "brainstorm"];
 
 /// `session init <type> <name> [sessions_dir]`
 pub fn cmd_init(

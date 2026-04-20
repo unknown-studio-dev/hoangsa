@@ -15,10 +15,11 @@ Display this help:
 HOANGSA — 3-Phase Development System
 
 Setup:     /hoangsa:init
-Main flow: /hoangsa:menu → /hoangsa:prepare → /hoangsa:cook
+Main flow: /hoangsa:brainstorm → /hoangsa:menu → /hoangsa:prepare → /hoangsa:cook
 
 Commands:
   /hoangsa:init      First-time project setup — detect codebase, preferences, model routing
+  /hoangsa:brainstorm Brainstorm — explore idea → propose approaches → BRAINSTORM.md
   /hoangsa:menu      Design a task — idea → DESIGN-SPEC + TEST-SPEC
   /hoangsa:prepare   Turn spec into executable JSON plan with DAG
   /hoangsa:cook      Execute plan wave-by-wave, verify results
@@ -34,10 +35,11 @@ Commands:
   /hoangsa:update    Update HOANGSA to latest version
 
 How it works:
-  0. INIT    — One-time setup: detect stack, set preferences, choose model profile
-  1. MENU    — Discuss requirements, research codebase, create specs
-  2. PREPARE — Decompose into tasks with dependencies and acceptance criteria
-  3. COOK    — Execute tasks in fresh contexts, verify with 3-tier checks
+  0. INIT       — One-time setup: detect stack, set preferences, choose model profile
+  1. BRAINSTORM — (optional) Explore idea, propose approaches, validate design
+  2. MENU       — Discuss requirements, research codebase, create specs
+  3. PREPARE    — Decompose into tasks with dependencies and acceptance criteria
+  4. COOK       — Execute tasks in fresh contexts, verify with 3-tier checks
 
 Key concepts:
   • Context engineering — each task gets fresh 200k context (no context rot)

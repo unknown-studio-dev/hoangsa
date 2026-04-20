@@ -192,7 +192,41 @@ Then move directly to Step 3 — no further questions about basics.
 
 ---
 
-## Step 2d: Task link detection (auto)
+## Step 2d: Brainstorm detection (auto)
+
+Check if a brainstorm session produced a `BRAINSTORM.md` that should feed into this design.
+
+```bash
+BRAINSTORM_SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)
+```
+
+Parse the result — if `type` is `"brainstorm"` and `files` contains `"BRAINSTORM.md"`:
+
+1. Read `BRAINSTORM.md` from the brainstorm session directory
+2. Extract from the brainstorm:
+   - **Idea** → use as initial description in Step 3c (pre-fill, user can override)
+   - **Chosen approach** → carry forward as design direction
+   - **Decisions** → import LOCKED decisions into DESIGN-SPEC later
+   - **Open questions** → surface during Step 3d deep-dive
+   - **Out of scope** → carry into CONTEXT.md
+3. Show the user what was found:
+
+```
+🧠 Brainstorm detected: <brainstorm session id>
+   Idea:      <idea summary>
+   Approach:  <chosen approach>
+   Decisions: <N> locked, <N> flexible
+
+   Dùng brainstorm này làm context cho design.
+```
+
+4. Continue to Step 2e with pre-filled context — the user can still override everything.
+
+**If no brainstorm session or latest session is not a brainstorm:** Skip this step.
+
+---
+
+## Step 2e: Task link detection (auto)
 
 Apply the shared task-link detection from `task-link.md`.
 
@@ -201,7 +235,7 @@ Before gathering requirements, scan the user's input for task manager URLs (Line
 **If a task URL is detected:**
 
 1. Fetch task details via MCP (see `task-link.md` for detection logic and URL patterns)
-2. Fetch and process attachments (see `task-link.md` Step 3b) — download to `$SESSION_DIR/attachments/`, classify by type. **Do NOT process videos here** — video analysis is deferred to Step 2e (media detection) which handles both user-provided and task-link media in one pass.
+2. Fetch and process attachments (see `task-link.md` Step 3b) — download to `$SESSION_DIR/attachments/`, classify by type. **Do NOT process videos here** — video analysis is deferred to Step 2f (media detection) which handles both user-provided and task-link media in one pass.
 3. Set task status to "In Progress" (non-blocking, best-effort)
 4. Save to `$SESSION_DIR/EXTERNAL-TASK.md` + store reference in session state
 5. Auto-extract from the fetched task:
@@ -227,12 +261,12 @@ Before gathering requirements, scan the user's input for task manager URLs (Line
 
 ---
 
-## Step 2e: Media detection (auto)
+## Step 2f: Media detection (auto)
 
 Scan **two sources** for media files:
 
 1. **User's input** — file paths or pasted screenshots/videos in the message
-2. **Task-link attachments** — files downloaded to `$SESSION_DIR/attachments/` by Step 2d
+2. **Task-link attachments** — files downloaded to `$SESSION_DIR/attachments/` by Step 2e
 
 **Detection patterns:**
 - File paths ending in: `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif` (images)
