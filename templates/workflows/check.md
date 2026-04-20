@@ -74,13 +74,13 @@ Print a summary using bilingual labels selected by `$LANG_PREF`. Use the appropr
 | Waves | Đợt | Waves |
 | Next steps | Bước tiếp | Next steps |
 
-Format:
+Format (use labels from the table above matching `$LANG_PREF` — not both side-by-side):
 
 ```
-Session / Phiên: <session-id>
-Status / Trạng thái:  <overall status>
-Stack / Ngôn ngữ:   <language from plan>
-Budget / Ngân sách:
+<Session>: <session-id>
+<Status>:  <overall status>
+<Stack>:   <language from plan>
+<Budget>:
     Total:   <used>k / <total>k tokens (<percent>%)
     Work:    <work>k (<work_pct>%)
     Prompt:  <prompt>k → <effective>k (cached)
@@ -107,15 +107,13 @@ Budget / Ngân sách:
   │  ⬜ T-05  <task name>           [pending]   [med,  20k]     │
   └─────────────────────────────────────────────────────────────┘
 
-Progress: 2/5 tasks  |  Waves: 1/3 complete
+<Progress>: 2/5 tasks  |  <Waves>: 1/3 complete
 
-Next steps:
+<Next steps>:
   - /hoangsa:cook   — continue execution
   - /hoangsa:taste  — run acceptance tests
   - /hoangsa:plate  — commit completed work
 ```
-
-Use only the labels matching `$LANG_PREF` (not both side-by-side as shown above — the table is a reference for which label to use).
 
 Status icons:
 - `✅` — passed / completed

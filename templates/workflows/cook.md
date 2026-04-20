@@ -79,7 +79,7 @@ The expected branch is derived from the session ID in `state.json`. If user is o
 Read `$SESSION_DIR/DESIGN-SPEC.md` — used in Step 5 for semantic verification.
 Note: `language` field in frontmatter → used to build correct verification commands.
 
-### 1d. Compute waves
+### 1e. Compute waves
 
 ```bash
 WAVES=$("$HOANGSA_ROOT/bin/hoangsa-cli" dag waves "$SESSION_DIR/plan.json")
@@ -451,8 +451,23 @@ AUTO_TASTE=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . auto_taste)
 ```
 
 - If `auto_taste` value is `true` → automatically chain to `/hoangsa:taste` after Step 6
-- If `auto_taste` value is `false` → skip, continue to Step 5
+- If `auto_taste` value is `false` → skip
 - If `auto_taste` value is `null` (first time) → ask the user once, then **save their answer**:
+
+  Use AskUserQuestion (adapt text to `$LANG_PREF`):
+    question: "Run /hoangsa:taste automatically after cook completes?"
+    header: "Auto taste"
+    options:
+      - label: "Always", description: "Auto-test after every cook — recommended"
+      - label: "No", description: "I'll run taste manually when needed"
+    multiSelect: false
+
+  Save immediately after user answers:
+
+  ```bash
+  "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . auto_taste true
+  # or: pref set . auto_taste false
+  ```
 
 ### Task link detection (auto)
 
@@ -466,21 +481,6 @@ Apply the shared task-link detection from `task-link.md`:
 If `state.external_task` exists after all waves complete, chain to `/serve` push mode so the user can sync results (status change, comment, full report) back to the task manager. This happens after taste and plate in the chain.
 
 > **Note:** Cook does NOT chain directly to /serve. The sync-back chain is: cook → taste → plate → serve. Plate is the authoritative sync point.
-
-  Use AskUserQuestion:
-    question: "Muốn tự động chạy /hoangsa:taste sau khi cook xong?"
-    header: "Auto taste"
-    options:
-      - label: "Luôn luôn", description: "Tự động test sau mỗi cook — khuyến khích"
-      - label: "Không", description: "Tôi sẽ chạy taste thủ công khi cần"
-    multiSelect: false
-
-  Save immediately after user answers:
-
-  ```bash
-  "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . auto_taste true
-  # or: pref set . auto_taste false
-  ```
 
 ---
 
