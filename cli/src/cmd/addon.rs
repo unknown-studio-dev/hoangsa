@@ -81,6 +81,21 @@ fn scan_available_addons(hoangsa_root: &str) -> Vec<Value> {
             .get("pre_invoke_gate")
             .filter(|v| v != &"null")
             .cloned();
+        // Task-type / worker-role gating (all default to empty arrays).
+        // - exclude_task_types / exclude_worker_roles: skip addon when current
+        //   task.type or worker_role appears in the list.
+        // - include_task_types / include_worker_roles: if present AND non-empty,
+        //   only include the addon when the current value is in the list.
+        // Cook.md applies these filters during worker-prompt composition.
+        let parse_list = |key: &str| -> Value {
+            fm.get(key)
+                .and_then(|f| serde_json::from_str(f).ok())
+                .unwrap_or(json!([]))
+        };
+        let exclude_task_types = parse_list("exclude_task_types");
+        let include_task_types = parse_list("include_task_types");
+        let exclude_worker_roles = parse_list("exclude_worker_roles");
+        let include_worker_roles = parse_list("include_worker_roles");
 
         result.push(json!({
             "name": name,
@@ -90,6 +105,10 @@ fn scan_available_addons(hoangsa_root: &str) -> Vec<Value> {
             "inject_position": inject_position,
             "allowed_tools": allowed_tools,
             "pre_invoke_gate": pre_invoke_gate,
+            "exclude_task_types": exclude_task_types,
+            "include_task_types": include_task_types,
+            "exclude_worker_roles": exclude_worker_roles,
+            "include_worker_roles": include_worker_roles,
         }));
     }
 

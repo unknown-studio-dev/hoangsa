@@ -23,6 +23,11 @@ pub struct Rule {
     pub conditions: Vec<Condition>,
     pub action: RuleAction,
     pub message: String,
+    /// Names a stateful check to run instead of pattern conditions.
+    /// Valid values: "require-thoth-impact", "require-detect-changes".
+    /// When set, `conditions` is ignored and the named check in hook.rs fires.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stateful: Option<String>,
 }
 
 fn default_enforcement() -> Enforcement {
@@ -149,6 +154,11 @@ pub fn cmd_rule_gate() -> Result<(), Box<dyn std::error::Error>> {
         if !rule.enabled {
             continue;
         }
+        // Stateful rules are dispatched by `hook enforce`, not by rule-gate.
+        // Skip here so empty conditions don't vacuously match every tool call.
+        if rule.stateful.is_some() {
+            continue;
+        }
 
         // Check tool_name matches rule.matcher (pipe-split list)
         let matcher_matches = rule
@@ -238,6 +248,159 @@ pub fn cmd_rule_list(project_dir: &str) -> Result<(), Box<dyn std::error::Error>
             }));
         }
     }
+    Ok(())
+}
+
+/// Default rule set seeded into `.hoangsa/rules.json` on first install.
+/// Keep in sync with the brainstorm table at
+/// `.hoangsa/sessions/brainstorm/rule-enforcement-without-duplication/BRAINSTORM.md`.
+pub fn default_rules() -> Vec<Rule> {
+    fn cond(field: &str, op: ConditionOp, value: &str) -> Condition {
+        Condition { field: field.to_string(), op, value: value.to_string() }
+    }
+    fn rule(
+        id: &str,
+        name: &str,
+        enforcement: Enforcement,
+        matcher: &str,
+        conditions: Vec<Condition>,
+        action: RuleAction,
+        message: &str,
+        stateful: Option<&str>,
+    ) -> Rule {
+        Rule {
+            id: id.to_string(),
+            name: name.to_string(),
+            enabled: true,
+            enforcement,
+            matcher: matcher.to_string(),
+            conditions,
+            action,
+            message: message.to_string(),
+            stateful: stateful.map(String::from),
+        }
+    }
+    vec![
+        rule(
+            "no-edit-claude",
+            "Block direct .claude/ edits",
+            Enforcement::Prompt,
+            "Edit|Write",
+            vec![cond("file_path", ConditionOp::Contains, ".claude/")],
+            RuleAction::Block,
+            "Do not edit files in .claude/ directly — use hoangsa-cli or bin/install to manage",
+            None,
+        ),
+        rule(
+            "no-bare-unwrap",
+            "Avoid bare unwrap()",
+            Enforcement::Prompt,
+            "Edit|Write",
+            vec![cond("new_string", ConditionOp::Regex, r"\bunwrap\(\)")],
+            RuleAction::Warn,
+            "Use expect(\"context\") or ? instead of unwrap() — makes panic debugging easier",
+            None,
+        ),
+        rule(
+            "no-todo-unimplemented",
+            "No todo!/unimplemented! in commits",
+            Enforcement::Prompt,
+            "Edit|Write",
+            vec![cond("new_string", ConditionOp::Regex, r"\b(todo!|unimplemented!)")],
+            RuleAction::Warn,
+            "Do not commit unimplemented code — finish it or create an issue instead",
+            None,
+        ),
+        rule(
+            "no-git-add-force",
+            "Block git add --force",
+            Enforcement::Prompt,
+            "Bash",
+            vec![cond("command", ConditionOp::Regex, r"git\s+add\s+(-f|--force)")],
+            RuleAction::Block,
+            "Do not force-add gitignored files — check .gitignore or remove the -f flag",
+            None,
+        ),
+        rule(
+            "warn-git-add-all",
+            "Warn on git add . / git add -A",
+            Enforcement::Prompt,
+            "Bash",
+            vec![cond("command", ConditionOp::Regex, r"git\s+add\s+(-A|\.)")],
+            RuleAction::Warn,
+            "Prefer adding specific files by name — git add . may include unwanted files",
+            None,
+        ),
+        rule(
+            "no-git-stash",
+            "Block git stash",
+            Enforcement::Hook,
+            "Bash",
+            vec![cond("command", ConditionOp::Regex, r"git\s+stash")],
+            RuleAction::Block,
+            "Never use git stash — leads to lost work and confusing state",
+            None,
+        ),
+        rule(
+            "no-force-push-main",
+            "Block git push --force to main/master",
+            Enforcement::Hook,
+            "Bash",
+            vec![cond("command", ConditionOp::Regex, r"git\s+push.*--force.*(main|master)")],
+            RuleAction::Block,
+            "Never force-push to main/master — rewrites shared history",
+            None,
+        ),
+        rule(
+            "no-skip-hooks",
+            "Block --no-verify",
+            Enforcement::Hook,
+            "Bash",
+            vec![cond("command", ConditionOp::Regex, r"--no-verify")],
+            RuleAction::Block,
+            "Never skip git hooks — fix the underlying issue instead",
+            None,
+        ),
+        rule(
+            "require-thoth-impact",
+            "Require thoth_impact before first edit to a source file",
+            Enforcement::Hook,
+            "Edit|Write",
+            vec![],
+            RuleAction::Block,
+            "Run thoth_impact on this file before editing. Softened: subsequent edits to the same file in this session are allowed.",
+            Some("require-thoth-impact"),
+        ),
+        rule(
+            "require-detect-changes",
+            "Require thoth_detect_changes before git commit",
+            Enforcement::Hook,
+            "Bash",
+            vec![],
+            RuleAction::Block,
+            "Run thoth_detect_changes before committing to verify the change scope.",
+            Some("require-detect-changes"),
+        ),
+    ]
+}
+
+/// `rule init [project_dir]` — seed defaults if .hoangsa/rules.json is missing.
+/// Idempotent: reports `already_initialized: true` and does nothing when the
+/// file already exists, so re-running install never overwrites user edits.
+pub fn cmd_rule_init(project_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let path = rules_path(project_dir);
+    if path.exists() {
+        out(&json!({ "success": true, "already_initialized": true, "path": path.to_string_lossy() }));
+        return Ok(());
+    }
+    let config = RulesConfig { version: "1.0".to_string(), rules: default_rules() };
+    write_rules_config(project_dir, &config)?;
+    out(&json!({
+        "success": true,
+        "already_initialized": false,
+        "path": path.to_string_lossy(),
+        "rules_count": config.rules.len(),
+    }));
     Ok(())
 }
 
@@ -411,6 +574,7 @@ mod tests {
             conditions,
             action: RuleAction::Block,
             message: "Test block message".to_string(),
+            stateful: None,
         }
     }
 
@@ -586,6 +750,7 @@ mod tests {
             conditions: vec![],
             action: RuleAction::Block,
             message: "visible".to_string(),
+            stateful: None,
         };
         let hook_rule = Rule {
             id: "hook-rule".to_string(),
@@ -596,6 +761,7 @@ mod tests {
             conditions: vec![],
             action: RuleAction::Block,
             message: "invisible".to_string(),
+            stateful: None,
         };
         let prompt_only: Vec<&Rule> = vec![&prompt_rule, &hook_rule]
             .into_iter()

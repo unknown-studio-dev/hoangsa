@@ -597,6 +597,10 @@ pub fn cmd_enforce(cwd: &str) {
         if rule.enforcement == Enforcement::Preflight {
             continue;
         }
+        // Stateful rules are dispatched by stateful_check below, not pattern-matched.
+        if rule.stateful.is_some() {
+            continue;
+        }
 
         let matcher_matches = rule.matcher.split('|').any(|m| m.trim() == tool_name);
         if !matcher_matches {
@@ -672,154 +676,238 @@ fn print_decision(result: &EnforceResult) {
 /// Returns None if no stateful rule applies to this tool call.
 fn stateful_check(cwd: &str, tool_name: &str, tool_input: &serde_json::Value) -> Option<EnforceResult> {
     match tool_name {
-        "Edit" | "Write" => stateful_check_edit(cwd, tool_input),
-        "Bash" => stateful_check_bash(cwd, tool_input),
+        "Edit" | "Write" => {
+            if stateful_rule_enabled(cwd, "require-thoth-impact") {
+                stateful_check_edit(cwd, tool_input)
+            } else {
+                None
+            }
+        }
+        "Bash" => {
+            if stateful_rule_enabled(cwd, "require-detect-changes") {
+                stateful_check_bash(cwd, tool_input)
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }
 
+/// Look up a stateful rule by its `stateful` field value; default-enabled if no
+/// entry is present (backwards compatibility with installs predating the field).
+fn stateful_rule_enabled(cwd: &str, stateful_id: &str) -> bool {
+    use crate::cmd::rule::read_rules_config_pub;
+    let config = match read_rules_config_pub(cwd) {
+        Ok(Some(c)) => c,
+        _ => return true,
+    };
+    for rule in &config.rules {
+        if rule.stateful.as_deref() == Some(stateful_id) {
+            return rule.enabled;
+        }
+    }
+    true
+}
+
 /// Rule #9: Require thoth_impact for first-touch files before Edit.
 /// Softened: if the file already has events (prior impact or edit), skip.
+/// Thin wrapper — does I/O, delegates correlation to `intent_guard_edit`.
 fn stateful_check_edit(cwd: &str, tool_input: &serde_json::Value) -> Option<EnforceResult> {
     let file_path = tool_input.get("file_path").and_then(|v| v.as_str())?;
-
-    // Skip non-source files (configs, markdown, etc.)
     if !is_source_file(file_path) {
         return None;
     }
-
-    let events_path = enforcement_events_path(cwd);
-    let content = fs::read_to_string(&events_path).unwrap_or_default();
-
-    if content.is_empty() {
-        // No events at all — this is first-touch, require impact
-        return Some(EnforceResult {
-            decision: "block".to_string(),
-            reason: format!(
-                "⛔ STATEFUL: require-thoth-impact\n\n\
-                 No thoth_impact found for '{}'\n\
-                 Run thoth_impact on this file before editing.\n\n\
-                 If this is a false positive, use:\n\
-                 hoangsa-cli enforce override --rule require-thoth-impact --target {} --reason \"...\"",
-                file_path, file_path
-            ),
-            warning: None,
-        });
-    }
-
-    // Check if this file has any prior events (impact, edit, or override for this rule)
-    let file_has_events = content.lines().any(|line| {
-        if let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) {
-            let event_type = entry.get("event").and_then(|e| e.as_str()).unwrap_or("");
-            match event_type {
-                "impact" => {
-                    entry.get("file").and_then(|f| f.as_str()) == Some(file_path)
-                }
-                "override" => {
-                    entry.get("rule").and_then(|r| r.as_str()) == Some("require-thoth-impact")
-                        && entry.get("target").and_then(|t| t.as_str()) == Some(file_path)
-                }
-                _ => false,
-            }
-        } else {
-            false
-        }
-    });
-
-    if file_has_events {
-        None // Already checked — allow iterative edits
-    } else {
-        Some(EnforceResult {
-            decision: "block".to_string(),
-            reason: format!(
-                "⛔ STATEFUL: require-thoth-impact\n\n\
-                 No thoth_impact found for '{}'\n\
-                 Run thoth_impact on this file before editing.\n\n\
-                 If this is a false positive, use:\n\
-                 hoangsa-cli enforce override --rule require-thoth-impact --target {} --reason \"...\"",
-                file_path, file_path
-            ),
-            warning: None,
-        })
+    let events = fs::read_to_string(enforcement_events_path(cwd)).unwrap_or_default();
+    match intent_guard_edit(&events, file_path) {
+        IntentOutcome::Approve => None,
+        IntentOutcome::Block(reason) => Some(EnforceResult { decision: "block".to_string(), reason, warning: None }),
+        IntentOutcome::Warn(w) => Some(EnforceResult { decision: "approve".to_string(), reason: String::new(), warning: Some(w) }),
     }
 }
 
 /// Rule #10: Require detect_changes before git commit.
-/// Intent guard: if detect_changes exists, compare its files against `git diff --cached`.
+/// Thin wrapper — does I/O, delegates correlation to `intent_guard_bash_commit`.
 fn stateful_check_bash(cwd: &str, tool_input: &serde_json::Value) -> Option<EnforceResult> {
     let command = tool_input.get("command").and_then(|v| v.as_str())?;
-
     if !is_git_commit(command) {
         return None;
     }
+    let events = fs::read_to_string(enforcement_events_path(cwd)).unwrap_or_default();
+    let diff_files = get_staged_files(cwd);
+    match intent_guard_bash_commit(&events, &diff_files) {
+        IntentOutcome::Approve => None,
+        IntentOutcome::Block(reason) => Some(EnforceResult { decision: "block".to_string(), reason, warning: None }),
+        IntentOutcome::Warn(w) => Some(EnforceResult { decision: "approve".to_string(), reason: String::new(), warning: Some(w) }),
+    }
+}
 
-    let events_path = enforcement_events_path(cwd);
-    let content = fs::read_to_string(&events_path).unwrap_or_default();
+/// Outcome of a pure intent-guard check. Kept separate from `EnforceResult`
+/// so the guard logic is trivially unit-testable without mocking I/O.
+#[derive(Debug, Clone, PartialEq)]
+pub enum IntentOutcome {
+    Approve,
+    Block(String),
+    Warn(String),
+}
 
-    // Collect detect_changes files and check for override
-    let mut detected_files: Vec<String> = Vec::new();
+/// Pure: is there a prior `impact` or `override` event covering `file_path`?
+/// Tolerant of rel↔abs path differences (via `paths_refer_to_same_file`).
+/// Takes the full events-log text as input so it's trivially unit-testable
+/// — no filesystem reads, no `cwd` threading, no env dependency.
+pub fn intent_guard_edit(events: &str, file_path: &str) -> IntentOutcome {
+    let covered = events.lines().any(|line| {
+        let entry: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        match entry.get("event").and_then(|e| e.as_str()).unwrap_or("") {
+            "impact" => entry
+                .get("file")
+                .and_then(|f| f.as_str())
+                .map(|f| !f.is_empty() && paths_refer_to_same_file(f, file_path))
+                .unwrap_or(false),
+            "override" => {
+                entry.get("rule").and_then(|r| r.as_str()) == Some("require-thoth-impact")
+                    && entry
+                        .get("target")
+                        .and_then(|t| t.as_str())
+                        .map(|t| paths_refer_to_same_file(t, file_path))
+                        .unwrap_or(false)
+            }
+            _ => false,
+        }
+    });
+
+    if covered {
+        IntentOutcome::Approve
+    } else {
+        IntentOutcome::Block(format!(
+            "⛔ STATEFUL: require-thoth-impact\n\n\
+             No thoth_impact found for '{path}'\n\
+             Run thoth_impact on this file before editing.\n\n\
+             If this is a false positive, use:\n\
+             hoangsa-cli enforce override --rule require-thoth-impact --target {path} --reason \"...\"",
+            path = file_path
+        ))
+    }
+}
+
+/// Pure: compare the most-recent `detect_changes` event's file list against
+/// the actual staged-diff file list. Returns Block if no detect_changes at
+/// all, Warn if scope drift, Approve if covered. An override event for
+/// `require-detect-changes` short-circuits to Approve.
+pub fn intent_guard_bash_commit(events: &str, staged_files: &[String]) -> IntentOutcome {
+    let mut detected: Vec<String> = Vec::new();
     let mut has_override = false;
-
-    for line in content.lines() {
-        if let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) {
-            let event_type = entry.get("event").and_then(|e| e.as_str()).unwrap_or("");
-            if event_type == "detect_changes" {
+    for line in events.lines() {
+        let entry: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        match entry.get("event").and_then(|e| e.as_str()).unwrap_or("") {
+            "detect_changes" => {
                 if let Some(files) = entry.get("files").and_then(|f| f.as_array()) {
                     for f in files {
                         if let Some(s) = f.as_str() {
-                            detected_files.push(s.to_string());
+                            detected.push(s.to_string());
                         }
                     }
                 }
-            } else if event_type == "override"
-                && entry.get("rule").and_then(|r| r.as_str()) == Some("require-detect-changes")
-            {
+            }
+            "override" if entry.get("rule").and_then(|r| r.as_str()) == Some("require-detect-changes") => {
                 has_override = true;
             }
+            _ => {}
         }
     }
 
     if has_override {
-        return None;
+        return IntentOutcome::Approve;
     }
 
-    if detected_files.is_empty() {
-        return Some(EnforceResult {
-            decision: "block".to_string(),
-            reason: "⛔ STATEFUL: require-detect-changes\n\n\
-                     No thoth_detect_changes found before commit.\n\
-                     Run thoth_detect_changes to verify scope before committing.\n\n\
-                     If this is a false positive, use:\n\
-                     hoangsa-cli enforce override --rule require-detect-changes --target commit --reason \"...\""
+    if detected.is_empty() {
+        return IntentOutcome::Block(
+            "⛔ STATEFUL: require-detect-changes\n\n\
+             No thoth_detect_changes found before commit.\n\
+             Run thoth_detect_changes to verify scope before committing.\n\n\
+             If this is a false positive, use:\n\
+             hoangsa-cli enforce override --rule require-detect-changes --target commit --reason \"...\""
                 .to_string(),
-            warning: None,
-        });
+        );
     }
 
-    // Intent guard: compare detected files against actual staged diff
-    let diff_files = get_staged_files(cwd);
-    if diff_files.is_empty() {
-        return None; // Can't determine diff — allow
+    // No staged files → nothing to correlate against (e.g. amend, empty commit).
+    if staged_files.is_empty() {
+        return IntentOutcome::Approve;
     }
 
-    let uncovered: Vec<&String> = diff_files
+    let uncovered: Vec<&String> = staged_files
         .iter()
-        .filter(|f| !detected_files.iter().any(|d| f.ends_with(d.as_str()) || d.ends_with(f.as_str())))
+        .filter(|f| {
+            !detected
+                .iter()
+                .any(|d| f.ends_with(d.as_str()) || d.ends_with(f.as_str()))
+        })
         .collect();
 
     if uncovered.is_empty() {
-        None
+        IntentOutcome::Approve
     } else {
-        let uncovered_list = uncovered.iter().map(|f| f.as_str()).collect::<Vec<_>>().join(", ");
-        Some(EnforceResult {
-            decision: "approve".to_string(),
-            reason: String::new(),
-            warning: Some(format!(
-                "⚠️ INTENT GUARD: Files in staged diff not covered by detect_changes: [{}]\n\
-                 Consider re-running thoth_detect_changes before commit.",
-                uncovered_list
-            )),
-        })
+        let list = uncovered
+            .iter()
+            .map(|f| f.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        IntentOutcome::Warn(format!(
+            "⚠️ INTENT GUARD: Files in staged diff not covered by detect_changes: [{list}]\n\
+             Consider re-running thoth_detect_changes before commit."
+        ))
+    }
+}
+
+/// `hook intent-guard`
+///
+/// Standalone PreToolUse-style subcommand that runs ONLY the correlation
+/// checks (file-level for Edit/Write, diff-scope for Bash git-commit).
+/// Does NOT read rules.json — it trusts the caller to have decided whether
+/// the guard should fire. Useful for composing lint-style commit hooks or
+/// writing unit tests that exercise correlation in isolation.
+///
+/// Decisions: approve | block | approve+reason (warn). Reads tool payload
+/// from stdin in the same shape Claude Code's PreToolUse hooks receive.
+pub fn cmd_intent_guard(cwd: &str) {
+    use std::io::Read as _;
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input).ok();
+    let parsed: serde_json::Value = serde_json::from_str(&input).unwrap_or(json!({}));
+    let tool_name = parsed.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+    let tool_input = parsed.get("tool_input").cloned().unwrap_or(json!({}));
+    let events = fs::read_to_string(enforcement_events_path(cwd)).unwrap_or_default();
+
+    let outcome = match tool_name {
+        "Edit" | "Write" => {
+            match tool_input.get("file_path").and_then(|v| v.as_str()) {
+                Some(fp) if is_source_file(fp) => intent_guard_edit(&events, fp),
+                _ => IntentOutcome::Approve,
+            }
+        }
+        "Bash" => {
+            match tool_input.get("command").and_then(|v| v.as_str()) {
+                Some(cmd) if is_git_commit(cmd) => {
+                    let files = get_staged_files(cwd);
+                    intent_guard_bash_commit(&events, &files)
+                }
+                _ => IntentOutcome::Approve,
+            }
+        }
+        _ => IntentOutcome::Approve,
+    };
+
+    match outcome {
+        IntentOutcome::Approve => out(&json!({"decision": "approve"})),
+        IntentOutcome::Block(reason) => out(&json!({"decision": "block", "reason": reason})),
+        IntentOutcome::Warn(reason) => out(&json!({"decision": "approve", "reason": reason})),
     }
 }
 
@@ -842,6 +930,33 @@ fn get_staged_files(cwd: &str) -> Vec<String> {
 fn is_git_commit(command: &str) -> bool {
     let re = regex::Regex::new(r"git\s+commit").unwrap_or_else(|_| regex::Regex::new("$^").expect("infallible"));
     re.is_match(command)
+}
+
+/// Relaxed path equality: treat an absolute path and a repo-relative path as
+/// referring to the same file when one ends with the other. Used to bridge
+/// impact events (often relative) against Edit file_path (usually absolute).
+fn paths_refer_to_same_file(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    // Normalize leading "./"
+    let an = a.trim_start_matches("./");
+    let bn = b.trim_start_matches("./");
+    if an == bn {
+        return true;
+    }
+    // Tolerate abs↔rel: one must end with the other preceded by a path separator
+    // to avoid "foo/bar.rs" matching "other/foo/bar.rs" incorrectly — wait, that's
+    // actually the intended match here (same basename+subpath), so a bare ends_with
+    // is correct. Require at least one path separator to avoid "a.rs" matching
+    // "banana.rs".
+    let ends_match = |long: &str, short: &str| -> bool {
+        short.contains('/') && long.ends_with(short) && {
+            let boundary = long.len() - short.len();
+            boundary == 0 || long.as_bytes().get(boundary - 1) == Some(&b'/')
+        }
+    };
+    ends_match(an, bn) || ends_match(bn, an)
 }
 
 fn is_source_file(path: &str) -> bool {
@@ -877,9 +992,10 @@ pub fn cmd_post_enforce(cwd: &str) {
     let tool_input = parsed.get("tool_input").cloned().unwrap_or(json!({}));
 
     let event = match tool_name {
-        "mcp__thoth__thoth_impact" => build_impact_event(&tool_input),
+        "mcp__thoth__thoth_impact" => build_impact_event(cwd, &tool_input),
         "mcp__thoth__thoth_detect_changes" => build_detect_changes_event(&tool_input, &parsed),
         "mcp__thoth__thoth_recall" => build_recall_event(&tool_input),
+        "Edit" | "Write" | "MultiEdit" => build_drift_event(cwd, &tool_input),
         _ => None,
     };
 
@@ -890,7 +1006,137 @@ pub fn cmd_post_enforce(cwd: &str) {
     out(&json!({"decision": "approve"}));
 }
 
-fn build_impact_event(tool_input: &serde_json::Value) -> Option<serde_json::Value> {
+/// Rule #14 (experimental, v1): grep-based post-edit drift detection.
+/// Extracts top-level symbol names from the diff (old_string vs new_string),
+/// compares against impact-checked symbols for this file from the event log,
+/// and emits a `drift_warn` event when the edited set isn't covered.
+/// WARN-only — never blocks. False-positive rate tracked via `enforce report`.
+fn build_drift_event(cwd: &str, tool_input: &serde_json::Value) -> Option<serde_json::Value> {
+    let file_path = tool_input.get("file_path").and_then(|v| v.as_str())?;
+    if !is_source_file(file_path) {
+        return None;
+    }
+    let old_string = tool_input.get("old_string").and_then(|v| v.as_str()).unwrap_or("");
+    let new_string = tool_input.get("new_string").and_then(|v| v.as_str()).unwrap_or("");
+    let content = tool_input.get("content").and_then(|v| v.as_str()).unwrap_or("");
+
+    // Collect symbols from the edit region (old ∪ new for Edit; content for Write).
+    let mut edited: Vec<String> = Vec::new();
+    for text in [old_string, new_string, content] {
+        if text.is_empty() { continue; }
+        extract_symbols(cwd, text, &mut edited);
+    }
+    edited.sort();
+    edited.dedup();
+    if edited.is_empty() {
+        return None;
+    }
+
+    // Collect impact-checked symbols for this file from the event log.
+    let events_path = enforcement_events_path(cwd);
+    let events = fs::read_to_string(&events_path).unwrap_or_default();
+    let mut impacted: Vec<String> = Vec::new();
+    for line in events.lines() {
+        let entry: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if entry.get("event").and_then(|e| e.as_str()) != Some("impact") {
+            continue;
+        }
+        let matches_file = entry
+            .get("file")
+            .and_then(|f| f.as_str())
+            .map(|f| f == file_path || file_path.ends_with(f) || f.ends_with(file_path))
+            .unwrap_or(false);
+        if !matches_file {
+            continue;
+        }
+        if let Some(sym) = entry.get("symbol").and_then(|s| s.as_str()) {
+            impacted.push(sym.to_string());
+        }
+    }
+
+    // If no impact was recorded for this file, require-thoth-impact already
+    // surfaced that gap at PreToolUse — don't double-warn here.
+    if impacted.is_empty() {
+        return None;
+    }
+
+    let uncovered: Vec<String> = edited
+        .iter()
+        .filter(|e| !impacted.iter().any(|i| i.contains(e.as_str()) || e.contains(i.as_str())))
+        .cloned()
+        .collect();
+
+    if uncovered.is_empty() {
+        None
+    } else {
+        Some(json!({
+            "event": "drift_warn",
+            "file": file_path,
+            "edited_symbols": edited,
+            "impact_symbols": impacted,
+            "uncovered": uncovered,
+        }))
+    }
+}
+
+/// Default symbol-detection regexes, used when
+/// `.hoangsa/config.json → enforcement.symbol_patterns` is absent.
+/// Each pattern MUST have exactly one capture group for the symbol name.
+/// Kept broad on purpose: false positives degrade only the drift-warn metric,
+/// not correctness (drift is WARN-only per Decision #10 in the brainstorm).
+const DEFAULT_SYMBOL_PATTERNS: &[&str] = &[
+    r"(?m)\b(?:pub\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)",
+    r"(?m)\b(?:pub\s+)?(?:struct|enum|trait|impl)\s+([A-Za-z_][A-Za-z0-9_]*)",
+    r"(?m)\bdef\s+([A-Za-z_][A-Za-z0-9_]*)",
+    r"(?m)\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)",
+    r"(?m)\bfunc\s+([A-Za-z_][A-Za-z0-9_]*)",
+    r"(?m)\bclass\s+([A-Za-z_][A-Za-z0-9_]*)",
+];
+
+/// Read symbol-detection regexes from `.hoangsa/config.json` under
+/// `enforcement.symbol_patterns` (array of regex strings). Falls back to
+/// `DEFAULT_SYMBOL_PATTERNS` when absent or malformed.
+fn read_symbol_patterns(cwd: &str) -> Vec<String> {
+    let config_path = Path::new(cwd).join(".hoangsa").join("config.json");
+    if !config_path.exists() {
+        return DEFAULT_SYMBOL_PATTERNS.iter().map(|s| s.to_string()).collect();
+    }
+    let config = read_json(config_path.to_str().unwrap_or(""));
+    let configured = config
+        .get("enforcement")
+        .and_then(|e| e.get("symbol_patterns"))
+        .and_then(|p| p.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect::<Vec<_>>()
+        });
+    match configured {
+        Some(patterns) if !patterns.is_empty() => patterns,
+        _ => DEFAULT_SYMBOL_PATTERNS.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
+/// Extract plausible top-level symbol names from a source snippet.
+/// Regexes come from `.hoangsa/config.json → enforcement.symbol_patterns`
+/// (array of regex), falling back to `DEFAULT_SYMBOL_PATTERNS`. Best-effort;
+/// grep-level, not AST. Each pattern must expose the symbol name in capture 1.
+fn extract_symbols(cwd: &str, text: &str, out: &mut Vec<String>) {
+    for pat in read_symbol_patterns(cwd) {
+        if let Ok(re) = regex::Regex::new(&pat) {
+            for cap in re.captures_iter(text) {
+                if let Some(m) = cap.get(1) {
+                    out.push(m.as_str().to_string());
+                }
+            }
+        }
+    }
+}
+
+fn build_impact_event(cwd: &str, tool_input: &serde_json::Value) -> Option<serde_json::Value> {
     let fqn = tool_input.get("fqn").and_then(|v| v.as_str())
         .or_else(|| tool_input.get("target").and_then(|v| v.as_str()))
         .unwrap_or("");
@@ -898,12 +1144,11 @@ fn build_impact_event(tool_input: &serde_json::Value) -> Option<serde_json::Valu
         return None;
     }
 
-    // Try to resolve FQN to file path — use the FQN itself if it looks like a path
-    let file = if fqn.contains('/') || fqn.contains('.') && !fqn.contains("::") {
+    // FQN that already looks like a path → use as-is.
+    let file = if fqn.contains('/') || (fqn.contains('.') && !fqn.contains("::")) {
         fqn.to_string()
     } else {
-        // For Rust FQNs like "cmd_rule_sync", try to find the file via grep
-        resolve_symbol_to_file(fqn).unwrap_or_default()
+        resolve_symbol_to_file(cwd, fqn).unwrap_or_default()
     };
 
     Some(json!({
@@ -969,15 +1214,113 @@ fn build_recall_event(tool_input: &serde_json::Value) -> Option<serde_json::Valu
     }))
 }
 
-fn resolve_symbol_to_file(symbol: &str) -> Option<String> {
+/// Resolve a symbol (FQN or bare name) to a source file path.
+/// 1. Ask the Thoth CLI for the symbol's canonical location (uses the code graph).
+/// 2. On miss or when thoth is unavailable, fall back to a config-driven grep
+///    built from `enforcement.symbol_patterns` (same source as extract_symbols).
+/// Both paths scan from `cwd` — no more hardcoded `cli/src/` / `src/`.
+fn resolve_symbol_to_file(cwd: &str, symbol: &str) -> Option<String> {
     use std::process::Command;
-    // Quick grep for the symbol in source files
-    let output = Command::new("grep")
-        .args(["-rl", &format!("fn {symbol}"), "cli/src/", "src/"])
-        .output()
-        .ok()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout.lines().next().map(|l| l.to_string())
+
+    // Strip module prefix: "rule::cmd_rule_add" → "cmd_rule_add".
+    let bare = symbol.rsplit("::").next().unwrap_or(symbol);
+
+    // Preferred: Thoth index lookup.
+    if let Some(thoth_bin) = find_thoth_bin() {
+        let thoth_root = Path::new(cwd).join(".thoth");
+        if thoth_root.exists() {
+            if let Ok(out) = Command::new(&thoth_bin)
+                .args(["--root", &thoth_root.to_string_lossy()])
+                .args(["context", bare, "--json"])
+                .current_dir(cwd)
+                .output()
+            {
+                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+                    if let Some(path) = v.get("symbol").and_then(|s| s.get("path")).and_then(|p| p.as_str()) {
+                        return Some(path.to_string());
+                    }
+                    if let Some(path) = v.get("path").and_then(|p| p.as_str()) {
+                        return Some(path.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback: in-process regex walk using the configured symbol patterns.
+    // Portable across platforms (BSD grep lacks PCRE). Only runs when thoth
+    // can't resolve — bounded by depth + source-extension filter.
+    let patterns = read_symbol_patterns(cwd);
+    let escaped = regex::escape(bare);
+    let compiled: Vec<regex::Regex> = patterns
+        .iter()
+        .map(|pat| pat.replacen("([A-Za-z_][A-Za-z0-9_]*)", &escaped, 1))
+        .filter(|p| p.contains(&escaped))
+        .filter_map(|p| regex::Regex::new(&p).ok())
+        .collect();
+    if compiled.is_empty() {
+        return None;
+    }
+    find_symbol_in_tree(cwd, Path::new(cwd), &compiled, 0)
+}
+
+/// Recursive DFS over source files looking for any pattern match.
+/// Skips vendor/build dirs and binary extensions. Returns the first match.
+fn find_symbol_in_tree(
+    cwd: &str,
+    dir: &Path,
+    patterns: &[regex::Regex],
+    depth: u32,
+) -> Option<String> {
+    if depth > 8 {
+        return None;
+    }
+    const SKIP_DIRS: &[&str] = &[
+        ".git", "node_modules", "target", "dist", "build", ".hoangsa",
+        ".thoth", ".claude", "__pycache__", ".venv", "venv", ".next",
+    ];
+    const SOURCE_EXTS: &[&str] = &[
+        "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "c", "cpp",
+        "h", "hpp", "rb", "swift", "kt", "scala", "cs", "php", "lua", "ex",
+    ];
+
+    let entries = fs::read_dir(dir).ok()?;
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') && depth == 0 {
+            continue;
+        }
+        let ft = match entry.file_type() { Ok(t) => t, Err(_) => continue };
+        if ft.is_dir() {
+            if SKIP_DIRS.contains(&name.as_str()) {
+                continue;
+            }
+            if let Some(found) = find_symbol_in_tree(cwd, &path, patterns, depth + 1) {
+                return Some(found);
+            }
+        } else if ft.is_file() {
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if !SOURCE_EXTS.contains(&ext) {
+                continue;
+            }
+            let content = match fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            for re in patterns {
+                if re.is_match(&content) {
+                    return Some(
+                        path.strip_prefix(cwd)
+                            .ok()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_else(|| path.to_string_lossy().to_string()),
+                    );
+                }
+            }
+        }
+    }
+    None
 }
 
 fn append_event(cwd: &str, event: &serde_json::Value) {
@@ -1051,6 +1394,7 @@ pub fn cmd_enforce_report(cwd: &str) {
     let mut blocks: Vec<(String, String)> = Vec::new();
     let mut warns: Vec<(String, String)> = Vec::new();
     let mut overrides: Vec<(String, String, String)> = Vec::new();
+    let mut drifts: Vec<(String, Vec<String>)> = Vec::new();
     let mut impacts = 0u32;
     let mut detect_changes = 0u32;
     let mut recalls = 0u32;
@@ -1075,6 +1419,15 @@ pub fn cmd_enforce_report(cwd: &str) {
                     let reason = entry.get("reason").and_then(|r| r.as_str()).unwrap_or("").to_string();
                     overrides.push((rule, target, reason));
                 }
+                "drift_warn" => {
+                    let file = entry.get("file").and_then(|f| f.as_str()).unwrap_or("?").to_string();
+                    let uncovered: Vec<String> = entry
+                        .get("uncovered")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter().filter_map(|s| s.as_str().map(|s| s.to_string())).collect())
+                        .unwrap_or_default();
+                    drifts.push((file, uncovered));
+                }
                 "impact" => impacts += 1,
                 "detect_changes" => detect_changes += 1,
                 "recall" => recalls += 1,
@@ -1095,6 +1448,7 @@ pub fn cmd_enforce_report(cwd: &str) {
         "blocks": blocks.len(),
         "warns": warns.len(),
         "overrides": overrides.len(),
+        "drifts": drifts.len(),
         "impacts": impacts,
         "detect_changes": detect_changes,
         "recalls": recalls,
@@ -1102,6 +1456,7 @@ pub fn cmd_enforce_report(cwd: &str) {
         "top_blocks": blocks,
         "top_warns": warns,
         "override_details": overrides,
+        "drift_details": drifts,
     });
 
     out(&report);
@@ -1243,6 +1598,116 @@ fn chrono_now() -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // ── intent_guard_edit ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_intent_guard_edit_empty_log_blocks() {
+        let result = intent_guard_edit("", "/abs/path/foo.rs");
+        assert!(matches!(result, IntentOutcome::Block(_)), "empty events must block");
+    }
+
+    #[test]
+    fn test_intent_guard_edit_matching_impact_approves() {
+        let events = r#"{"event":"impact","file":"cli/src/cmd/foo.rs","symbol":"foo::bar"}
+"#;
+        let result = intent_guard_edit(events, "/Users/me/proj/cli/src/cmd/foo.rs");
+        assert_eq!(result, IntentOutcome::Approve, "abs↔rel path match should approve");
+    }
+
+    #[test]
+    fn test_intent_guard_edit_rejects_empty_file_field() {
+        // An impact event where file resolution failed (empty string) must NOT
+        // satisfy the guard — otherwise every unresolved event would unlock every file.
+        let events = r#"{"event":"impact","file":"","symbol":"foo::bar"}
+"#;
+        let result = intent_guard_edit(events, "/abs/path/foo.rs");
+        assert!(matches!(result, IntentOutcome::Block(_)));
+    }
+
+    #[test]
+    fn test_intent_guard_edit_override_approves() {
+        let events = r#"{"event":"override","rule":"require-thoth-impact","target":"/abs/path/foo.rs","reason":"test"}
+"#;
+        let result = intent_guard_edit(events, "/abs/path/foo.rs");
+        assert_eq!(result, IntentOutcome::Approve);
+    }
+
+    #[test]
+    fn test_intent_guard_edit_override_for_different_rule_blocks() {
+        let events = r#"{"event":"override","rule":"some-other-rule","target":"/abs/path/foo.rs","reason":"test"}
+"#;
+        let result = intent_guard_edit(events, "/abs/path/foo.rs");
+        assert!(matches!(result, IntentOutcome::Block(_)));
+    }
+
+    #[test]
+    fn test_intent_guard_edit_different_file_blocks() {
+        let events = r#"{"event":"impact","file":"cli/src/cmd/foo.rs","symbol":"foo::bar"}
+"#;
+        let result = intent_guard_edit(events, "/Users/me/proj/cli/src/cmd/bar.rs");
+        assert!(matches!(result, IntentOutcome::Block(_)));
+    }
+
+    #[test]
+    fn test_intent_guard_edit_malformed_lines_skipped() {
+        // Malformed JSON lines must not crash or satisfy the guard.
+        let events = "garbage line\n{invalid json\n\n";
+        let result = intent_guard_edit(events, "/abs/path/foo.rs");
+        assert!(matches!(result, IntentOutcome::Block(_)));
+    }
+
+    // ── intent_guard_bash_commit ─────────────────────────────────────────────
+
+    #[test]
+    fn test_intent_guard_bash_no_detect_changes_blocks() {
+        let files = vec!["cli/src/cmd/foo.rs".to_string()];
+        let result = intent_guard_bash_commit("", &files);
+        assert!(matches!(result, IntentOutcome::Block(_)));
+    }
+
+    #[test]
+    fn test_intent_guard_bash_override_approves() {
+        let events = r#"{"event":"override","rule":"require-detect-changes","target":"commit","reason":"..."}
+"#;
+        let files = vec!["cli/src/cmd/foo.rs".to_string()];
+        let result = intent_guard_bash_commit(events, &files);
+        assert_eq!(result, IntentOutcome::Approve);
+    }
+
+    #[test]
+    fn test_intent_guard_bash_detect_changes_covers_diff() {
+        let events = r#"{"event":"detect_changes","files":["cli/src/cmd/foo.rs"]}
+"#;
+        let files = vec!["cli/src/cmd/foo.rs".to_string()];
+        let result = intent_guard_bash_commit(events, &files);
+        assert_eq!(result, IntentOutcome::Approve);
+    }
+
+    #[test]
+    fn test_intent_guard_bash_diff_grew_warns() {
+        // detect_changes covered foo.rs but bar.rs snuck into the staged diff.
+        let events = r#"{"event":"detect_changes","files":["cli/src/cmd/foo.rs"]}
+"#;
+        let files = vec![
+            "cli/src/cmd/foo.rs".to_string(),
+            "cli/src/cmd/bar.rs".to_string(),
+        ];
+        let result = intent_guard_bash_commit(events, &files);
+        match result {
+            IntentOutcome::Warn(msg) => assert!(msg.contains("bar.rs")),
+            other => panic!("expected Warn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_intent_guard_bash_empty_staged_files_approves() {
+        // No staged files (e.g. `git commit --amend` no-op) → nothing to correlate.
+        let events = r#"{"event":"detect_changes","files":["cli/src/cmd/foo.rs"]}
+"#;
+        let result = intent_guard_bash_commit(events, &[]);
+        assert_eq!(result, IntentOutcome::Approve);
+    }
 
     // ── coerce_bool ──────────────────────────────────────────────────────────
 

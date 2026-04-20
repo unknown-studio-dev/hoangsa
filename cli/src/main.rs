@@ -132,6 +132,9 @@ fn main() {
         ("hook", "enforce") => {
             cmd::hook::cmd_enforce(&cwd);
         }
+        ("hook", "intent-guard") => {
+            cmd::hook::cmd_intent_guard(&cwd);
+        }
         ("hook", "post-enforce") => {
             cmd::hook::cmd_post_enforce(&cwd);
         }
@@ -149,6 +152,13 @@ fn main() {
         }
         ("enforce", "report") => {
             cmd::hook::cmd_enforce_report(&cwd);
+        }
+        ("rule", "init") => {
+            let dir = rest.first().copied().unwrap_or(&cwd);
+            if let Err(e) = cmd::rule::cmd_rule_init(dir) {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
         }
         ("rule", "list") => {
             let dir = rest.first().copied().unwrap_or(&cwd);

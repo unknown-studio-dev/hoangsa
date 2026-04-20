@@ -305,15 +305,28 @@ Load worker rules using a **middleware composition chain** (inspired by Deep Age
 3. **Load matching addons with middleware metadata:**
    - For each matching addon: read `$HOANGSA_ROOT/workflows/worker-rules/addons/<name>.md`
    - Project-level addons override: `.hoangsa/worker-rules/addons/<name>.md`
-   - Parse frontmatter for `priority` (default: 50), `inject_position` (default: `after_base`), `pre_invoke_gate`, `allowed_tools`
+   - Parse frontmatter for `priority` (default: 50), `inject_position` (default: `after_base`), `pre_invoke_gate`, `allowed_tools`, and the gating fields below.
 
 4. **Sort addons deterministically:**
    - Group by `inject_position`: `before_base`, `after_base`, `tail`
    - Within each group: sort by `priority` ascending, then by `name` alphabetically (for same priority)
    - This deterministic ordering maximizes Anthropic prompt cache hit rates
 
-5. **Apply pre-invoke gates** (if any addon has `pre_invoke_gate`):
-   - Run the gate command. If it fails, skip this addon with a warning.
+5. **Apply gates — drop in this order, each filter is independent:**
+
+   5a. **Task-type gate** (reads `task.type` from current task in plan.json):
+   - If addon has `exclude_task_types` and `task.type` is in the list → SKIP
+   - If addon has `include_task_types` non-empty and `task.type` NOT in the list → SKIP
+   - Example: `quality-checks.md` has `exclude_task_types: ["research", "analysis"]` — it won't ship to research/audit workers.
+
+   5b. **Worker-role gate** (reads the role of the agent being spawned — `impl` / `readonly` / `simplify` / `reviewer`):
+   - If addon has `exclude_worker_roles` and current role is in the list → SKIP
+   - If addon has `include_worker_roles` non-empty and current role NOT in the list → SKIP
+   - Rationale: framework edge-case checklists are wasted on simplify / reviewer workers.
+
+   5c. **Pre-invoke gate** (shell command in `pre_invoke_gate`):
+   - Run the command. If it exits non-zero, SKIP this addon with a warning.
+   - Example: `thoth.md` uses `hoangsa-cli pref get . thoth_strict | grep -q true` so the whole addon vanishes when Thoth is not in strict mode.
 
 6. **Enforce allowed_tools** (capability gating):
    - Collect `allowed_tools` arrays from all matching addons

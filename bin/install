@@ -734,7 +734,7 @@ function ensureHoangsaHooks(settings, targetDir) {
       },
     ],
     matcher:
-      "mcp__thoth__thoth_impact|mcp__thoth__thoth_detect_changes|mcp__thoth__thoth_recall",
+      "mcp__thoth__thoth_impact|mcp__thoth__thoth_detect_changes|mcp__thoth__thoth_recall|Edit|Write|MultiEdit",
   });
   console.log(
     `  ${green}✓${reset} Installed post-enforce hook (records thoth events for enforcement)`,
@@ -760,19 +760,20 @@ function ensureHoangsaHooks(settings, targetDir) {
     `  ${green}✓${reset} Installed lesson-guard hook (recalls lessons before edits)`,
   );
 
-  // --- PreToolUse rule-gate hook (enforces project rules before tool use) ---
+  // --- PreToolUse enforce hook (unified pattern + stateful enforcement) ---
   settings.hooks.PreToolUse.push({
     _hoangsa_managed: true,
     hooks: [
       {
         type: "command",
-        command: `${cli} hook rule-gate`,
+        command: `${cli} hook enforce`,
         timeout: 10,
       },
     ],
+    matcher: "Edit|Write|Bash|NotebookEdit",
   });
   console.log(
-    `  ${green}✓${reset} Installed rule-gate hook (enforces project rules before tool use)`,
+    `  ${green}✓${reset} Installed enforce hook (pattern rules + stateful checks)`,
   );
 
   return true;
@@ -847,6 +848,20 @@ function install(isGlobal) {
     console.log(
       `  ${yellow}⚠${reset} Could not index project with thoth: ${e.message}`,
     );
+  }
+
+  // Seed default rules.json if missing (idempotent — does nothing if file exists)
+  const cliBin = path.join(targetDir, "hoangsa", "bin",
+    process.platform === "win32" ? "hoangsa-cli.exe" : "hoangsa-cli");
+  if (fs.existsSync(cliBin)) {
+    try {
+      execSync(`"${cliBin}" rule init .`, { stdio: "pipe" });
+      console.log(`  ${green}✓${reset} Seeded default rules (.hoangsa/rules.json)`);
+    } catch (e) {
+      console.log(
+        `  ${yellow}⚠${reset} Could not seed default rules: ${e.message}`,
+      );
+    }
   }
 
   return { settingsPath, settings };
