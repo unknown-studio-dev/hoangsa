@@ -43,12 +43,31 @@ fn stats_file_path(workspace: &str) -> std::path::PathBuf {
         .join("token-usage.jsonl")
 }
 
+/// Returns the current working directory as a String.
+fn current_workspace() -> String {
+    std::env::current_dir()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string()
+}
+
+/// Returns a CalibrationFactors with all factors at 1.0 and zero sample counts.
+fn default_calibration() -> CalibrationFactors {
+    CalibrationFactors {
+        low: 1.0,
+        medium: 1.0,
+        high: 1.0,
+        sample_counts: CalibrationSamples {
+            low: 0,
+            medium: 0,
+            high: 0,
+        },
+    }
+}
+
 /// Load all records from token-usage.jsonl. Returns empty vec if file doesn't exist.
 fn load_records(workspace: &str) -> Vec<TaskUsageRecord> {
     let path = stats_file_path(workspace);
-    if !path.exists() {
-        return vec![];
-    }
     let file = match fs::File::open(&path) {
         Ok(f) => f,
         Err(_) => return vec![],
@@ -74,10 +93,7 @@ fn load_records(workspace: &str) -> Vec<TaskUsageRecord> {
 /// `stats record [json_data]` — parse JSON string as TaskUsageRecord, append to
 /// `.hoangsa/stats/token-usage.jsonl`. Outputs `{ "success": true, "records_total": N }`.
 pub fn cmd_record(json_data: Option<&str>) {
-    let workspace = std::env::current_dir()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
+    let workspace = current_workspace();
 
     let data = match json_data {
         Some(s) => s,
@@ -96,13 +112,13 @@ pub fn cmd_record(json_data: Option<&str>) {
         }
     };
 
-    let stats_dir = Path::new(&workspace).join(".hoangsa").join("stats");
-    if let Err(e) = fs::create_dir_all(&stats_dir) {
+    let file_path = stats_file_path(&workspace);
+    let stats_dir = file_path.parent().expect("stats path has parent");
+    if let Err(e) = fs::create_dir_all(stats_dir) {
         out(&json!({ "error": format!("Cannot create stats dir: {}", e) }));
         return;
     }
 
-    let file_path = stats_dir.join("token-usage.jsonl");
     let line = match serde_json::to_string(&record) {
         Ok(s) => s,
         Err(e) => {
@@ -128,7 +144,6 @@ pub fn cmd_record(json_data: Option<&str>) {
         return;
     }
 
-    // Count total records
     let total = load_records(&workspace).len();
     out(&json!({ "success": true, "records_total": total }));
 }
@@ -136,10 +151,7 @@ pub fn cmd_record(json_data: Option<&str>) {
 /// `stats summary [--last N] [--complexity low|medium|high]`
 /// Reads token-usage.jsonl and outputs aggregated stats with calibration.
 pub fn cmd_summary(args: &[&str]) {
-    let workspace = std::env::current_dir()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
+    let workspace = current_workspace();
 
     // Parse --last and --complexity flags from args
     let mut last_n: Option<usize> = None;
@@ -160,7 +172,7 @@ pub fn cmd_summary(args: &[&str]) {
             }
             "--complexity" => {
                 if let Some(val) = args.get(i + 1) {
-                    filter_complexity = Some(val.to_string());
+                    filter_complexity = Some(val.to_lowercase());
                     i += 2;
                 } else {
                     i += 1;
@@ -177,7 +189,8 @@ pub fn cmd_summary(args: &[&str]) {
 
     // Apply --last filter first (take last N records)
     let after_last: Vec<&TaskUsageRecord> = if let Some(n) = last_n {
-        all_records.iter().rev().take(n).collect::<Vec<_>>().into_iter().rev().collect()
+        let skip = total_records.saturating_sub(n);
+        all_records.iter().skip(skip).collect()
     } else {
         all_records.iter().collect()
     };
@@ -186,7 +199,7 @@ pub fn cmd_summary(args: &[&str]) {
     let filtered: Vec<&TaskUsageRecord> = if let Some(ref c) = filter_complexity {
         after_last
             .into_iter()
-            .filter(|r| r.complexity.to_lowercase() == c.to_lowercase())
+            .filter(|r| r.complexity.to_lowercase() == *c)
             .collect()
     } else {
         after_last
@@ -210,7 +223,7 @@ pub fn cmd_summary(args: &[&str]) {
         (avg_est, avg_act, ratio)
     };
 
-    // Compute per-complexity breakdown and calibration from ALL records (not just filtered)
+    // Compute per-complexity calibration from ALL records (not just filtered)
     let calibration = compute_calibration(&all_records);
 
     // Per-complexity breakdown from filtered records
@@ -304,65 +317,18 @@ fn compute_calibration(records: &[TaskUsageRecord]) -> CalibrationFactors {
 /// Read token-usage.jsonl from `stats_dir`, compute avg(actual/estimated) per complexity.
 /// Caps factor at 3.0 to avoid outlier drift. Returns (1.0, 1.0, 1.0) if no stats.
 pub fn load_calibration(stats_dir: &str) -> CalibrationFactors {
-    let file_path = Path::new(stats_dir).join("token-usage.jsonl");
-    if !file_path.exists() {
-        return CalibrationFactors {
-            low: 1.0,
-            medium: 1.0,
-            high: 1.0,
-            sample_counts: CalibrationSamples {
-                low: 0,
-                medium: 0,
-                high: 0,
-            },
-        };
-    }
+    // stats_dir points directly at the stats folder; synthesise a fake workspace path
+    // so load_records (which appends .hoangsa/stats/token-usage.jsonl) resolves correctly.
+    let workspace = Path::new(stats_dir)
+        .parent()
+        .and_then(|p| p.parent())
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
 
-    let file = match fs::File::open(&file_path) {
-        Ok(f) => f,
-        Err(_) => {
-            return CalibrationFactors {
-                low: 1.0,
-                medium: 1.0,
-                high: 1.0,
-                sample_counts: CalibrationSamples {
-                    low: 0,
-                    medium: 0,
-                    high: 0,
-                },
-            };
-        }
-    };
-
-    let reader = BufReader::new(file);
-    let mut records: Vec<TaskUsageRecord> = Vec::new();
-    for line in reader.lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => continue,
-        };
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if let Ok(record) = serde_json::from_str::<TaskUsageRecord>(trimmed) {
-            records.push(record);
-        }
-    }
-
+    let records = load_records(&workspace);
     if records.is_empty() {
-        return CalibrationFactors {
-            low: 1.0,
-            medium: 1.0,
-            high: 1.0,
-            sample_counts: CalibrationSamples {
-                low: 0,
-                medium: 0,
-                high: 0,
-            },
-        };
+        return default_calibration();
     }
-
     compute_calibration(&records)
 }
 
@@ -399,10 +365,22 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    /// Write records directly into a stats dir (for load_calibration tests).
+    fn write_records_to_stats_dir(stats_dir: &std::path::Path, records: &[TaskUsageRecord]) {
+        fs::create_dir_all(stats_dir).expect("create stats dir");
+        let file_path = stats_dir.join("token-usage.jsonl");
+        let mut f = fs::File::create(&file_path).expect("create file");
+        for r in records {
+            let line = serde_json::to_string(r).expect("serialize");
+            writeln!(f, "{}", line).expect("write line");
+        }
+    }
+
     #[test]
     fn test_stats_load_calibration_no_file() {
         let dir = make_temp_dir("no_file");
-        let result = load_calibration(dir.to_str().expect("path str"));
+        let stats_dir = dir.join(".hoangsa").join("stats");
+        let result = load_calibration(stats_dir.to_str().expect("path str"));
         cleanup(&dir);
         assert_eq!(result.low, 1.0);
         assert_eq!(result.medium, 1.0);
@@ -415,7 +393,7 @@ mod tests {
     #[test]
     fn test_stats_load_calibration_with_records() {
         let dir = make_temp_dir("with_records");
-        let file_path = dir.join("token-usage.jsonl");
+        let stats_dir = dir.join(".hoangsa").join("stats");
 
         // low: actual=10000, estimated=10000 → ratio 1.0
         // medium: actual=12000, estimated=10000 → ratio 1.2
@@ -425,16 +403,9 @@ mod tests {
             sample_record("medium", 10000, 12000),
             sample_record("high", 10000, 14000),
         ];
+        write_records_to_stats_dir(&stats_dir, &records);
 
-        {
-            let mut f = fs::File::create(&file_path).expect("create file");
-            for r in &records {
-                let line = serde_json::to_string(r).expect("serialize");
-                writeln!(f, "{}", line).expect("write line");
-            }
-        }
-
-        let result = load_calibration(dir.to_str().expect("path str"));
+        let result = load_calibration(stats_dir.to_str().expect("path str"));
         cleanup(&dir);
         assert!((result.low - 1.0).abs() < 0.01, "low factor should be ~1.0");
         assert!(
@@ -450,17 +421,13 @@ mod tests {
     #[test]
     fn test_stats_load_calibration_caps_at_3() {
         let dir = make_temp_dir("caps");
-        let file_path = dir.join("token-usage.jsonl");
+        let stats_dir = dir.join(".hoangsa").join("stats");
 
         // outlier: actual=50000, estimated=10000 → ratio 5.0 → should cap at 3.0
         let record = sample_record("low", 10000, 50000);
-        {
-            let mut f = fs::File::create(&file_path).expect("create file");
-            writeln!(f, "{}", serde_json::to_string(&record).expect("serialize"))
-                .expect("write line");
-        }
+        write_records_to_stats_dir(&stats_dir, &[record]);
 
-        let result = load_calibration(dir.to_str().expect("path str"));
+        let result = load_calibration(stats_dir.to_str().expect("path str"));
         cleanup(&dir);
         assert!(
             result.low <= 3.0,
@@ -472,10 +439,11 @@ mod tests {
     #[test]
     fn test_stats_load_calibration_empty_file() {
         let dir = make_temp_dir("empty_file");
-        let file_path = dir.join("token-usage.jsonl");
-        fs::File::create(&file_path).expect("create empty file");
+        let stats_dir = dir.join(".hoangsa").join("stats");
+        fs::create_dir_all(&stats_dir).expect("create stats dir");
+        fs::File::create(stats_dir.join("token-usage.jsonl")).expect("create empty file");
 
-        let result = load_calibration(dir.to_str().expect("path str"));
+        let result = load_calibration(stats_dir.to_str().expect("path str"));
         cleanup(&dir);
         assert_eq!(result.low, 1.0);
         assert_eq!(result.medium, 1.0);
