@@ -314,6 +314,14 @@ Include the composed rules in every worker prompt, appended after the task envel
 
 After each worker completes a task successfully (acceptance passes), spawn a **simplify subagent** on the changed files before marking the task as done. This catches code quality issues, duplication, and inefficiencies while the context is still fresh.
 
+**Conditional:** Check simplify_pass preference before spawning simplify agents:
+
+```bash
+SIMPLIFY_PASS=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . simplify_pass | python3 -c "import sys,json; print(json.load(sys.stdin).get('value',True))")
+```
+
+If `SIMPLIFY_PASS` is `false`, skip the entire simplify section — mark tasks as `✅ completed` directly. Report: `⏭️ Simplify pass skipped (simplify_pass=false)`.
+
 For each completed task:
 
 1. Collect the list of files the worker created or modified
@@ -488,6 +496,14 @@ If `state.external_task` exists after all waves complete, chain to `/serve` push
 
 Run after all waves complete, before verification. This is the final quality sweep on ALL changed files collectively — catches cross-task issues that per-task simplify misses.
 
+**Conditional:** Check quality_gate preference:
+
+```bash
+QUALITY_GATE=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . quality_gate | python3 -c "import sys,json; print(json.load(sys.stdin).get('value',True))")
+```
+
+If `QUALITY_GATE` is `false`, skip all analyzer agents. Report: `⏭️ Quality gate skipped (quality_gate=false)`. Proceed directly to Step 5.
+
 ### Collect changed files
 
 ```bash
@@ -596,9 +612,17 @@ Run after all waves complete and quality gate passes (or after stopping).
 
 Report: error/warning count.
 
-### Tier 2 — Behavioral (run ×3 for flaky detection)
+### Tier 2 — Behavioral (run ×N for flaky detection (N = test_runs preference, default 3))
 
-Run test suite 3 times:
+**Conditional:** Read test_runs count:
+
+```bash
+TEST_RUNS=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . test_runs | python3 -c "import sys,json; print(json.load(sys.stdin).get('value',3))")
+```
+
+Run test suite `$TEST_RUNS` times (instead of hardcoded 3). If `TEST_RUNS=1`, skip flaky detection entirely — report single run results.
+
+Run test suite $TEST_RUNS times:
 
 | Stack | Command |
 |-------|---------|
