@@ -25,12 +25,6 @@ pub mod enrich;
 pub mod indexer;
 pub mod retriever;
 
-#[cfg(feature = "anthropic")]
-pub mod synth;
-
-#[cfg(feature = "anthropic")]
-pub use synth::*;
-
 pub use config::{ChromaConfig, IndexConfig, OutputConfig, RetrieveConfig, WatchConfig};
 pub use enrich::{enrich_chunks, extract_docstring};
 pub use indexer::{IndexProgress, IndexStats, Indexer, chunk_id, read_span};

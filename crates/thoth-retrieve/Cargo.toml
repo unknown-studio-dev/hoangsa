@@ -10,7 +10,6 @@ description = "Hybrid retrieval orchestrator for Thoth — Mode::Zero and Mode::
 
 [features]
 default   = []
-anthropic = ["dep:reqwest", "dep:async-trait"]
 
 [dependencies]
 thoth-core   = { workspace = true }
@@ -27,8 +26,6 @@ serde_json   = { workspace = true }
 parking_lot  = { workspace = true }
 futures      = { workspace = true }
 
-reqwest      = { workspace = true, optional = true }
-async-trait  = { workspace = true, optional = true }
 
 
 [dev-dependencies]

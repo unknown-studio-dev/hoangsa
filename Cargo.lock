@@ -2903,7 +2903,6 @@ dependencies = [
  "criterion",
  "futures",
  "parking_lot",
- "reqwest",
  "serde",
  "serde_json",
  "tempfile",
