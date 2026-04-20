@@ -289,3 +289,140 @@ pub fn cmd_rule_disable(project_dir: &str, rule_id: &str) -> Result<(), Box<dyn 
     out(&json!({ "success": true, "id": id, "enabled": false }));
     Ok(())
 }
+
+fn condition_summary(condition: &Condition) -> String {
+    let op_str = op_label(&condition.op);
+    format!("{} {} \"{}\"", condition.field, op_str, condition.value)
+}
+
+fn build_rules_block(enabled_rules: &[&Rule]) -> String {
+    let block_rules: Vec<&&Rule> = enabled_rules
+        .iter()
+        .filter(|r| matches!(r.action, RuleAction::Block))
+        .collect();
+    let warn_rules: Vec<&&Rule> = enabled_rules
+        .iter()
+        .filter(|r| matches!(r.action, RuleAction::Warn))
+        .collect();
+
+    let mut lines: Vec<String> = Vec::new();
+    lines.push("<!-- hoangsa-rules-start -->".to_string());
+    lines.push("## HOANGSA Rules (auto-generated — DO NOT edit manually)".to_string());
+    lines.push(String::new());
+
+    if enabled_rules.is_empty() {
+        lines.push("No active rules.".to_string());
+    } else {
+        // Hard Rules (block)
+        lines.push("### ⛔ Hard Rules (block)".to_string());
+        if block_rules.is_empty() {
+            lines.push("_None_".to_string());
+        } else {
+            lines.push("| Rule | Trigger | Condition | Message |".to_string());
+            lines.push("|------|---------|-----------|---------|".to_string());
+            for rule in &block_rules {
+                let condition_col = if rule.conditions.is_empty() {
+                    "-".to_string()
+                } else {
+                    rule.conditions
+                        .iter()
+                        .map(condition_summary)
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                };
+                lines.push(format!(
+                    "| {} | {} | {} | {} |",
+                    rule.name, rule.matcher, condition_col, rule.message
+                ));
+            }
+        }
+        lines.push(String::new());
+
+        // Warnings
+        lines.push("### ⚠️ Warnings".to_string());
+        if warn_rules.is_empty() {
+            lines.push("_None_".to_string());
+        } else {
+            lines.push("| Rule | Trigger | Condition | Message |".to_string());
+            lines.push("|------|---------|-----------|---------|".to_string());
+            for rule in &warn_rules {
+                let condition_col = if rule.conditions.is_empty() {
+                    "-".to_string()
+                } else {
+                    rule.conditions
+                        .iter()
+                        .map(condition_summary)
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                };
+                lines.push(format!(
+                    "| {} | {} | {} | {} |",
+                    rule.name, rule.matcher, condition_col, rule.message
+                ));
+            }
+        }
+    }
+
+    lines.push(String::new());
+    lines.push("<!-- hoangsa-rules-end -->".to_string());
+    lines.join("\n")
+}
+
+pub fn cmd_rule_sync(project_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let claude_md_path = Path::new(project_dir).join("CLAUDE.md");
+
+    // 1. Read rules config
+    let config = match read_rules_config(project_dir)? {
+        None => {
+            out(&json!({
+                "success": true,
+                "synced": 0,
+                "claude_md": claude_md_path.to_string_lossy()
+            }));
+            return Ok(());
+        }
+        Some(c) => c,
+    };
+
+    // 2. Collect enabled rules
+    let enabled_rules: Vec<&Rule> = config.rules.iter().filter(|r| r.enabled).collect();
+    let synced = enabled_rules.len();
+
+    // 3. Build markdown block
+    let block = build_rules_block(&enabled_rules);
+
+    // 4. Read or initialize CLAUDE.md
+    let existing = if claude_md_path.exists() {
+        fs::read_to_string(&claude_md_path)?
+    } else {
+        String::new()
+    };
+
+    // 5. Replace between markers or append
+    const START_MARKER: &str = "<!-- hoangsa-rules-start -->";
+    const END_MARKER: &str = "<!-- hoangsa-rules-end -->";
+
+    let updated = if let (Some(start_idx), Some(end_idx)) = (
+        existing.find(START_MARKER),
+        existing.find(END_MARKER),
+    ) {
+        let end_of_end = end_idx + END_MARKER.len();
+        format!("{}{}{}", &existing[..start_idx], block, &existing[end_of_end..])
+    } else if existing.is_empty() {
+        block
+    } else if existing.ends_with('\n') {
+        format!("{}\n{}", existing, block)
+    } else {
+        format!("{}\n\n{}", existing, block)
+    };
+
+    // 6. Write CLAUDE.md
+    fs::write(&claude_md_path, updated)?;
+
+    out(&json!({
+        "success": true,
+        "synced": synced,
+        "claude_md": claude_md_path.to_string_lossy()
+    }));
+    Ok(())
+}

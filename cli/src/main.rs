@@ -150,6 +150,13 @@ fn main() {
             let id = rest.get(1).copied().unwrap_or("");
             let _ = cmd::rule::cmd_rule_disable(dir, id);
         }
+        ("rule", "sync") => {
+            let dir = rest.first().copied().unwrap_or(&cwd);
+            if let Err(e) = cmd::rule::cmd_rule_sync(dir) {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
         ("commit", _) => {
             // commit "<message>" --files f1 f2 ...
             let message = sub;
@@ -191,6 +198,7 @@ Usage:
   hook stop-check [sessions_dir]
   hook lesson-guard
   hook compact-check
+  rule list|add|remove|enable|disable|sync|gate [projectDir] [args...]
   verify [projectDir]
   media probe|frames|montage|diff|check-ffmpeg|install-ffmpeg
 "
