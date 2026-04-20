@@ -40,7 +40,7 @@ These rules are non-negotiable unless explicitly overridden by project config.
 ## 4. Git Discipline
 
 - **Atomic commit after acceptance passes.** One commit per task, containing only files relevant to that task.
-- **Commit message format:** `<type>(<session_id>): <task.name>`
+- **Commit message format:** `<type>(<scope>): <task.name>` — `<scope>` is the primary module/package affected (e.g., `budget`, `auth`, `cli`), derived from `task.files` paths. Do NOT use `session_id` or branch name as scope.
 - **Do not commit:** `.env` files, credentials, large binaries, IDE config, OS-generated files, or files not in `task.files`.
 - **Do not amend, rebase, or force-push** existing commits.
 

@@ -332,7 +332,7 @@ Fix issues inline. No need to re-present to user.
 
 ```bash
 "$HOANGSA_ROOT/bin/hoangsa-cli" commit \
-  "brainstorm($SESSION_ID): design for <title>" \
+  "brainstorm(<scope>): design for <title>" \
   --files "$SESSION_DIR/BRAINSTORM.md"
 ```
 

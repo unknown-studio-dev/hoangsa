@@ -871,7 +871,7 @@ Update state to reflect design is complete:
 
 ```bash
 "$HOANGSA_ROOT/bin/hoangsa-cli" commit \
-  "menu($SESSION_ID): complete spec for <component>" \
+  "menu(<scope>): complete spec for <component>" \
   --files \
     $SESSION_DIR/CONTEXT.md \
     $SESSION_DIR/RESEARCH.md \

@@ -331,7 +331,7 @@ When user approves:
 
 # Commit
 "$HOANGSA_ROOT/bin/hoangsa-cli" commit \
-  "prepare($SESSION_ID): create execution plan for <component>" \
+  "prepare(<scope>): create execution plan for <component>" \
   --files "$SESSION_DIR/plan.json"
 ```
 

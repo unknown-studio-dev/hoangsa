@@ -338,7 +338,7 @@ Instructions:
 4. Implement the minimal fix — do not change anything outside scope
 5. Run the acceptance command to verify: <task.acceptance>
 6. If acceptance fails, fix and retry (max 3 attempts)
-7. Commit with message: "fix(<session_id>): <task.name>"
+7. Commit with message: "fix(<scope>): <task.name>" — `<scope>` = primary module/package from task.files, NOT session_id/branch name
 
 Acceptance command: <task.acceptance>
 ```
@@ -386,7 +386,7 @@ Use /simplify to check for:
 - Efficiency problems (unnecessary allocations, redundant operations)
 
 Fix any issues found. Do NOT change behavior or add features — only improve code quality.
-Commit fixes with message: "refactor(<session_id>): simplify <task.id>"
+Commit fixes with message: "refactor(<scope>): simplify <task.id>" — `<scope>` = primary module/package from changed files, NOT session_id/branch name
 ```
 
 3. If the simplify pass finds and fixes issues → mark task as `✅ completed (simplified)`
