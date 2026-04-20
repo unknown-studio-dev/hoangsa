@@ -3,6 +3,24 @@ use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
 
+/// Extract lines from `content` using `selective` mode and an optional line range.
+/// Returns `(text, start_line, end_line)`.
+fn extract_lines(content: String, selective: bool, line_range: Option<(usize, usize)>) -> (String, usize, usize) {
+    if selective {
+        if let Some((start, end)) = line_range {
+            let selected: Vec<&str> = content
+                .lines()
+                .skip(start.saturating_sub(1))
+                .take(end.saturating_sub(start.saturating_sub(1)))
+                .collect();
+            let actual_end = start.saturating_sub(1) + selected.len();
+            return (selected.join("\n"), start, actual_end);
+        }
+    }
+    let line_count = content.lines().count();
+    (content, 1, line_count)
+}
+
 /// Parse file spec with optional line range.
 /// "src/cmd/pref.rs:56-71" → ("src/cmd/pref.rs", Some((56, 71)))
 /// "src/cmd/pref.rs"       → ("src/cmd/pref.rs", None)
@@ -119,25 +137,7 @@ fn build_context_pack(session_dir: &str, task_id: &str) -> Result<Value, Value> 
                 let action = if exists { "MODIFY" } else { "CREATE" };
                 let (lines, start_line, end_line) = if exists {
                     match fs::read_to_string(&full_path) {
-                        Ok(content) => {
-                            if selective {
-                                if let Some((start, end)) = line_range {
-                                    let selected: Vec<&str> = content
-                                        .lines()
-                                        .skip(start.saturating_sub(1))
-                                        .take(end.saturating_sub(start.saturating_sub(1)))
-                                        .collect();
-                                    let actual_end = start.saturating_sub(1) + selected.len();
-                                    (selected.join("\n"), start, actual_end)
-                                } else {
-                                    let line_count = content.lines().count();
-                                    (content, 1, line_count)
-                                }
-                            } else {
-                                let line_count = content.lines().count();
-                                (content, 1, line_count)
-                            }
-                        }
+                        Ok(content) => extract_lines(content, selective, line_range),
                         Err(_) => (String::new(), 1, 0),
                     }
                 } else {
@@ -167,23 +167,7 @@ fn build_context_pack(session_dir: &str, task_id: &str) -> Result<Value, Value> 
                 };
                 if full_path.exists() {
                     if let Ok(content) = fs::read_to_string(&full_path) {
-                        let (lines, start_line, end_line) = if selective {
-                            if let Some((start, end)) = line_range {
-                                let selected: Vec<&str> = content
-                                    .lines()
-                                    .skip(start.saturating_sub(1))
-                                    .take(end.saturating_sub(start.saturating_sub(1)))
-                                    .collect();
-                                let actual_end = start.saturating_sub(1) + selected.len();
-                                (selected.join("\n"), start, actual_end)
-                            } else {
-                                let line_count = content.lines().count();
-                                (content, 1, line_count)
-                            }
-                        } else {
-                            let line_count = content.lines().count();
-                            (content, 1, line_count)
-                        };
+                        let (lines, start_line, end_line) = extract_lines(content, selective, line_range);
                         context_pointer_segments.push(json!({
                             "path": file_path,
                             "lines": lines,

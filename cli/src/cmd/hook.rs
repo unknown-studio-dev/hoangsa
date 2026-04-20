@@ -445,11 +445,10 @@ pub fn cmd_thoth_gate_proxy(cwd: &str) {
     use std::io::{Read, Write};
     use std::process::{Command, Stdio};
 
-    // 1. Read stdin (the hook receives JSON input from Claude Code)
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input).ok();
 
-    // 2. Read thoth_strict from .hoangsa/config.json preferences (default true for backward compat)
+    // Default true: existing setups without the key keep the strict behaviour.
     let thoth_strict = {
         let config_path = Path::new(cwd).join(".hoangsa").join("config.json");
         if config_path.exists() {
@@ -464,13 +463,11 @@ pub fn cmd_thoth_gate_proxy(cwd: &str) {
         }
     };
 
-    // 3. If thoth_strict is false → bypass gate
     if !thoth_strict {
         out(&json!({"decision": "approve"}));
         return;
     }
 
-    // 4. If thoth_strict is true → find thoth-gate binary and delegate
     if let Some(gate_bin) = find_thoth_gate_bin() {
         if let Ok(mut child) = Command::new(&gate_bin)
             .stdin(Stdio::piped())
@@ -478,11 +475,9 @@ pub fn cmd_thoth_gate_proxy(cwd: &str) {
             .stderr(Stdio::inherit())
             .spawn()
         {
-            // Pipe original stdin content to thoth-gate
             if let Some(mut stdin_handle) = child.stdin.take() {
                 stdin_handle.write_all(input.as_bytes()).ok();
             }
-            // Capture stdout and forward it
             if let Ok(o) = child.wait_with_output() {
                 if !o.stdout.is_empty() {
                     print!("{}", String::from_utf8_lossy(&o.stdout));
@@ -492,23 +487,24 @@ pub fn cmd_thoth_gate_proxy(cwd: &str) {
         }
     }
 
-    // thoth-gate binary not found or failed — approve with a warning
     eprintln!("hoangsa: thoth-gate-proxy: thoth-gate binary not found, approving");
     out(&json!({"decision": "approve"}));
 }
 
-/// Find the thoth-gate binary by searching PATH (cross-platform).
-fn find_thoth_gate_bin() -> Option<String> {
+/// Find a binary by searching PATH (cross-platform).
+/// `stem` is the binary name without extension (e.g. "thoth", "thoth-gate").
+fn find_bin_in_path(stem: &str) -> Option<String> {
     let path_var = std::env::var("PATH").ok()?;
     let sep = if cfg!(windows) { ';' } else { ':' };
-    let names = if cfg!(windows) {
-        vec!["thoth-gate.exe", "thoth-gate.cmd", "thoth-gate"]
+    let names: &[&str] = if cfg!(windows) {
+        &[".exe", ".cmd", ""]
     } else {
-        vec!["thoth-gate"]
+        &[""]
     };
     for dir in path_var.split(sep) {
-        for name in &names {
-            let candidate = Path::new(dir).join(name);
+        for suffix in names {
+            let name = format!("{stem}{suffix}");
+            let candidate = Path::new(dir).join(&name);
             if candidate.exists() {
                 return Some(candidate.to_string_lossy().to_string());
             }
@@ -517,24 +513,12 @@ fn find_thoth_gate_bin() -> Option<String> {
     None
 }
 
-/// Find the thoth binary by searching PATH (cross-platform).
+fn find_thoth_gate_bin() -> Option<String> {
+    find_bin_in_path("thoth-gate")
+}
+
 fn find_thoth_bin() -> Option<String> {
-    let path_var = std::env::var("PATH").ok()?;
-    let sep = if cfg!(windows) { ';' } else { ':' };
-    let names = if cfg!(windows) {
-        vec!["thoth.exe", "thoth.cmd", "thoth"]
-    } else {
-        vec!["thoth"]
-    };
-    for dir in path_var.split(sep) {
-        for name in &names {
-            let candidate = Path::new(dir).join(name);
-            if candidate.exists() {
-                return Some(candidate.to_string_lossy().to_string());
-            }
-        }
-    }
-    None
+    find_bin_in_path("thoth")
 }
 
 /// Count tasks with status other than "completed", "done", "skipped".
