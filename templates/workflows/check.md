@@ -144,43 +144,7 @@ Thoth Memory:
   Reflection debt: <DEBT> (nudge: 10, block: 20)
 ```
 
-If `PENDING_F + PENDING_L > 0`, suggest:
-```
-  Tip: <N> pending entries — run thoth_memory_promote or thoth_memory_reject to process
-```
-
-### Step 4c: Knowledge graph status
-
-```
-thoth_kg_stats()
-```
-
-Display:
-
-```
-Knowledge Graph:
-  Total triples: <N>
-  Current (valid): <N>
-  Expired (historical): <N>
-```
-
-### Step 4d: Active workflows
-
-```
-thoth_workflow_list()
-```
-
-Display any active (non-completed) workflows:
-
-```
-Active Workflows:
-  - hoangsa/cook (session: <id>) — started <date>
-  - hoangsa/fix (session: <id>) — started <date>
-```
-
-If no active workflows → show "No active workflows."
-
-### Step 4e: Conversation archive status
+### Step 4c: Conversation archive status
 
 ```
 thoth_archive_status()
@@ -195,7 +159,7 @@ Conversation Archive:
   Curated: <N>
 ```
 
-### Step 4f: Installed skills
+### Step 4d: Installed skills
 
 ```
 thoth_skills_list()

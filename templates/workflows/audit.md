@@ -256,11 +256,6 @@ Use the resolved model for all scanning agents.
 
 Goal: Identify structural problems that make the codebase hard to understand, maintain, or extend.
 
-Use knowledge graph for dependency analysis:
-  thoth_kg_stats() — overview of architecture graph health
-  thoth_kg_timeline() — trace design evolution over time
-  thoth_kg_query({entity: "<key module>"}) — understand module relationships
-
 ```
 Scan for:
 
@@ -905,15 +900,14 @@ Top simplification opportunities:
 Analyze the quality and health of Thoth memory:
 
 1. `thoth_memory_show()` — read full MEMORY.md and LESSONS.md
-2. `thoth_memory_history({limit: 20})` — recent memory operations
-3. Check for:
+2. Check for:
    - Stale facts that reference deleted files or renamed symbols
    - Duplicate or near-duplicate entries
    - Lessons with high failure rates (should be quarantined)
    - Facts that contradict current code state
-4. For stale or contradictory entries, recommend removal:
+3. For stale or contradictory entries, recommend removal:
    `thoth_memory_remove({kind: "fact|lesson", text: "<substring of stale entry>"})`
-5. Report findings with specific entries to remove/update
+4. Report findings with specific entries to remove/update
 
 ---
 

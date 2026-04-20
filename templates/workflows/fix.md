@@ -83,7 +83,7 @@ fi
 
 ## Step 2: Analyze the bug
 
-### 2a-pre. Search past conversations and architecture context
+### 2a-pre. Search past conversations
 
 Search for past fixes of similar bugs:
 ```
@@ -91,13 +91,6 @@ thoth_archive_search({query: "<error message or bug description>"})
 ```
 
 If results found → check if same root cause was seen before, learn from prior fix approach.
-
-Query knowledge graph for architectural context around the buggy component:
-```
-thoth_kg_query({entity: "<buggy module/component>", direction: "both"})
-```
-
-Understand what depends on and is depended on by the broken component.
 
 ### 2a. Initial analysis
 
@@ -239,12 +232,6 @@ If no active session exists, auto-create a fix session. Derive the slug from the
 # SLUG auto-derived from bug summary (e.g. "null-pointer-user-service", "broken-login-redirect")
 SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session init fix "$SLUG")
 # → { "id": "fix/null-pointer-user-service", ... }
-```
-
-Register the fix workflow with Thoth for multi-session tracking:
-
-```
-thoth_workflow_start({name: "hoangsa/fix", session_id: "$SESSION_ID"})
 ```
 
 ### Git context check
@@ -412,12 +399,6 @@ thoth_remember_lesson({
 })
 ```
 
-Also log the fix event for background review context:
-
-```
-thoth_episode_append({event: "bug_fixed", data: {root_cause: "<summary>", files_changed: [<list>], layers_affected: [<list>]}})
-```
-
 ### Update invalidated facts
 
 If the bug revealed that an existing fact in MEMORY.md is wrong (e.g., "X uses Y" was incorrect):
@@ -427,25 +408,6 @@ thoth_memory_replace({kind: "fact", old_text: "<incorrect fact substring>", new_
 ```
 
 This keeps the memory accurate — bugs often expose incorrect assumptions that were persisted as facts.
-
-### Update knowledge graph
-
-If the fix changed architectural relationships (e.g., module A no longer depends on module B, or a new dependency was introduced):
-
-```
-thoth_kg_invalidate({subject: "<module>", predicate: "<old relationship>", object: "<old target>"})
-thoth_kg_add({subject: "<module>", predicate: "<new relationship>", object: "<new target>", confidence: 0.9})
-```
-
-### Track lesson outcomes
-
-After fix is verified, update confidence scores on lessons that guided the fix:
-
-1. Read `.thoth/LESSONS.md` and find lessons whose triggers match the bug's domain/module
-2. For lessons that **helped** find or fix the bug:
-   - `thoth_lesson_outcome({signal: "success", triggers: ["<lesson trigger>"], note: "guided fix for <bug summary>"})`
-3. For lessons that **should have prevented** this bug but didn't:
-   - `thoth_lesson_outcome({signal: "failure", triggers: ["<lesson trigger>"], note: "bug occurred despite lesson: <bug summary>"})`
 
 ### Skill proposal check
 
@@ -480,12 +442,6 @@ Fix applied. Running tests via /hoangsa:taste...
 ```
 
 Then invoke the taste workflow.
-
-### Finalize workflow tracking
-
-```
-thoth_workflow_complete({name: "hoangsa/fix"})
-```
 
 ---
 

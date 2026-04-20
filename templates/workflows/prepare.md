@@ -34,10 +34,6 @@ Validate immediately:
 
 If errors → show errors, ask user to fix spec first.
 
-```
-thoth_workflow_start({name: "hoangsa/prepare", session_id: "$SESSION_ID"})
-```
-
 ---
 
 ## Step 1b: Load external task reference
@@ -73,19 +69,6 @@ From filesystem:
 ---
 
 ## Step 3: Decompose into tasks
-
-### Dependency-aware task ordering via knowledge graph
-
-Before generating the task DAG, query the knowledge graph for module dependencies:
-
-```
-thoth_kg_query({entity: "<each module referenced in DESIGN-SPEC>", direction: "both"})
-```
-
-Use KG relationships to:
-1. Order tasks so upstream modules are implemented before downstream consumers
-2. Identify cross-module dependencies that require careful ordering
-3. Flag modules with high fan-in (many dependents) as higher risk — consider earlier implementation
 
 ### 3a. Map requirements → tasks
 
@@ -312,10 +295,6 @@ When user approves:
 ```bash
 # Final validation
 "$HOANGSA_ROOT/bin/hoangsa-cli" validate plan "$SESSION_DIR/plan.json"
-```
-
-```
-thoth_workflow_complete({name: "hoangsa/prepare"})
 ```
 
 ```bash

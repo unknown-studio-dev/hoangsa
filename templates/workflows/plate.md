@@ -56,45 +56,6 @@ Exclude files that are clearly out of scope (e.g. `.env`, secrets, large binarie
 
 ---
 
-## Step 2b: Drain pending Thoth memory
-
-If `.thoth/MEMORY.pending.md` or `.thoth/LESSONS.pending.md` has entries, handle them before committing:
-
-```bash
-# Use Thoth MCP for accurate pending count
-thoth_memory_pending()
-# Returns structured list of pending facts and lessons
-```
-
-If `PENDING_F + PENDING_L > 0`:
-
-1. Show pending entries to user:
-   ```
-   <N> pending memory entries from this session:
-     [F-0] <fact preview>
-     [L-0] <lesson preview>
-   ```
-
-2. For each entry, auto-promote if it looks useful, or ask:
-   - Entries tagged with the current session ID → `thoth_memory_promote({kind: "fact", index: N})` automatically
-   - Other entries → show and let user decide
-
-3. If `memory_mode` in `.thoth/config.toml` is `"auto"` → skip this step (entries were already committed directly)
-
-This ensures staged memory from workers gets promoted before the commit, keeping MEMORY.md and LESSONS.md in sync with the codebase state.
-
-### Step 2c: Memory housekeeping
-
-Run TTL-based eviction before commit to keep memory lean:
-
-```
-thoth_memory_forget()
-```
-
-This removes expired episodes (>30 days by default) and enforces byte caps on MEMORY.md/LESSONS.md. Keeps the commit clean by ensuring memory state is current.
-
----
-
 ## Step 3: Generate commit message
 
 Derive a commit message from:
@@ -125,11 +86,6 @@ Ask the user to confirm or provide an alternative message.
 ## Step 5: Commit
 
 Run `git commit -m "<confirmed message>"`.
-
-Register plate completion:
-```
-thoth_workflow_complete({name: "hoangsa/plate"})
-```
 
 ---
 

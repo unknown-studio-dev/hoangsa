@@ -22,14 +22,6 @@ SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)
 
 If `found: false` → ask user to run `/hoangsa:prepare` first, stop.
 
-### 1a-bis. Register workflow with Thoth
-
-```
-thoth_workflow_start({name: "hoangsa/cook", session_id: "$SESSION_ID"})
-```
-
-This enables multi-session tracking — if cook is abandoned mid-wave, `thoth_workflow_list` shows it as active.
-
 ### 1b. Validate plan.json
 
 ```bash
@@ -218,13 +210,7 @@ Do NOT read skills unless your task specifically requires them.
 2b. Before starting, search for past work on this area:
     thoth_archive_search({query: "<task.name> <primary module>"})
     Use findings to avoid repeating past mistakes or duplicating solutions.
-2c. Query knowledge graph for architectural context:
-    thoth_kg_query({entity: "<primary module>", direction: "both"})
-    Understand architectural relationships before making changes.
 3. If impact returns HIGH or CRITICAL risk — report it, do not proceed without orchestrator acknowledgment
-3b. If Thoth gate blocks your edit (strict mode), request an override:
-    thoth_override_request({rule_id: "<blocked rule>", reason: "Task <task.id> requires this edit: <explanation>", tool_call_hash: "<hash>"})
-    Do NOT use thoth_defer_reflect as a workaround — always use the override system.
 4. Implement the task
 5. Run the acceptance command to verify: <task.acceptance>
 6. If acceptance fails, fix and retry (max 3 attempts)
@@ -232,33 +218,12 @@ Do NOT read skills unless your task specifically requires them.
 
 Acceptance command: <task.acceptance>
 
-After task completion (pass or fail):
-  thoth_episode_append({event: "task_completed", data: {task_id: "<task.id>", status: "<pass|fail>", files_changed: [<list>]}})
-
-After task passes acceptance — track lesson outcomes:
-  1. Read .thoth/LESSONS.md, find lessons whose triggers match this task's domain/modules
-  2. For each relevant lesson:
-     - thoth_lesson_outcome({signal: "success", triggers: ["<lesson trigger>"], note: "task <task.id> passed"})
-  3. Skip if no lessons match — this is lightweight, not exhaustive
-
-After task passes — update knowledge graph:
-  If you modified public interfaces or added new module relationships:
-    thoth_kg_add({subject: "<module>", predicate: "uses|depends_on|extends", object: "<other module>", confidence: 0.9})
-  If you changed an existing relationship:
-    thoth_kg_invalidate({subject: "<module>", predicate: "<old relationship>", object: "<old target>"})
-    thoth_kg_add({subject: "<module>", predicate: "<new relationship>", object: "<new target>", confidence: 0.9})
-
 After task passes — save key findings for future reference:
   thoth_turn_save({role: "assistant", text: "Task <task.id>: <one-line summary of what was done and key finding>"})
 
 After task passes — verify change scope:
   thoth_detect_changes({diff: "<git diff of this task's commit>"})
   If unexpected symbols are affected, report to orchestrator.
-
-After task fails all retries — track lesson failures:
-  1. Find lessons whose triggers should have prevented this kind of failure
-  2. For each:
-     - thoth_lesson_outcome({signal: "failure", triggers: ["<lesson trigger>"], note: "task <task.id> failed: <error>"})
 ```
 
 **THOTH_ACTOR:** Set `THOTH_ACTOR=hoangsa/cook-wave-<N>` environment variable when spawning workers. This selects the `hoangsa/cook-*` gate policy (longer recall window, lower relevance threshold) so workers have less friction during implementation.
@@ -384,13 +349,11 @@ Commit fixes with message: "refactor(<scope>): simplify <task.id>" — `<scope>`
 
 **Simplify failure recovery:** If simplify fails (crash, timeout, or reports blocker): log the error, skip simplify for this task, and continue to the next task. Do NOT block the wave.
 
-### Post-wave: Memory and scope verification
+### Post-wave: Scope verification
 
 After all tasks in a wave complete (and simplify passes finish):
 
-1. **Check pending memory:** `thoth_memory_pending()` — if pending entries are piling up (>5), prompt promote/reject before starting next wave.
-
-2. **Verify wave scope:** Run `thoth_detect_changes({diff: "<git diff of wave commits>"})` to confirm only expected symbols were affected across the wave.
+1. **Verify wave scope:** Run `thoth_detect_changes({diff: "<git diff of wave commits>"})` to confirm only expected symbols were affected across the wave.
 
 ### Track progress:
 
@@ -451,22 +414,6 @@ States: `⬜ pending` · `⏳ running` · `✅ completed` · `✅ completed ✨`
   │    (orchestrator asks user)          │
   └──────────────────────────────────────┘
 ```
-
-### Override request handling (orchestrator-side):
-
-When a worker files a `thoth_override_request` (because the Thoth gate blocked an edit in strict mode), the orchestrator surfaces it to the user:
-
-```
-🔒 Override requested: <rule_id>
-   Worker: <task.id>
-   Reason: <worker's reason>
-
-   Approve or reject?
-```
-
-Use AskUserQuestion to get the user's decision, then:
-- If approved → `thoth_override_approve({request_id: "<id>"})` — worker can retry the blocked edit
-- If rejected → `thoth_override_reject({request_id: "<id>", reason: "<user's reason>"})` — worker must find an alternative approach
 
 ### When escalating to user:
 
@@ -760,14 +707,6 @@ Semantic check:
 ```
 
 ---
-
-### Finalize workflow tracking
-
-```
-thoth_workflow_complete({name: "hoangsa/cook"})
-```
-
-Mark the cook workflow as complete in Thoth's multi-session tracker.
 
 ## Self-verification checklist
 

@@ -27,10 +27,6 @@ SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session init docs "$SLUG")
 
 This makes the workflow flexible — it works both inside a full HOANGSA session and as a standalone research tool.
 
-```
-thoth_workflow_start({name: "hoangsa/research", session_id: "$SESSION_ID"})
-```
-
 ---
 
 ## Step 2: Gather input
@@ -328,10 +324,6 @@ cp RESEARCH.md "$SESSION_DIR/RESEARCH.md"
 
 # If standalone:
 # File is already at $SESSION_DIR/RESEARCH.md
-```
-
-```
-thoth_workflow_complete({name: "hoangsa/research"})
 ```
 
 Report to the user:

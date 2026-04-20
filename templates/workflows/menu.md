@@ -42,10 +42,6 @@ Initialize state for this session:
 # → creates state.json in SESSION_DIR with status: "pending"
 ```
 
-```
-thoth_workflow_start({name: "hoangsa/menu", session_id: "$SESSION_ID"})
-```
-
 ### 1c. Git context check
 
 Apply the shared git-context module from `git-context.md`:
@@ -613,18 +609,6 @@ status: "draft"
 
 **After drafting:** Show the full document to user.
 
-### Architecture validation via knowledge graph
-
-Before finalizing the DESIGN-SPEC, query the knowledge graph for existing architecture:
-
-```
-thoth_kg_query({entity: "<primary module being designed>", direction: "both"})
-```
-
-Check for conflicts between the new design and existing architectural decisions:
-- If KG shows module A depends on module B, but the new design removes or changes B → flag as risk
-- If KG shows a design pattern was chosen for a reason → surface that reason to the user
-
 Then check `review_style` preference:
 
 ```bash
@@ -670,13 +654,7 @@ If `review_style` is `null` → after the first review round, save based on beha
 "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . review_style "whole_document"
 ```
 
-### Persist design decisions to knowledge graph
-
-For each interface, dependency, or architectural choice in the DESIGN-SPEC:
-
-```
-thoth_kg_add({subject: "<module>", predicate: "implements|exposes|depends_on", object: "<interface/dependency>", confidence: 0.9})
-```
+Architectural choices (interfaces, dependencies) belong in the DESIGN-SPEC's Architecture / Interfaces sections — that document is the canonical record.
 
 ---
 
@@ -873,10 +851,6 @@ Update state to reflect design is complete:
 
 ```bash
 "$HOANGSA_ROOT/bin/hoangsa-cli" state update "$SESSION_ID" '{"status":"design"}'
-```
-
-```
-thoth_workflow_complete({name: "hoangsa/menu"})
 ```
 
 ```bash

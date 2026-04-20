@@ -45,13 +45,14 @@ Returns execution flows ranked by relevance. Better than `Grep` for understandin
 
 ---
 
-## Knowledge Graph Maintenance
+## Remember What You Learn
 
-When you modify a module's **public interface** (exported functions, public methods, API endpoints, type definitions consumed by other modules):
+When you discover something worth persisting (a non-obvious fact about the codebase, a gotcha, a lesson learned from a mistake):
 
-1. **Add new relationships:** `thoth_kg_add({subject: "<your module>", predicate: "exports|provides|depends_on", object: "<related module/type>", confidence: 0.9})`
-2. **Invalidate changed relationships:** `thoth_kg_invalidate({subject: "<module>", predicate: "<old relationship>", object: "<old target>"})` then add the new one.
-3. **Skip if:** The change is purely internal (private functions, local variables, implementation details that don't cross module boundaries).
+1. **Facts:** `thoth_remember_fact({text: "<concise fact>", tags: ["<tag>"]})` — durable truths about the codebase.
+2. **Lessons:** `thoth_remember_lesson({trigger: "<when this applies>", advice: "<what to do>"})` — actionable advice for future edits.
+
+Before any non-trivial edit, recall first: `thoth_recall({query: "<what you're about to do>"})`.
 
 ---
 
@@ -69,20 +70,6 @@ Look for:
 - Solutions that were tried and abandoned (with reasons)
 
 If archive returns relevant hits, factor them into your approach. If no relevant hits, proceed normally — this is a quick check, not a blocker.
-
----
-
-## Override Protocol
-
-If the Thoth gate **blocks** your edit (strict/require mode prevents Write/Edit without recent recall):
-
-1. **First try:** Run `thoth_recall({query: "<what you're editing>"})` — the gate may just need a fresh recall.
-2. **If still blocked:** File an override request:
-   ```
-   thoth_override_request({rule_id: "<blocked rule>", reason: "<why this edit is necessary>", tool_call_hash: "<from error>"})
-   ```
-3. **Wait for orchestrator** to surface the request to the user for approval.
-4. **NEVER use `thoth_defer_reflect`** as a workaround — it bypasses the review chain and is not auditable.
 
 ---
 

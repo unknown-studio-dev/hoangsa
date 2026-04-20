@@ -159,34 +159,16 @@ The taste workflow does NOT attempt to fix failures itself — that is the fix w
 
 ---
 
-## Step 3b: Track lesson outcomes (if Thoth available)
+## Step 3b: Skill proposal check (if Thoth available)
 
-After all tests are run, update lesson outcome scores based on results. This feeds Thoth's auto-quarantine system — lessons that consistently lead to failures get demoted automatically.
+After tests are run, check if a lesson cluster has reached the skill proposal threshold:
 
-```bash
-command -v thoth &>/dev/null && echo "THOTH_AVAILABLE" || echo "THOTH_NOT_INSTALLED"
-```
-
-If Thoth is available:
-
-1. Read `.thoth/LESSONS.md` and identify lessons whose triggers mention symbols, modules, or patterns touched by the tested tasks
-2. For each relevant lesson:
-   - If the related task **passed** → `thoth_lesson_outcome({signal: "success", triggers: ["<lesson trigger text>"], note: "task <T-xx> passed acceptance"})`
-   - If the related task **failed** and the lesson was supposed to prevent that kind of failure → `thoth_lesson_outcome({signal: "failure", triggers: ["<lesson trigger text>"], note: "task <T-xx> failed: <error summary>"})`
-3. Only score lessons with clear relevance — do not score every lesson for every task
-
-This is lightweight — skip if no lessons match the tested modules. The goal is gradual signal accumulation, not exhaustive scoring.
-
-### Skill proposal check
-
-After scoring all lesson outcomes, check if any lesson cluster has reached the skill proposal threshold:
-
-1. Count lessons by topic/domain (e.g., lessons about editing source files, lessons about migration, etc.)
+1. Count lessons in `.thoth/LESSONS.md` by topic/domain (e.g., lessons about editing source files, lessons about migration, etc.)
 2. If a cluster has ≥5 lessons with cumulative success signals → call `thoth_skill_propose` to draft a consolidated skill
 3. Include `source_triggers` (the trigger text of each consolidated lesson) so Thoth can track provenance
 4. Report the draft to the user: "New skill draft: `.thoth/skills/<slug>.draft/` — run `thoth skills install` to accept"
 
-Skip this check if no lessons were scored in this pass.
+Skip this check if no lessons are relevant to the tested modules.
 
 ---
 

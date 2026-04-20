@@ -47,12 +47,6 @@ Extract `SESSION_ID`, `SESSION_DIR` from JSON output.
 "$HOANGSA_ROOT/bin/hoangsa-cli" state init "$SESSION_DIR"
 ```
 
-Register brainstorm workflow with Thoth:
-
-```
-thoth_workflow_start({name: "hoangsa/brainstorm", session_id: "$SESSION_ID"})
-```
-
 ---
 
 ## Step 2: Explore project context
@@ -311,20 +305,7 @@ After writing, scan the document for:
 
 Fix issues inline. No need to re-present to user.
 
-### 6c. Persist design decisions to knowledge graph
-
-For each LOCKED decision in the brainstorm:
-
-```
-thoth_kg_add({
-  subject: "<component/module>",
-  predicate: "designed_as|uses|depends_on",
-  object: "<technology/pattern/dependency>",
-  confidence: 0.8
-})
-```
-
-This creates a temporal architecture record that future workflows can query via `thoth_kg_query`.
+Append locked architectural decisions to the DESIGN-SPEC's Architecture section during the menu workflow — BRAINSTORM.md is the source of truth for design rationale.
 
 ---
 
@@ -332,10 +313,6 @@ This creates a temporal architecture record that future workflows can query via 
 
 ```bash
 "$HOANGSA_ROOT/bin/hoangsa-cli" state update "$SESSION_ID" '{"status":"brainstorm"}'
-```
-
-```
-thoth_workflow_complete({name: "hoangsa/brainstorm"})
 ```
 
 ```bash

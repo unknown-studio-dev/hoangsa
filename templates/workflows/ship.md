@@ -46,11 +46,6 @@ DIFF_STAT=$(git diff --stat $BASE_BRANCH...HEAD 2>/dev/null)
    Changed files: <from DIFF_STAT>
 ```
 
-Register the ship workflow with Thoth:
-```
-thoth_workflow_start({name: "hoangsa/ship", session_id: "$SESSION_ID"})
-```
-
 ### Step 1b: Blast-radius analysis
 
 Run change detection to understand the impact scope of the branch:
@@ -156,16 +151,6 @@ Handling:
 
 If verdict is PASS → auto-proceed to Step 5.
 
-## Step 4b: Flag high-risk changes for review
-
-If Thoth is available and any review issue has severity CRITICAL:
-
-```
-thoth_request_review({reason: "Pre-ship: <N> critical issues found in <files>"})
-```
-
-This creates a marker in Thoth's episode log so the team can track which ships had flagged risks, even if the user overrides.
-
 ---
 
 ## Step 5: Ship action
@@ -251,10 +236,6 @@ STATE=$("$HOANGSA_ROOT/bin/hoangsa-cli" state get "$SESSION_DIR")
   - `null` (first time) → ask user, save preference
 
 After chaining (or skipping), show final summary:
-
-```
-thoth_workflow_complete({name: "hoangsa/ship"})
-```
 
 ```
 Ship complete!
