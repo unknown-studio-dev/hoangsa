@@ -10,6 +10,7 @@ pub mod model;
 pub mod pref;
 pub mod rule;
 pub mod session;
+pub mod stats;
 pub mod state;
 pub mod trust;
 pub mod validate;

@@ -157,6 +157,12 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        ("stats", "record") => {
+            cmd::stats::cmd_record(rest.first().copied());
+        }
+        ("stats", "summary") => {
+            cmd::stats::cmd_summary(&rest);
+        }
         ("commit", _) => {
             // commit "<message>" --files f1 f2 ...
             let message = sub;
