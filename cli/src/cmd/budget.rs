@@ -681,4 +681,144 @@ mod tests {
         assert!(with_pack.total > without_pack.total);
         assert_eq!(with_pack.context_pack_tokens, 5000);
     }
+
+    #[test]
+    fn test_budget_default_overhead_constants() {
+        // REQ-01: verify DEFAULT_OVERHEAD values match spec
+        assert_eq!(DEFAULT_OVERHEAD.base_rules_tokens, 2500);
+        assert!((DEFAULT_OVERHEAD.safety_margin_pct - 0.15).abs() < f64::EPSILON);
+        assert!((DEFAULT_OVERHEAD.cache_warm_factor - 0.1).abs() < f64::EPSILON);
+        assert_eq!(DEFAULT_OVERHEAD.tool_call_tokens_per_call, 800);
+        assert_eq!(DEFAULT_OVERHEAD.addon_tokens_per_addon, 300);
+        assert_eq!(DEFAULT_OVERHEAD.tool_def_tokens_per_tool, 150);
+        assert_eq!(DEFAULT_OVERHEAD.task_envelope_tokens, 500);
+    }
+
+    #[test]
+    fn test_budget_estimate_with_calibration_applied() {
+        // REQ-10: when sample_counts >= 5, the calibration factor is applied to total
+        let factor = 1.8_f64;
+        let calibration = CalibrationFactors {
+            low: 1.0,
+            medium: factor,
+            high: 1.0,
+            sample_counts: crate::cmd::stats::CalibrationSamples {
+                low: 0,
+                medium: 5, // exactly at threshold
+                high: 0,
+            },
+        };
+        let uncalibrated = CalibrationFactors {
+            low: 1.0,
+            medium: factor,
+            high: 1.0,
+            sample_counts: crate::cmd::stats::CalibrationSamples {
+                low: 0,
+                medium: 0,
+                high: 0,
+            },
+        };
+        let with_cal = compute_breakdown("medium", "/tmp", 0, CacheScenario::Cold, &calibration);
+        let without_cal = compute_breakdown("medium", "/tmp", 0, CacheScenario::Cold, &uncalibrated);
+
+        assert!(with_cal.calibration_applied, "should apply calibration when sample_count >= 5");
+        assert_eq!(with_cal.calibration_factor, factor);
+        // Total should be scaled by factor relative to uncalibrated base
+        let expected_total = (without_cal.total as f64 * factor) as u64;
+        assert_eq!(with_cal.total, expected_total);
+    }
+
+    #[test]
+    fn test_budget_estimate_without_calibration() {
+        // REQ-10: when sample_counts < 5, calibration_applied = false and total is unscaled
+        let calibration = CalibrationFactors {
+            low: 1.0,
+            medium: 1.0,
+            high: 2.5, // would significantly change total if applied
+            sample_counts: crate::cmd::stats::CalibrationSamples {
+                low: 0,
+                medium: 0,
+                high: 4, // just below threshold
+            },
+        };
+        let breakdown = compute_breakdown("high", "/tmp", 0, CacheScenario::Cold, &calibration);
+        assert!(!breakdown.calibration_applied, "calibration_applied must be false when sample_count < 5");
+
+        // Verify the total is NOT scaled (base_total == total when not applied)
+        let subtotal = breakdown.work_tokens
+            + breakdown.system_prompt_effective
+            + breakdown.context_pack_tokens
+            + breakdown.tool_overhead_tokens;
+        let safety = (subtotal as f64 * DEFAULT_OVERHEAD.safety_margin_pct) as u64;
+        let expected_base_total = subtotal + safety;
+        assert_eq!(breakdown.total, expected_base_total);
+    }
+
+    #[test]
+    fn test_budget_system_prompt_fallback() {
+        // REQ-11: estimate_system_prompt_tokens returns a reasonable value even
+        // when no files exist (falls back to DEFAULT_OVERHEAD.base_rules_tokens + tool overhead)
+        let tokens = estimate_system_prompt_tokens("/nonexistent/path/that/does/not/exist");
+        // Must be > 0 and at least cover the base rules fallback plus 10 default tools
+        let min_expected = DEFAULT_OVERHEAD.base_rules_tokens
+            + 10 * DEFAULT_OVERHEAD.tool_def_tokens_per_tool
+            + DEFAULT_OVERHEAD.task_envelope_tokens;
+        assert!(
+            tokens >= min_expected,
+            "fallback tokens ({}) should be at least {} (base + 10 tools + envelope)",
+            tokens,
+            min_expected
+        );
+    }
+
+    #[test]
+    fn test_budget_safety_margin_percentage() {
+        // REQ-01: safety margin is exactly 15% of subtotal
+        let calibration = CalibrationFactors {
+            low: 1.0,
+            medium: 1.0,
+            high: 1.0,
+            sample_counts: crate::cmd::stats::CalibrationSamples {
+                low: 0,
+                medium: 0,
+                high: 0,
+            },
+        };
+        for complexity in &["low", "medium", "high"] {
+            let bd = compute_breakdown(complexity, "/tmp", 2000, CacheScenario::Cold, &calibration);
+            let subtotal = bd.work_tokens
+                + bd.system_prompt_effective
+                + bd.context_pack_tokens
+                + bd.tool_overhead_tokens;
+            let expected_margin = (subtotal as f64 * 0.15) as u64;
+            assert_eq!(
+                bd.safety_margin_tokens,
+                expected_margin,
+                "safety margin for {} should be exactly 15% of subtotal",
+                complexity
+            );
+        }
+    }
+
+    #[test]
+    fn test_budget_complexity_profiles_bounds() {
+        // REQ-01: all three profiles must have min < max for both work_tokens and tool_calls
+        for complexity in &["low", "medium", "high"] {
+            let p = complexity_profile(complexity);
+            assert!(
+                p.work_tokens_min < p.work_tokens_max,
+                "{}: work_tokens_min ({}) must be < work_tokens_max ({})",
+                complexity,
+                p.work_tokens_min,
+                p.work_tokens_max
+            );
+            assert!(
+                p.expected_tool_calls_min < p.expected_tool_calls_max,
+                "{}: expected_tool_calls_min ({}) must be < expected_tool_calls_max ({})",
+                complexity,
+                p.expected_tool_calls_min,
+                p.expected_tool_calls_max
+            );
+        }
+    }
 }

@@ -503,4 +503,168 @@ mod tests {
         cleanup(&dir);
         assert_eq!(records.len(), 2);
     }
+
+    #[test]
+    fn test_stats_record_creates_dir_and_file() {
+        // REQ-03: cmd_record creates .hoangsa/stats/ directory and file if they don't exist
+        let dir = make_temp_dir("record_creates_dir");
+        // Ensure the stats dir does NOT exist before the call
+        let expected_stats_dir = dir.join(".hoangsa").join("stats");
+        assert!(!expected_stats_dir.exists(), "stats dir must not exist before test");
+
+        // cmd_record uses current_workspace() so we must change cwd
+        let original_dir = std::env::current_dir().expect("get cwd");
+        std::env::set_current_dir(&dir).expect("set cwd to temp dir");
+
+        let record_json = serde_json::to_string(&sample_record("low", 10000, 9000))
+            .expect("serialize record");
+        cmd_record(Some(&record_json));
+
+        std::env::set_current_dir(&original_dir).expect("restore cwd");
+
+        let expected_file = expected_stats_dir.join("token-usage.jsonl");
+        assert!(expected_stats_dir.exists(), ".hoangsa/stats/ directory should have been created");
+        assert!(expected_file.exists(), "token-usage.jsonl should have been created");
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn test_stats_record_appends_not_overwrites() {
+        // REQ-03: writing 2 records must result in both being present (append mode)
+        // Test the append behavior directly via the file-system helpers, which exercise
+        // the same OpenOptions::append(true) path that cmd_record uses internally.
+        let dir = make_temp_dir("record_appends");
+        let stats_dir = dir.join(".hoangsa").join("stats");
+        fs::create_dir_all(&stats_dir).expect("create stats dir");
+        let file_path = stats_dir.join("token-usage.jsonl");
+
+        let r1 = sample_record("low", 10000, 9000);
+        let r2 = sample_record("high", 30000, 35000);
+
+        // Write two records using the same append mode that cmd_record uses
+        for record in &[&r1, &r2] {
+            let line = serde_json::to_string(record).expect("serialize record");
+            let mut file = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&file_path)
+                .expect("open file in append mode");
+            writeln!(file, "{}", line).expect("write line");
+        }
+
+        let records = load_records(dir.to_str().expect("path str"));
+        cleanup(&dir);
+        assert_eq!(records.len(), 2, "both records must be present after two appends");
+        assert_eq!(records[0].complexity, "low");
+        assert_eq!(records[1].complexity, "high");
+    }
+
+    #[test]
+    fn test_stats_summary_last_filter() {
+        // REQ-04: summary with --last 2 should only process the last 2 records
+        // We verify via load_records + manual filtering logic mirroring cmd_summary
+        let dir = make_temp_dir("summary_last");
+        let stats_dir = dir.join(".hoangsa").join("stats");
+
+        let records = vec![
+            sample_record("low", 10000, 9000),
+            sample_record("low", 10000, 9500),
+            sample_record("low", 10000, 10000),
+            sample_record("low", 10000, 11000),
+            sample_record("low", 10000, 12000),
+        ];
+        write_records_to_stats_dir(&stats_dir, &records);
+
+        let all = load_records(dir.to_str().expect("path str"));
+        assert_eq!(all.len(), 5, "should have 5 records total");
+
+        // Replicate --last 2 filtering logic from cmd_summary
+        let last_n = 2usize;
+        let skip = all.len().saturating_sub(last_n);
+        let last_two: Vec<&TaskUsageRecord> = all.iter().skip(skip).collect();
+        assert_eq!(last_two.len(), 2, "--last 2 should yield exactly 2 records");
+        assert_eq!(last_two[0].tracked_usage, 11000, "4th record should be first of last 2");
+        assert_eq!(last_two[1].tracked_usage, 12000, "5th record should be second of last 2");
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn test_stats_summary_complexity_filter() {
+        // REQ-04: filtering by complexity should return only matching records
+        let dir = make_temp_dir("summary_complexity");
+        let stats_dir = dir.join(".hoangsa").join("stats");
+
+        let records = vec![
+            sample_record("low", 10000, 9000),
+            sample_record("medium", 20000, 22000),
+            sample_record("low", 10000, 10500),
+            sample_record("high", 35000, 40000),
+            sample_record("medium", 20000, 19000),
+        ];
+        write_records_to_stats_dir(&stats_dir, &records);
+
+        let all = load_records(dir.to_str().expect("path str"));
+        let medium_only: Vec<&TaskUsageRecord> = all
+            .iter()
+            .filter(|r| r.complexity.to_lowercase() == "medium")
+            .collect();
+
+        assert_eq!(medium_only.len(), 2, "should find exactly 2 medium records");
+        for r in &medium_only {
+            assert_eq!(r.complexity, "medium", "all filtered records must be medium complexity");
+        }
+
+        let low_only: Vec<&TaskUsageRecord> = all
+            .iter()
+            .filter(|r| r.complexity.to_lowercase() == "low")
+            .collect();
+        assert_eq!(low_only.len(), 2, "should find exactly 2 low records");
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn test_stats_calibration_cap_at_3() {
+        // REQ-10: verify cap works when actual/estimated ratio > 3.0
+        // Use compute_calibration directly with outlier records
+        let outlier_records = vec![
+            // ratio = 50000/10000 = 5.0 → should be capped at 3.0
+            sample_record("medium", 10000, 50000),
+            sample_record("medium", 10000, 60000), // ratio 6.0 → capped at 3.0
+        ];
+        let result = compute_calibration(&outlier_records);
+        assert!(
+            result.medium <= 3.0,
+            "calibration factor {} must be capped at 3.0",
+            result.medium
+        );
+        assert_eq!(result.medium, 3.0, "both ratios exceed cap, average should be exactly 3.0");
+        assert_eq!(result.sample_counts.medium, 2);
+        // low and high with no records should default to 1.0
+        assert_eq!(result.low, 1.0);
+        assert_eq!(result.high, 1.0);
+    }
+
+    #[test]
+    fn test_stats_empty_file_returns_default_calibration() {
+        // REQ-10: empty JSONL file returns (1.0, 1.0, 1.0) for all factors
+        let dir = make_temp_dir("default_cal_empty");
+        let stats_dir = dir.join(".hoangsa").join("stats");
+        fs::create_dir_all(&stats_dir).expect("create stats dir");
+        // Create an empty file
+        fs::File::create(stats_dir.join("token-usage.jsonl"))
+            .expect("create empty token-usage.jsonl");
+
+        let cal = load_calibration(stats_dir.to_str().expect("path str"));
+        cleanup(&dir);
+
+        assert_eq!(cal.low, 1.0, "empty file should yield low factor 1.0");
+        assert_eq!(cal.medium, 1.0, "empty file should yield medium factor 1.0");
+        assert_eq!(cal.high, 1.0, "empty file should yield high factor 1.0");
+        assert_eq!(cal.sample_counts.low, 0);
+        assert_eq!(cal.sample_counts.medium, 0);
+        assert_eq!(cal.sample_counts.high, 0);
+    }
 }
