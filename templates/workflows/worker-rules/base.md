@@ -165,3 +165,18 @@ Maximize Anthropic prompt cache hit rates by keeping tool and prompt structures 
 - **Static-before-dynamic.** Structure system prompts so static content (base rules, skill registry) comes first and dynamic content (task-specific context, file contents) comes last. Cache prefix matching works left-to-right — stable prefixes = higher hit rates.
 - **Stable MCP tool definitions.** If loading tools from MCP servers, cache the tool list and only refresh when the server config changes. Do not re-fetch tool definitions on every request.
 - **Sort addon rules by name.** When composing middleware chain (base + addons), sort addon content alphabetically by addon name before appending. This ensures the same addon set always produces the same prompt prefix.
+
+---
+
+## 12. Self-Review Checklist
+
+When the orchestrator indicates `SIMPLIFY_PASS=false`, no simplify agent will review your code after completion. Before committing, self-check:
+
+- [ ] No duplicated logic that could be extracted into a helper
+- [ ] No unused imports or dead code
+- [ ] No naming inconsistencies with surrounding code
+- [ ] No unnecessary allocations or redundant operations
+- [ ] All error messages are descriptive
+- [ ] Code follows project's existing patterns and conventions
+
+This checklist is active when the orchestrator passes `SIMPLIFY_PASS=false` in the task envelope. When `SIMPLIFY_PASS=true`, a simplify agent handles this — skip the checklist.
