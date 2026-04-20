@@ -136,13 +136,18 @@ Within a phase → maximize parallel, minimize sequential chains.
 
 ### 3d. Budget per task
 
-| Complexity | Tokens | When |
-|-----------|--------|------|
-| `low` | 8,000–15,000 | 1 function, type changes, docs |
-| `medium` | 15,000–30,000 | 1 module, refactor component |
-| `high` | 30,000–45,000 | Complex algo, external integration |
+| Complexity | Work Tokens | Total (with overhead) |
+|-----------|------------|----------------------|
+| `low` | 8,000–15,000 | 16,000–23,000 |
+| `medium` | 15,000–30,000 | 33,000–48,000 |
+| `high` | 30,000–45,000 | 65,000–80,000 |
 
-**Hard limit: 45,000/task.** Exceeds → split the task.
+**Hard limit: 80,000/task.** Exceeds → split the task.
+
+For precise budget estimation, run:
+```bash
+"$HOANGSA_ROOT/bin/hoangsa-cli" budget estimate "$SESSION_DIR/plan.json" "<task_id>"
+```
 
 ### 3e. Context pointers & dependency analysis
 

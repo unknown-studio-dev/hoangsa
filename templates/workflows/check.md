@@ -80,7 +80,12 @@ Format:
 Session / Phiên: <session-id>
 Status / Trạng thái:  <overall status>
 Stack / Ngôn ngữ:   <language from plan>
-Budget / Ngân sách:  <used>k / <total>k tokens (<percent>%)
+Budget / Ngân sách:
+    Total:   <used>k / <total>k tokens (<percent>%)
+    Work:    <work>k (<work_pct>%)
+    Prompt:  <prompt>k → <effective>k (cached)
+    Context: <ctx>k (<ctx_pct>%)
+    Tools:   <tools>k (<tools_pct>%) — <N> calls
 
   ┌─────────────────────────────────────────────────────────────┐
   │ Wave 1                                                      │

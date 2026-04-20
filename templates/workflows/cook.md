@@ -240,7 +240,17 @@ After task fails all retries — track lesson failures:
 
 **THOTH_ACTOR:** Set `THOTH_ACTOR=hoangsa/cook-wave-<N>` environment variable when spawning workers. This selects the `hoangsa/cook-*` gate policy (longer recall window, lower relevance threshold) so workers have less friction during implementation.
 
-**Token budget tracking:** Track token usage per task. If a task approaches 80% of its budget_tokens, warn. If it exceeds budget, the worker should wrap up current work and report partial completion rather than continuing.
+**Token budget tracking:** Track token usage per task. If a task approaches 70% of its budget_tokens, warn. If it exceeds budget, the worker should wrap up current work and report partial completion rather than continuing.
+
+**Per-turn tracking:** After each tool call round, estimate tokens consumed:
+- Content sent: len(prompt_text) / 4
+- Content received: len(response_text) / 4
+- Accumulated total = sum of all turns
+
+After task completes, record usage:
+```bash
+"$HOANGSA_ROOT/bin/hoangsa-cli" stats record '<json>'
+```
 
 ### Worker rules — Middleware Chain:
 
@@ -635,7 +645,12 @@ Semantic check:
     MODIFIED  src/api/routes.py
     CREATED   tests/test_user_service.py
 
-  Budget used: 98k / 118k tokens (83%)
+  Budget used: 45k / 65k tokens (69%)
+    Work:         28k (62%)
+    System prompt: 3k → 300 (cached, 90% saved)
+    Context:       5k (11%)
+    Tool calls:   8k (18%) — 10 calls × 800
+    Margin:        1k (2%)
 
 ✅ Review and commit when ready.
 ```
