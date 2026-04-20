@@ -440,6 +440,8 @@ function writeManifest(configDir) {
   };
   addHashes(hoangsaDir, "hoangsa/");
   if (fs.existsSync(commandsDir)) addHashes(commandsDir, "commands/hoangsa/");
+  const skillsDir = path.join(configDir, "skills", "hoangsa");
+  if (fs.existsSync(skillsDir)) addHashes(skillsDir, "skills/hoangsa/");
   fs.writeFileSync(
     path.join(configDir, MANIFEST_NAME),
     JSON.stringify(manifest, null, 2),
@@ -562,16 +564,16 @@ function copyAllFiles(src, targetDir, attribution, wantMedia = false) {
     console.log(`  ${green}✓${reset} Installed hoangsa/workflows/worker-rules`);
   }
 
-  // Copy skills with path replacement
-  const skillsSrc = path.join(src, "skills");
+  // Copy skills — only into hoangsa/ subdirectory to preserve other skills
+  const skillsSrc = path.join(src, "skills", "hoangsa");
   if (fs.existsSync(skillsSrc)) {
-    const skillsDest = path.join(targetDir, "skills");
+    const skillsDest = path.join(targetDir, "skills", "hoangsa");
     copyWithPathReplacement(skillsSrc, skillsDest, attribution);
     if (fs.existsSync(skillsDest) && fs.readdirSync(skillsDest).length > 0) {
-      console.log(`  ${green}✓${reset} Installed skills`);
+      console.log(`  ${green}✓${reset} Installed skills/hoangsa`);
     } else {
-      console.error(`  ${yellow}✗${reset} Failed to install skills`);
-      failures.push("skills");
+      console.error(`  ${yellow}✗${reset} Failed to install skills/hoangsa`);
+      failures.push("skills/hoangsa");
     }
   }
 
