@@ -67,8 +67,8 @@ pub fn cmd_plan(file_path: &str) {
                 }
             }
             if let Some(budget) = t.get("budget_tokens").and_then(|v| v.as_u64()) {
-                if budget > 45000 {
-                    warnings.push(format!("Task {tid}: budget {budget} exceeds 45k limit"));
+                if budget > 80000 {
+                    warnings.push(format!("Task {tid}: budget {budget} exceeds 80k limit"));
                 }
             }
             match t.get("files").and_then(|v| v.as_array()) {

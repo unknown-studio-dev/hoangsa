@@ -163,6 +163,8 @@ fn main() {
         ("stats", "summary") => {
             cmd::stats::cmd_summary(&rest);
         }
+        ("budget", "estimate") => cmd::budget::cmd_estimate(rest.first().copied(), rest.get(1).copied()),
+        ("budget", "breakdown") => cmd::budget::cmd_breakdown(rest.first().copied()),
         ("commit", _) => {
             // commit "<message>" --files f1 f2 ...
             let message = sub;
@@ -207,6 +209,10 @@ Usage:
   rule list|add|remove|enable|disable|sync|gate [projectDir] [args...]
   verify [projectDir]
   media probe|frames|montage|diff|check-ffmpeg|install-ffmpeg
+  budget estimate <plan_path> <task_id>
+  budget breakdown <plan_path>
+  stats record '<json>'
+  stats summary [--last N] [--complexity low|medium|high]
 "
             );
             std::process::exit(1);
