@@ -90,7 +90,6 @@ fn complexity_profile(complexity: &str) -> ComplexityProfile {
 fn estimate_system_prompt_tokens(cwd: &str) -> u64 {
     let home_dir = std::env::var("HOME").unwrap_or_default();
 
-    // Resolve worker-rules/base.md
     let local_base = Path::new(cwd).join(".claude/hoangsa/worker-rules/base.md");
     let global_base = Path::new(&home_dir).join(".claude/hoangsa/worker-rules/base.md");
 
@@ -102,36 +101,27 @@ fn estimate_system_prompt_tokens(cwd: &str) -> u64 {
         DEFAULT_OVERHEAD.base_rules_tokens
     };
 
-    // Load active addons from config
     let local_config = Path::new(cwd).join(".hoangsa/config.json");
     let config = read_json(local_config.to_str().unwrap_or(""));
-    let addon_tokens = if config.get("error").is_none() {
+    let config_ok = config.get("error").is_none();
+
+    let addon_tokens = if config_ok {
         if let Some(addons) = config.get("active_addons").and_then(|v| v.as_array()) {
-            let mut total: u64 = 0;
-            let mut sorted_addons: Vec<&str> = addons
-                .iter()
-                .filter_map(|v| v.as_str())
-                .collect();
+            let mut sorted_addons: Vec<&str> =
+                addons.iter().filter_map(|v| v.as_str()).collect();
             sorted_addons.sort();
-            for addon_name in sorted_addons {
-                // Try local then global
+            sorted_addons.iter().map(|addon_name| {
                 let local_addon = Path::new(cwd)
                     .join(".claude/hoangsa/worker-rules/addons")
                     .join(format!("{}.md", addon_name));
                 let global_addon = Path::new(&home_dir)
                     .join(".claude/hoangsa/worker-rules/addons")
                     .join(format!("{}.md", addon_name));
-                let tokens = if let Some(content) =
-                    read_file(local_addon.to_str().unwrap_or(""))
-                        .or_else(|| read_file(global_addon.to_str().unwrap_or("")))
-                {
-                    count_tokens(&content)
-                } else {
-                    DEFAULT_OVERHEAD.addon_tokens_per_addon
-                };
-                total += tokens;
-            }
-            total
+                read_file(local_addon.to_str().unwrap_or(""))
+                    .or_else(|| read_file(global_addon.to_str().unwrap_or("")))
+                    .map(|c| count_tokens(&c))
+                    .unwrap_or(DEFAULT_OVERHEAD.addon_tokens_per_addon)
+            }).sum()
         } else {
             0
         }
@@ -139,19 +129,17 @@ fn estimate_system_prompt_tokens(cwd: &str) -> u64 {
         0
     };
 
-    // Tool definitions: count tools in config or use a default estimate
-    let tool_count: u64 = if config.get("error").is_none() {
+    let tool_count: u64 = if config_ok {
         config
             .get("tools")
             .and_then(|v| v.as_array())
             .map(|a| a.len() as u64)
-            .unwrap_or(10) // default: assume 10 tools
+            .unwrap_or(10)
     } else {
         10
     };
     let tool_def_tokens = tool_count * DEFAULT_OVERHEAD.tool_def_tokens_per_tool;
 
-    // Task envelope is fixed
     let task_envelope = DEFAULT_OVERHEAD.task_envelope_tokens;
 
     base_tokens + addon_tokens + tool_def_tokens + task_envelope
@@ -182,7 +170,6 @@ fn compute_breakdown(
     let system_prompt_tokens = estimate_system_prompt_tokens(cwd);
     let tool_overhead_tokens = estimate_tool_overhead(complexity);
 
-    // Cache-adjusted system prompt effective cost
     let system_prompt_effective = match cache_scenario {
         CacheScenario::Warm => {
             (system_prompt_tokens as f64 * DEFAULT_OVERHEAD.cache_warm_factor) as u64
@@ -194,7 +181,6 @@ fn compute_breakdown(
     let safety_margin_tokens = (subtotal as f64 * DEFAULT_OVERHEAD.safety_margin_pct) as u64;
     let base_total = subtotal + safety_margin_tokens;
 
-    // Calibration
     let (calibration_factor, sample_count) = match complexity {
         "low" => (calibration.low, calibration.sample_counts.low),
         "medium" => (calibration.medium, calibration.sample_counts.medium),
@@ -228,7 +214,6 @@ fn resolve_plan_path(plan_path: Option<&str>, cwd: &str) -> String {
     if let Some(p) = plan_path {
         p.to_string()
     } else {
-        // Try common session plan locations
         let state_file = Path::new(cwd).join(".hoangsa/state/session.json");
         if state_file.exists() {
             let state = read_json(state_file.to_str().unwrap_or(""));
@@ -244,7 +229,6 @@ fn resolve_plan_path(plan_path: Option<&str>, cwd: &str) -> String {
                 }
             }
         }
-        // Default fallback
         Path::new(cwd)
             .join("plan.json")
             .to_string_lossy()
@@ -298,10 +282,6 @@ fn load_context_pack_tokens(cwd: &str, session_id: Option<&str>, task_id: &str) 
         .join(&sid)
         .join(format!("context-{}.json", task_id));
 
-    if !pack_file.exists() {
-        return 0;
-    }
-
     let pack = read_json(pack_file.to_str().unwrap_or(""));
     if pack.get("error").is_none() {
         pack.get("estimated_tokens")
@@ -338,7 +318,6 @@ pub fn cmd_estimate(plan_path: Option<&str>, task_id: Option<&str>) {
         }
     };
 
-    // Select the task
     let task = match task_id {
         Some(tid) => tasks
             .iter()
@@ -436,21 +415,8 @@ pub fn cmd_breakdown(plan_path: Option<&str>) {
 
     let mut task_breakdowns: Vec<Value> = Vec::new();
     let mut total_sum: u64 = 0;
-
-    // Track wave membership: depends_on = empty → Wave 1, else later wave
-    // For simplicity: wave = 1 if no deps, wave = 2 if has deps
-    let mut wave_map: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-
-    for task in tasks {
-        let tid = task.get("id").and_then(|v| v.as_str()).unwrap_or("?");
-        let has_deps = task
-            .get("depends_on")
-            .and_then(|v| v.as_array())
-            .map(|a| !a.is_empty())
-            .unwrap_or(false);
-        let wave: u32 = if has_deps { 2 } else { 1 };
-        wave_map.insert(tid.to_string(), wave);
-    }
+    let mut waves: std::collections::BTreeMap<u32, (u64, Vec<String>)> =
+        std::collections::BTreeMap::new();
 
     for task in tasks {
         let tid = task.get("id").and_then(|v| v.as_str()).unwrap_or("?");
@@ -458,6 +424,16 @@ pub fn cmd_breakdown(plan_path: Option<&str>) {
             .get("complexity")
             .and_then(|v| v.as_str())
             .unwrap_or("high");
+        let wave: u32 = if task
+            .get("depends_on")
+            .and_then(|v| v.as_array())
+            .map(|a| !a.is_empty())
+            .unwrap_or(false)
+        {
+            2
+        } else {
+            1
+        };
 
         let context_pack_tokens = load_context_pack_tokens(workspace_dir, session_id, tid);
         let cache_scenario = cache_scenario_for_task(task);
@@ -472,32 +448,18 @@ pub fn cmd_breakdown(plan_path: Option<&str>) {
 
         total_sum += breakdown.total;
 
+        let cache_s = match breakdown.cache_scenario {
+            CacheScenario::Cold => "cold",
+            CacheScenario::Warm => "warm",
+        };
+        let entry = waves.entry(wave).or_insert((0, Vec::new()));
+        entry.0 += breakdown.total;
+        entry.1.push(cache_s.to_string());
+
         task_breakdowns.push(json!({
             "id": tid,
             "breakdown": breakdown,
         }));
-    }
-
-    // Build wave summary
-    let mut waves: std::collections::BTreeMap<u32, (u64, Vec<String>)> =
-        std::collections::BTreeMap::new();
-    for tb in &task_breakdowns {
-        let tid = tb.get("id").and_then(|v| v.as_str()).unwrap_or("?");
-        let wave = *wave_map.get(tid).unwrap_or(&1);
-        let task_total = tb
-            .get("breakdown")
-            .and_then(|b| b.get("total"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        let cache_s = tb
-            .get("breakdown")
-            .and_then(|b| b.get("cache_scenario"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("cold")
-            .to_string();
-        let entry = waves.entry(wave).or_insert((0, Vec::new()));
-        entry.0 += task_total;
-        entry.1.push(cache_s);
     }
 
     let wave_summary: Vec<Value> = waves
@@ -672,13 +634,13 @@ mod tests {
     #[test]
     fn test_budget_cache_scenario_for_task_cold_when_no_deps() {
         let task = serde_json::json!({ "id": "T-01", "depends_on": [] });
-        matches!(cache_scenario_for_task(&task), CacheScenario::Cold);
+        assert!(matches!(cache_scenario_for_task(&task), CacheScenario::Cold));
     }
 
     #[test]
     fn test_budget_cache_scenario_for_task_warm_when_has_deps() {
         let task = serde_json::json!({ "id": "T-02", "depends_on": ["T-01"] });
-        matches!(cache_scenario_for_task(&task), CacheScenario::Warm);
+        assert!(matches!(cache_scenario_for_task(&task), CacheScenario::Warm));
     }
 
     #[test]
