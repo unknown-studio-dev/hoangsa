@@ -1,6 +1,6 @@
 use serde_json::Value;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -9,34 +9,38 @@ fn cli() -> Command {
     Command::new(env!("CARGO_BIN_EXE_hoangsa-cli"))
 }
 
-/// Run hoangsa-cli with the given args.  Returns (stdout, stderr, success).
+/// Run hoangsa-cli with the given args and an optional working directory.
+/// `stats record` / `stats summary` read `std::env::current_dir()` directly,
+/// so the subprocess must actually run from that directory when `cwd` is set.
 fn run_cli(args: &[&str]) -> (String, String, bool) {
-    let output = cli()
-        .args(args)
-        .output()
-        .expect("failed to run hoangsa-cli");
+    run_cli_in(None, args)
+}
+
+fn run_cli_cwd(cwd: &str, args: &[&str]) -> (String, String, bool) {
+    run_cli_in(Some(cwd), args)
+}
+
+fn run_cli_in(cwd: Option<&str>, args: &[&str]) -> (String, String, bool) {
+    let mut cmd = cli();
+    cmd.args(args);
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
+    let output = cmd.output().expect("failed to run hoangsa-cli");
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     (stdout, stderr, output.status.success())
 }
 
-/// Run hoangsa-cli with a specific working directory set as the process CWD.
-/// `stats record` / `stats summary` read `std::env::current_dir()` directly,
-/// so the subprocess must actually run from that directory.
-fn run_cli_cwd(cwd: &str, args: &[&str]) -> (String, String, bool) {
-    let output = cli()
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .expect("failed to run hoangsa-cli");
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    (stdout, stderr, output.status.success())
+/// Parse a CLI stdout string as JSON, panicking with a clear message on failure.
+fn parse_json(stdout: &str) -> Value {
+    serde_json::from_str(stdout)
+        .unwrap_or_else(|_| panic!("stdout must be valid JSON; got: {stdout}"))
 }
 
 /// Build a minimal plan.json for a single low-complexity task, write it into
 /// `dir`, and return the path to the file.
-fn write_minimal_plan(dir: &PathBuf) -> PathBuf {
+fn write_minimal_plan(dir: &Path) -> PathBuf {
     let dir_str = dir.to_string_lossy();
     let src_file = dir.join("src").join("main.rs");
     fs::create_dir_all(src_file.parent().expect("parent exists"))
@@ -76,20 +80,18 @@ fn write_minimal_plan(dir: &PathBuf) -> PathBuf {
 #[test]
 fn test_budget_estimate_outputs_valid_json() {
     let tmp = tempfile::tempdir().expect("create tempdir");
-    let plan_path = write_minimal_plan(&tmp.path().to_path_buf());
+    let plan_path = write_minimal_plan(tmp.path());
     let plan_str = plan_path.to_string_lossy();
 
     let (stdout, stderr, success) = run_cli(&["budget", "estimate", &plan_str, "T-01"]);
     assert!(success, "expected success; stderr: {stderr}");
 
-    let v: Value = serde_json::from_str(&stdout)
-        .expect(format!("stdout must be valid JSON; got: {stdout}").as_str());
+    let v = parse_json(&stdout);
 
     assert!(v.get("breakdown").is_some(), "missing 'breakdown' field");
     assert!(v.get("overhead_constants").is_some(), "missing 'overhead_constants' field");
     assert!(v.get("complexity_profile").is_some(), "missing 'complexity_profile' field");
 
-    // Sanity-check some nested fields
     let bd = &v["breakdown"];
     assert!(bd.get("work_tokens").is_some(), "breakdown missing work_tokens");
     assert!(bd.get("system_prompt_effective").is_some(), "breakdown missing system_prompt_effective");
@@ -102,16 +104,15 @@ fn test_budget_estimate_outputs_valid_json() {
 #[test]
 fn test_budget_estimate_missing_task_id() {
     let tmp = tempfile::tempdir().expect("create tempdir");
-    let plan_path = write_minimal_plan(&tmp.path().to_path_buf());
+    let plan_path = write_minimal_plan(tmp.path());
     let plan_str = plan_path.to_string_lossy();
 
     // Omit task_id — CLI should fall back to first task and succeed
     let (stdout, _stderr, _success) = run_cli(&["budget", "estimate", &plan_str]);
-    let v: Value = serde_json::from_str(&stdout)
-        .expect(format!("stdout must be valid JSON; got: {stdout}").as_str());
+    let v = parse_json(&stdout);
 
-    // Either we get a valid breakdown or an error object — both are acceptable
-    // JSON responses.  What must NOT happen is a panic / non-JSON output.
+    // Either a valid breakdown or an error object — both are acceptable JSON responses.
+    // What must NOT happen is a panic / non-JSON output.
     let is_breakdown = v.get("breakdown").is_some();
     let is_error = v.get("error").is_some();
     assert!(
@@ -119,7 +120,7 @@ fn test_budget_estimate_missing_task_id() {
         "expected either 'breakdown' or 'error' key; got: {v}"
     );
 
-    // Now test with a plan that truly has no tasks
+    // Test with a plan that truly has no tasks
     let dir_str = tmp.path().to_string_lossy().to_string();
     let empty_plan = serde_json::json!({
         "name": "empty plan",
@@ -131,10 +132,9 @@ fn test_budget_estimate_missing_task_id() {
     fs::write(&empty_path, serde_json::to_string_pretty(&empty_plan).expect("serialize"))
         .expect("write empty_plan.json");
 
-    let (stdout2, _stderr2, _) = run_cli(&["budget", "estimate", &empty_path.to_string_lossy()]);
-    let v2: Value = serde_json::from_str(&stdout2)
-        .expect(format!("stdout must be valid JSON; got: {stdout2}").as_str());
-    assert!(v2.get("error").is_some(), "expected error for empty tasks plan; got: {v2}");
+    let (empty_stdout, _empty_stderr, _) = run_cli(&["budget", "estimate", &empty_path.to_string_lossy()]);
+    let empty_v = parse_json(&empty_stdout);
+    assert!(empty_v.get("error").is_some(), "expected error for empty tasks plan; got: {empty_v}");
 }
 
 /// [REQ-02] `budget breakdown <plan>` with 3 tasks must return a `tasks` array
@@ -142,8 +142,8 @@ fn test_budget_estimate_missing_task_id() {
 #[test]
 fn test_budget_breakdown_outputs_all_tasks() {
     let tmp = tempfile::tempdir().expect("create tempdir");
-    let dir = tmp.path().to_path_buf();
-    let dir_str = dir.to_string_lossy().to_string();
+    let dir = tmp.path();
+    let dir_str = dir.to_string_lossy();
 
     // Create dummy source files for each task
     for i in 1..=3 {
@@ -199,12 +199,10 @@ fn test_budget_breakdown_outputs_all_tasks() {
     fs::write(&plan_path, serde_json::to_string_pretty(&plan).expect("serialize plan"))
         .expect("write plan.json");
 
-    let (stdout, stderr, success) =
-        run_cli(&["budget", "breakdown", &plan_path.to_string_lossy()]);
+    let (stdout, stderr, success) = run_cli(&["budget", "breakdown", &plan_path.to_string_lossy()]);
     assert!(success, "expected success; stderr: {stderr}");
 
-    let v: Value = serde_json::from_str(&stdout)
-        .expect(format!("stdout must be valid JSON; got: {stdout}").as_str());
+    let v = parse_json(&stdout);
 
     let tasks = v["tasks"].as_array().expect("'tasks' must be an array");
     assert_eq!(tasks.len(), 3, "expected 3 task entries in breakdown");
@@ -242,25 +240,21 @@ fn test_stats_record_and_summary_roundtrip() {
     });
     let record_str = serde_json::to_string(&record).expect("serialize record");
 
-    // Record the entry
-    let (stdout, stderr, success) =
+    let (record_out, record_err, record_ok) =
         run_cli_cwd(&cwd, &["stats", "record", &record_str]);
-    assert!(success, "stats record failed; stderr: {stderr}");
+    assert!(record_ok, "stats record failed; stderr: {record_err}");
 
-    let v: Value = serde_json::from_str(&stdout)
-        .expect(format!("stdout must be valid JSON; got: {stdout}").as_str());
-    assert_eq!(v["success"], true, "expected success=true; got: {v}");
-    assert_eq!(v["records_total"], 1, "expected records_total=1 after first record");
+    let record_v = parse_json(&record_out);
+    assert_eq!(record_v["success"], true, "expected success=true; got: {record_v}");
+    assert_eq!(record_v["records_total"], 1, "expected records_total=1 after first record");
 
-    // Check summary
-    let (stdout2, stderr2, success2) = run_cli_cwd(&cwd, &["stats", "summary"]);
-    assert!(success2, "stats summary failed; stderr: {stderr2}");
+    let (summary_out, summary_err, summary_ok) = run_cli_cwd(&cwd, &["stats", "summary"]);
+    assert!(summary_ok, "stats summary failed; stderr: {summary_err}");
 
-    let v2: Value = serde_json::from_str(&stdout2)
-        .expect(format!("stdout must be valid JSON; got: {stdout2}").as_str());
+    let summary_v = parse_json(&summary_out);
     assert_eq!(
-        v2["total_records"], 1,
-        "summary should show total_records=1; got: {v2}"
+        summary_v["total_records"], 1,
+        "summary should show total_records=1; got: {summary_v}"
     );
 }
 
@@ -297,33 +291,30 @@ fn test_stats_summary_with_filters() {
     }
 
     // --last 1 should return filtered_records=1
-    let (stdout, stderr, success) = run_cli_cwd(&cwd, &["stats", "summary", "--last", "1"]);
-    assert!(success, "stats summary --last 1 failed; stderr: {stderr}");
-    let v: Value = serde_json::from_str(&stdout)
-        .expect(format!("stdout must be valid JSON; got: {stdout}").as_str());
+    let (last_out, last_err, last_ok) = run_cli_cwd(&cwd, &["stats", "summary", "--last", "1"]);
+    assert!(last_ok, "stats summary --last 1 failed; stderr: {last_err}");
+    let last_v = parse_json(&last_out);
     assert_eq!(
-        v["total_records"], 3,
+        last_v["total_records"], 3,
         "total_records should still reflect all 3 stored records"
     );
     assert_eq!(
-        v["filtered_records"], 1,
-        "filtered_records should be 1 with --last 1; got: {v}"
+        last_v["filtered_records"], 1,
+        "filtered_records should be 1 with --last 1; got: {last_v}"
     );
 
     // --complexity low should return only the low entry
-    let (stdout2, stderr2, success2) =
+    let (cx_out, cx_err, cx_ok) =
         run_cli_cwd(&cwd, &["stats", "summary", "--complexity", "low"]);
-    assert!(success2, "stats summary --complexity low failed; stderr: {stderr2}");
-    let v2: Value = serde_json::from_str(&stdout2)
-        .expect(format!("stdout must be valid JSON; got: {stdout2}").as_str());
+    assert!(cx_ok, "stats summary --complexity low failed; stderr: {cx_err}");
+    let cx_v = parse_json(&cx_out);
     assert_eq!(
-        v2["filtered_records"], 1,
-        "filtered_records should be 1 for --complexity low; got: {v2}"
+        cx_v["filtered_records"], 1,
+        "filtered_records should be 1 for --complexity low; got: {cx_v}"
     );
-    // by_complexity.low.count should be 1
     assert_eq!(
-        v2["by_complexity"]["low"]["count"], 1,
-        "by_complexity.low.count should be 1; got: {v2}"
+        cx_v["by_complexity"]["low"]["count"], 1,
+        "by_complexity.low.count should be 1; got: {cx_v}"
     );
 }
 
@@ -332,8 +323,8 @@ fn test_stats_summary_with_filters() {
 #[test]
 fn test_validate_plan_80k_limit() {
     let tmp = tempfile::tempdir().expect("create tempdir");
-    let dir = tmp.path().to_path_buf();
-    let dir_str = dir.to_string_lossy().to_string();
+    let dir = tmp.path();
+    let dir_str = dir.to_string_lossy();
 
     let src_file = dir.join("main.rs");
     fs::write(&src_file, "fn main() {}").expect("write main.rs");
@@ -362,11 +353,10 @@ fn test_validate_plan_80k_limit() {
     fs::write(&plan_path, serde_json::to_string_pretty(&plan).expect("serialize plan"))
         .expect("write plan.json");
 
-    let (stdout, stderr, _success) =
-        run_cli(&["validate", "plan", &plan_path.to_string_lossy()]);
     // validate plan exits 0 even when there are warnings
-    let v: Value = serde_json::from_str(&stdout)
-        .expect(format!("stdout must be valid JSON; got: {stdout}; stderr: {stderr}").as_str());
+    let (stdout, _stderr, _success) =
+        run_cli(&["validate", "plan", &plan_path.to_string_lossy()]);
+    let v = parse_json(&stdout);
 
     let warnings = v["warnings"]
         .as_array()
@@ -388,12 +378,12 @@ fn test_validate_plan_80k_limit() {
 #[test]
 fn test_budget_estimate_cold_vs_warm() {
     let tmp = tempfile::tempdir().expect("create tempdir");
-    let dir = tmp.path().to_path_buf();
-    let dir_str = dir.to_string_lossy().to_string();
+    let dir = tmp.path();
+    let dir_str = dir.to_string_lossy();
 
     let src_file = dir.join("main.rs");
     fs::write(&src_file, "fn main() {}").expect("write main.rs");
-    let src_str = src_file.to_string_lossy().to_string();
+    let src_str = src_file.to_string_lossy();
 
     let plan = serde_json::json!({
         "name": "cold vs warm plan",
@@ -406,7 +396,7 @@ fn test_budget_estimate_cold_vs_warm() {
                 "complexity": "medium",
                 "budget_tokens": 25000,
                 "namespace": null,
-                "files": [&src_str],
+                "files": [&*src_str],
                 "depends_on": [],
                 "context_pointers": [],
                 "covers": ["REQ-11"],
@@ -418,7 +408,7 @@ fn test_budget_estimate_cold_vs_warm() {
                 "complexity": "medium",
                 "budget_tokens": 25000,
                 "namespace": null,
-                "files": [&src_str],
+                "files": [&*src_str],
                 "depends_on": ["T-cold"],
                 "context_pointers": [],
                 "covers": ["REQ-11"],
@@ -430,21 +420,17 @@ fn test_budget_estimate_cold_vs_warm() {
     let plan_path = dir.join("plan.json");
     fs::write(&plan_path, serde_json::to_string_pretty(&plan).expect("serialize plan"))
         .expect("write plan.json");
-    let plan_str = plan_path.to_string_lossy().to_string();
+    let plan_str = plan_path.to_string_lossy();
 
-    // Estimate for cold task
     let (stdout_cold, stderr_cold, ok_cold) =
         run_cli(&["budget", "estimate", &plan_str, "T-cold"]);
     assert!(ok_cold, "budget estimate T-cold failed; stderr: {stderr_cold}");
-    let v_cold: Value = serde_json::from_str(&stdout_cold)
-        .expect(format!("T-cold stdout not valid JSON; got: {stdout_cold}").as_str());
+    let v_cold = parse_json(&stdout_cold);
 
-    // Estimate for warm task
     let (stdout_warm, stderr_warm, ok_warm) =
         run_cli(&["budget", "estimate", &plan_str, "T-warm"]);
     assert!(ok_warm, "budget estimate T-warm failed; stderr: {stderr_warm}");
-    let v_warm: Value = serde_json::from_str(&stdout_warm)
-        .expect(format!("T-warm stdout not valid JSON; got: {stdout_warm}").as_str());
+    let v_warm = parse_json(&stdout_warm);
 
     let cold_spe = v_cold["breakdown"]["system_prompt_effective"]
         .as_u64()
