@@ -6,7 +6,7 @@
 ![npm version](https://img.shields.io/npm/v/hoangsa-cc.svg)
 ![Claude Code](https://img.shields.io/badge/Claude_Code-compatible-blueviolet.svg)
 ![Built with Rust](https://img.shields.io/badge/Built_with-Rust-orange.svg)
-![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg)
+![Node.js](https://img.shields.io/badge/Node.js-14.18+-green.svg)
 
 ---
 
@@ -20,6 +20,7 @@ The core pipeline:
 
 | Phase | Command | Output |
 |-------|---------|--------|
+| Brainstorm | `/hoangsa:brainstorm` | Validated approach (BRAINSTORM.md) |
 | Design | `/hoangsa:menu` | DESIGN-SPEC + TEST-SPEC |
 | Plan | `/hoangsa:prepare` | Executable task DAG (`plan.json`) |
 | Execute | `/hoangsa:cook` | Working code, wave by wave |
@@ -47,17 +48,23 @@ The orchestrator never writes code. It dispatches workers, each with a bounded c
 
 **8-Dimension Codebase Audit** — `/hoangsa:audit` scans for code smells, security vulnerabilities, performance bottlenecks, tech debt, test coverage gaps, dependency risks, architectural violations, and documentation gaps.
 
-**Task Manager Integration** — Bidirectional sync with ClickUp and Asana. Pull task details as context, push status/comments/reports back after work completes.
-
 **Thoth Code Intelligence** — Built-in call graph analysis. Impact analysis before edits, safe renames across the codebase, and full execution flow tracing.
 
 **Visual Debugging** — Analyze screenshots and screen recordings. Extract frames from video, generate montages, and overlay diffs to spot visual regressions.
 
 **Git Flow Management** — Built-in skill for task branching: start, switch, park, resume, finish, cleanup, sync. Auto-detects branching strategy and naming conventions.
 
+**Brainstorm Before You Build** — `/hoangsa:brainstorm` explores vague ideas through collaborative dialogue before committing to a spec. Output feeds directly into the menu workflow.
+
+**Rule Engine** — Define hard rules (block) and warnings that enforce project conventions via PreToolUse hooks. Manage rules interactively with `/hoangsa:rule`.
+
+**Addon Management** — `/hoangsa:addon` lists, adds, and removes framework-specific worker rule addons interactively.
+
 **Framework-Specific Worker Rules** — 15 framework addons (React, Next.js, Vue, Svelte, Angular, Express, NestJS, Go, Rust, Python, Java, Swift, Flutter, TypeScript, JavaScript) tune worker behavior per tech stack.
 
-**Multi-Profile Model Selection** — Switch between quality, balanced, and budget model profiles to match task requirements and cost constraints.
+**Multi-Profile Model Selection** — 8-role model routing (researcher, designer, planner, orchestrator, worker, reviewer, tester, committer) across quality, balanced, and budget profiles.
+
+**Task Manager Integration** — Bidirectional sync with ClickUp, Asana, Linear, Jira, and GitHub. Pull task details as context, push status/comments/reports back after work completes.
 
 ---
 
@@ -75,7 +82,7 @@ After `/hoangsa:menu` completes, follow with `/hoangsa:prepare` to generate a pl
 
 ## Installation
 
-Prerequisites: **Node.js 18+** and the **[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)**
+Prerequisites: **Node.js 14.18+** and the **[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)**
 
 ```bash
 # Interactive — asks whether to install globally or locally
@@ -98,7 +105,7 @@ npx hoangsa-cc --uninstall
 | `--uninstall` | `-u` | Remove HOANGSA |
 
 The installer also sets up:
-- Lifecycle hooks (statusline, context monitor, update checker)
+- Lifecycle hooks (stop-check, auto-compact, lesson-guard, rule-gate)
 - Thoth MCP for code intelligence and persistent memory
 - Task manager MCP integration (if configured)
 - Quality gate skills (silent-failure-hunter, pr-test-analyzer, comment-analyzer, type-design-analyzer)
@@ -108,14 +115,17 @@ The installer also sets up:
 ## Workflow
 
 ```
-idea  →  /menu      Design    →  DESIGN-SPEC + TEST-SPEC
-      →  /prepare   Plan      →  Executable task DAG (plan.json)
-      →  /cook      Execute   →  Wave-by-wave, fresh context per task
-      →  /taste     Test      →  Acceptance tests per task
-      →  /plate     Commit    →  Conventional commit message
-      →  /ship      Review    →  Code + security gates, push/PR
-      →  /serve     Sync      →  Bidirectional task manager sync
+idea  →  /brainstorm  Explore   →  Validated approach (BRAINSTORM.md)
+      →  /menu        Design    →  DESIGN-SPEC + TEST-SPEC
+      →  /prepare     Plan      →  Executable task DAG (plan.json)
+      →  /cook        Execute   →  Wave-by-wave, fresh context per task
+      →  /taste       Test      →  Acceptance tests per task
+      →  /plate       Commit    →  Conventional commit message
+      →  /ship        Review    →  Code + security gates, push/PR
+      →  /serve       Sync      →  Bidirectional task manager sync
 ```
+
+**Brainstorm (`/brainstorm`)** — Explore a vague idea through collaborative dialogue. Propose approaches, validate design, produce a BRAINSTORM.md that feeds into `/menu`.
 
 **Design (`/menu`)** — Interview the user about requirements. Produce a structured DESIGN-SPEC with interfaces and acceptance criteria, plus a TEST-SPEC with test cases and coverage targets.
 
@@ -139,6 +149,7 @@ idea  →  /menu      Design    →  DESIGN-SPEC + TEST-SPEC
 
 | Command | Description |
 |---------|-------------|
+| `/hoangsa:brainstorm` | Brainstorm — explore a vague idea before committing to a spec |
 | `/hoangsa:menu` | Design — from idea to DESIGN-SPEC + TEST-SPEC |
 | `/hoangsa:prepare` | Plan — convert specs to an executable task DAG |
 | `/hoangsa:cook` | Execute — wave-by-wave with fresh context per task |
@@ -154,6 +165,13 @@ idea  →  /menu      Design    →  DESIGN-SPEC + TEST-SPEC
 | `/hoangsa:fix` | Hotfix — cross-layer root cause tracing + minimal targeted fix |
 | `/hoangsa:audit` | Audit — 8-dimension codebase scan (security, debt, coverage, etc.) |
 | `/hoangsa:research` | Research — codebase analysis combined with external research |
+
+### Management
+
+| Command | Description |
+|---------|-------------|
+| `/hoangsa:rule` | Rules — add, remove, or list project enforcement rules |
+| `/hoangsa:addon` | Addons — list, add, or remove framework-specific worker rule addons |
 
 ### Utility
 
@@ -191,14 +209,31 @@ HOANGSA stores project configuration in `.hoangsa/config.json`.
 
 ```json
 {
-  "lang": "en",
-  "spec_lang": "en",
-  "tech_stack": ["typescript", "react", "postgres"],
-  "review_style": "strict",
-  "model_profile": "balanced",
+  "codebase": {
+    "active_addons": ["typescript", "react"],
+    "frameworks": [],
+    "linters": ["eslint", "prettier"],
+    "testing": { "frameworks": ["jest"] },
+    "packages": [{ "name": "my-app", "path": ".", "build": "npm run build" }]
+  },
+  "preferences": {
+    "lang": "en",
+    "spec_lang": "en",
+    "tech_stack": ["typescript", "react"],
+    "review_style": "strict",
+    "interaction_level": "detailed",
+    "auto_taste": false,
+    "auto_plate": false,
+    "auto_serve": false
+  },
+  "profile": "balanced",
+  "model_overrides": {},
   "task_manager": {
     "provider": "clickup",
-    "token": "<your-token>"
+    "mcp_server": null,
+    "verified": false,
+    "project_id": null,
+    "default_list": null
   }
 }
 ```
@@ -210,20 +245,28 @@ HOANGSA stores project configuration in `.hoangsa/config.json`.
 | `lang` | `en`, `vi` | Language for orchestrator output |
 | `spec_lang` | `en`, `vi` | Language for generated specs |
 | `tech_stack` | array | Project technology stack (used to select worker rule addons) |
-| `review_style` | `strict`, `balanced`, `light` | Code review thoroughness |
-| `interaction_level` | `minimal`, `standard`, `detailed` | How much the orchestrator asks |
+| `review_style` | `strict`, `balanced`, `light`, `whole_document` | Code review thoroughness |
+| `interaction_level` | `minimal`, `quick`, `standard`, `detailed` | How much the orchestrator asks |
+| `auto_taste` | `true`, `false` | Auto-run tests after cook |
+| `auto_plate` | `true`, `false` | Auto-commit after cook |
+| `auto_serve` | `true`, `false` | Auto-sync to task manager after work |
 
 ### Model Profiles
 
-Select a profile to control the model used at each role:
+Select a profile to control the model used at each of the 8 roles:
 
-| Profile | Worker | Designer | Reviewer |
-|---------|--------|----------|----------|
-| `quality` | claude-opus | claude-opus | claude-opus |
-| `balanced` | claude-sonnet | claude-opus | claude-sonnet |
-| `budget` | claude-haiku | claude-sonnet | claude-haiku |
+| Role | `quality` | `balanced` | `budget` |
+|------|-----------|------------|----------|
+| researcher | opus | sonnet | haiku |
+| designer | opus | opus | sonnet |
+| planner | opus | sonnet | haiku |
+| orchestrator | opus | haiku | haiku |
+| worker | opus | sonnet | haiku |
+| reviewer | opus | sonnet | haiku |
+| tester | sonnet | haiku | haiku |
+| committer | sonnet | haiku | haiku |
 
-Switch profiles with `/hoangsa:init` or by editing `model_profile` in `config.json`.
+Switch profiles with `/hoangsa:init` or by editing `profile` in `config.json`. Override individual roles with `model_overrides`.
 
 ### Task Manager Integration
 
@@ -231,8 +274,11 @@ Switch profiles with `/hoangsa:init` or by editing `model_profile` in `config.js
 |----------|---------------|
 | ClickUp | Paste a ClickUp task URL |
 | Asana | Paste an Asana task URL |
+| Linear | Paste a Linear issue URL |
+| Jira | Paste a Jira issue URL |
+| GitHub | Paste a GitHub issue/PR URL |
 
-HOANGSA fetches task details as additional context and writes results back on `/hoangsa:serve`.
+HOANGSA fetches task details as additional context via MCP and writes results back on `/hoangsa:serve`.
 
 ---
 
@@ -245,24 +291,28 @@ hoangsa/
 ├── cli/                        # Rust CLI (hoangsa-cli)
 │   └── src/
 │       ├── cmd/                # Command modules
+│       │   ├── addon.rs        # Worker-rules addon management
 │       │   ├── commit.rs       # Atomic commit
 │       │   ├── config.rs       # Config read/write
 │       │   ├── context.rs      # Context pointer resolution
 │       │   ├── dag.rs          # DAG traversal and wave scheduling
-│       │   ├── hook.rs         # Lifecycle hooks (statusline, context-monitor, tracker)
+│       │   ├── hook.rs         # Lifecycle hooks (stop-check, compact-check, lesson-guard, rule-gate)
 │       │   ├── media.rs        # Video/image probing, frame extraction, montage
 │       │   ├── memory.rs       # Session memory
-│       │   ├── model.rs        # Model profile & role resolution
+│       │   ├── model.rs        # Model profile & role resolution (8 roles × 3 profiles)
 │       │   ├── pref.rs         # User preferences
+│       │   ├── rule.rs         # Rule engine (block/warn enforcement)
 │       │   ├── session.rs      # Session create/resume/list
 │       │   ├── state.rs        # Task state machine
+│       │   ├── trust.rs        # Trust management (check/approve/revoke)
 │       │   ├── validate.rs     # Plan/spec validation
 │       │   └── verify.rs       # Installation verification
 │       ├── helpers.rs          # Shared utilities
 │       └── main.rs
 ├── templates/
-│   ├── commands/hoangsa/       # 15 slash command definitions
+│   ├── commands/hoangsa/       # 18 slash command definitions
 │   ├── workflows/              # Workflow implementations
+│   │   ├── brainstorm.md       # Brainstorm workflow
 │   │   ├── menu.md             # Design workflow
 │   │   ├── prepare.md          # Planning workflow
 │   │   ├── cook.md             # Execution workflow
@@ -275,6 +325,8 @@ hoangsa/
 │   │   ├── serve.md            # Task manager sync
 │   │   ├── init.md             # Project setup
 │   │   ├── update.md           # Update workflow
+│   │   ├── addon.md            # Addon management
+│   │   ├── rule.md             # Rule management
 │   │   ├── git-context.md      # Shared: git state detection
 │   │   ├── task-link.md        # Shared: task URL parsing
 │   │   └── worker-rules/       # Worker behavior rules
@@ -314,9 +366,10 @@ HOANGSA installs lifecycle hooks into Claude Code:
 
 | Hook | Event | Purpose |
 |------|-------|---------|
-| Statusline | `SessionStart` | Display session info, token usage, project context |
-| Context Monitor | `PostToolUse` | Track context window usage, warn on high utilization |
-| Update Checker | `SessionStart` | Notify when a new HOANGSA version is available |
+| Stop Check | `Stop` | Workflow completion guard — ensures all steps are finished |
+| Auto-Compact | `PostToolUse` | Periodic Thoth compaction of MEMORY + LESSONS files |
+| Lesson Guard | `PreToolUse` | Surfaces relevant lessons before Edit/Write operations |
+| Rule Gate | `PreToolUse` | Enforces project rules (block/warn) before tool use |
 
 ### Worker Rules & Framework Addons
 
@@ -341,6 +394,9 @@ Angular, Express.js, Flutter, Go, Java, JavaScript, NestJS, Next.js, Python, Rea
 
 - ClickUp
 - Asana
+- Linear
+- Jira
+- GitHub
 
 ### Code Intelligence
 
