@@ -19,6 +19,13 @@ imageproc = { version = "0.25", optional = true, default-features = false }
 walkdir = { version = "2", optional = true }
 tiktoken-rs = "0.5"
 
+[dev-dependencies]
+tempfile = "3"
+
+[[test]]
+name = "integration_budget"
+path = "tests/integration_budget.rs"
+
 [profile.release]
 opt-level = 3
 lto = "thin"
