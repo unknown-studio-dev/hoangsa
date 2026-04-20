@@ -6,37 +6,9 @@ Turn a vague idea into a validated design through collaborative dialogue, before
 
 > **MUST complete ALL steps in order. DO NOT skip any step. DO NOT stop before Step 7.**
 >
-> 0. Setup (lang + Thoth) → 1. Init session → 2. Explore context → 3. Clarify intent → 4. Propose approaches → 5. Present design → 6. Write BRAINSTORM.md → 7. Complete + chain
+> 1. Init session → 2. Explore context → 3. Clarify intent → 4. Propose approaches → 5. Present design → 6. Write BRAINSTORM.md → 7. Complete + chain
 
 ---
-
-## Step 0a: Language enforcement
-
-```bash
-# Resolve HOANGSA install path (local preferred over global)
-if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
-  HOANGSA_ROOT="./.claude/hoangsa"
-else
-  HOANGSA_ROOT="$HOME/.claude/hoangsa"
-fi
-
-LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
-```
-
-All user-facing text — questions, options, reports, summaries — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow.
-
----
-
-## Step 0b: Thoth install check
-
-```bash
-command -v thoth &>/dev/null && echo "THOTH_AVAILABLE" || echo "THOTH_NOT_INSTALLED"
-```
-
-Store result as `THOTH_STATUS`.
-
-- If `THOTH_AVAILABLE` → use Thoth tools for codebase exploration in Step 2.
-- If `THOTH_NOT_INSTALLED` → use Grep/Glob instead.
 
 ---
 
@@ -73,6 +45,12 @@ Extract `SESSION_ID`, `SESSION_DIR` from JSON output.
 
 ```bash
 "$HOANGSA_ROOT/bin/hoangsa-cli" state init "$SESSION_DIR"
+```
+
+Register brainstorm workflow with Thoth:
+
+```
+thoth_workflow_start({name: "hoangsa/brainstorm", session_id: "$SESSION_ID"})
 ```
 
 ---
@@ -118,6 +96,9 @@ Parse the result — if `type` is `"docs"` and `files` contains `"RESEARCH.md"`:
 **If THOTH_AVAILABLE:**
 - Run `thoth_recall({query: "<IDEA>"})` to find relevant code, flows, and patterns
 - For top symbols found → run `thoth_symbol_context({name: "<symbol>"})` to understand structure
+- Search past conversations for prior brainstorms on similar topics:
+  `thoth_archive_search({query: "<IDEA>"})`
+  If relevant past brainstorms found → surface to user: "You discussed something similar in a past session."
 
 **If THOTH_NOT_INSTALLED:**
 - Use Glob to find project entry points (`index.*`, `main.*`, `app.*`, `server.*`)
@@ -201,6 +182,14 @@ For each approach, briefly cover:
 Lead with your recommended option and explain why.
 
 If the user picks Other → incorporate their direction into the design.
+
+If the user's choice reveals a strong design preference (e.g., "prefers composition over inheritance", "no ORMs", "always REST over GraphQL"):
+
+```
+thoth_remember_preference({text: "<preference derived from user's choice>"})
+```
+
+This persists across projects so future brainstorms can surface relevant preferences.
 
 ---
 
@@ -322,12 +311,31 @@ After writing, scan the document for:
 
 Fix issues inline. No need to re-present to user.
 
+### 6c. Persist design decisions to knowledge graph
+
+For each LOCKED decision in the brainstorm:
+
+```
+thoth_kg_add({
+  subject: "<component/module>",
+  predicate: "designed_as|uses|depends_on",
+  object: "<technology/pattern/dependency>",
+  confidence: 0.8
+})
+```
+
+This creates a temporal architecture record that future workflows can query via `thoth_kg_query`.
+
 ---
 
 ## Step 7: Complete + chain
 
 ```bash
 "$HOANGSA_ROOT/bin/hoangsa-cli" state update "$SESSION_ID" '{"status":"brainstorm"}'
+```
+
+```
+thoth_workflow_complete({name: "hoangsa/brainstorm"})
 ```
 
 ```bash

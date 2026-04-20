@@ -6,34 +6,6 @@ Conduct deep research on a topic — codebase structure, patterns, or external k
 
 ---
 
-## Step 0a: Language enforcement
-
-```bash
-# Resolve HOANGSA install path (local preferred over global)
-if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
-  HOANGSA_ROOT="./.claude/hoangsa"
-else
-  HOANGSA_ROOT="$HOME/.claude/hoangsa"
-fi
-
-LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
-```
-
-All user-facing text — questions, reports, summaries, status updates — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow. Do not switch languages mid-conversation. Template examples in this workflow are illustrative — adapt them to match the user's `lang` preference.
-
----
-
-## Step 0b: Thoth install check
-
-```bash
-command -v thoth &>/dev/null && echo "THOTH_AVAILABLE" || echo "THOTH_NOT_INSTALLED"
-```
-
-Store result as `THOTH_STATUS`.
-
-- If `THOTH_AVAILABLE` → continue. Research agents will use Thoth tools for codebase analysis.
-- If `THOTH_NOT_INSTALLED` → set `THOTH_STATUS` = `THOTH_UNAVAILABLE`, continue. Research agents will use Grep/Glob instead.
-
 ---
 
 ## Step 1: Session detection
@@ -54,6 +26,10 @@ SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session init docs "$SLUG")
 ```
 
 This makes the workflow flexible — it works both inside a full HOANGSA session and as a standalone research tool.
+
+```
+thoth_workflow_start({name: "hoangsa/research", session_id: "$SESSION_ID"})
+```
 
 ---
 
@@ -214,7 +190,24 @@ Output:
   - Known limitations
 ```
 
-Collect outputs from all 3 agents before proceeding.
+### Agent 4 — Archive Mining (run in parallel with Agents 1-3)
+
+Search past conversations for prior research and discussions on this topic:
+
+```
+thoth_archive_search({query: "<RESEARCH_TOPIC>"})
+thoth_archive_topics()
+thoth_turns_search({query: "<RESEARCH_TOPIC>"})
+```
+
+Extract:
+- Prior research findings on the same or related topics
+- Design decisions that were discussed but may not be in MEMORY.md
+- Past approaches tried and their outcomes
+
+Include findings in RESEARCH.md under a "## Prior Conversations" section.
+
+Collect outputs from all 4 agents before proceeding.
 
 ---
 
@@ -335,6 +328,10 @@ cp RESEARCH.md "$SESSION_DIR/RESEARCH.md"
 
 # If standalone:
 # File is already at $SESSION_DIR/RESEARCH.md
+```
+
+```
+thoth_workflow_complete({name: "hoangsa/research"})
 ```
 
 Report to the user:

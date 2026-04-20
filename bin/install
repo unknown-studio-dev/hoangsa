@@ -723,6 +723,23 @@ function ensureHoangsaHooks(settings, targetDir) {
     `  ${green}✓${reset} Installed auto-compact hook (periodic thoth compact)`,
   );
 
+  // --- PostToolUse post-enforce hook (records thoth events to enforcement log) ---
+  settings.hooks.PostToolUse.push({
+    _hoangsa_managed: true,
+    hooks: [
+      {
+        type: "command",
+        command: `${cli} hook post-enforce`,
+        timeout: 5,
+      },
+    ],
+    matcher:
+      "mcp__thoth__thoth_impact|mcp__thoth__thoth_detect_changes|mcp__thoth__thoth_recall",
+  });
+  console.log(
+    `  ${green}✓${reset} Installed post-enforce hook (records thoth events for enforcement)`,
+  );
+
   // --- PreToolUse lesson-guard hook (surfaces relevant lessons before edits) ---
   if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
   settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter(

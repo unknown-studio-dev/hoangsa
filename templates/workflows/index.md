@@ -6,29 +6,6 @@ You are the indexing agent. Mission: ensure the workspace thoth index is up-to-d
 
 ---
 
-## Step 0: Language enforcement
-
-```bash
-# Resolve HOANGSA install path (local preferred over global)
-if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
-  HOANGSA_ROOT="./.claude/hoangsa"
-else
-  HOANGSA_ROOT="$HOME/.claude/hoangsa"
-fi
-
-LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang 2>/dev/null || echo "")
-if [ -z "$LANG_PREF" ] || [ "$LANG_PREF" = "null" ]; then
-  LANG_PREF="en"
-fi
-echo "LANG_PREF=$LANG_PREF"
-```
-
-If config doesn't exist or `lang` is null, default to English (`en`).
-
-All user-facing text **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English).
-
----
-
 ## Step 1: Check thoth installation
 
 Run:

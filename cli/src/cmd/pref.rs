@@ -186,7 +186,7 @@ pub fn cmd_set(project_dir: Option<&str>, key: Option<&str>, value: Option<&str>
             "minimal" => Some([
                 ("simplify_pass", Value::Bool(false)),
                 ("quality_gate", Value::Bool(false)),
-                ("test_runs", Value::Number(1.into())),
+                ("test_runs", Value::Number(0.into())),
                 ("research_mode", Value::String("inline".to_string())),
                 ("context_mode", Value::String("selective".to_string())),
                 ("thoth_strict", Value::Bool(false)),
@@ -200,13 +200,15 @@ pub fn cmd_set(project_dir: Option<&str>, key: Option<&str>, value: Option<&str>
                 return;
             }
         };
-        if let Some(prefs) = config
-            .as_object_mut()
-            .and_then(|o| o.get_mut("preferences"))
-            .and_then(|v| v.as_object_mut())
-        {
-            for (k, v) in preset {
-                prefs.insert(k.to_string(), v);
+        if let Some(obj) = config.as_object_mut() {
+            obj.insert("profile".to_string(), Value::String(profile_name.to_string()));
+            if let Some(prefs) = obj
+                .get_mut("preferences")
+                .and_then(|v| v.as_object_mut())
+            {
+                for (k, v) in preset {
+                    prefs.insert(k.to_string(), v);
+                }
             }
         }
         let config_file = config_path(project_dir);
@@ -426,10 +428,11 @@ mod tests {
 
         assert_eq!(prefs["simplify_pass"], Value::Bool(false), "simplify_pass");
         assert_eq!(prefs["quality_gate"], Value::Bool(false), "quality_gate");
-        assert_eq!(prefs["test_runs"].as_i64(), Some(1), "test_runs");
+        assert_eq!(prefs["test_runs"].as_i64(), Some(0), "test_runs");
         assert_eq!(prefs["research_mode"].as_str(), Some("inline"), "research_mode");
         assert_eq!(prefs["context_mode"].as_str(), Some("selective"), "context_mode");
         assert_eq!(prefs["thoth_strict"], Value::Bool(false), "thoth_strict");
+        assert_eq!(config["profile"].as_str(), Some("minimal"), "profile key set at root");
     }
 
     #[test]

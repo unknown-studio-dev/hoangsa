@@ -6,47 +6,9 @@ You are the design lead. Mission: take user from vague idea → DESIGN-SPEC + TE
 
 > **MUST complete ALL steps in order. DO NOT skip any step. DO NOT stop before Step 8.**
 >
-> 0. Setup (lang + Thoth) → 1. Init session → 2. Gather input → 3. Create context → 4. Research → 5. Design spec → 6. Test spec → 7. Validate → 8. Complete (save + commit)
+> 1. Init session → 2. Gather input → 3. Create context → 4. Research → 5. Design spec → 6. Test spec → 7. Validate → 8. Complete (save + commit)
 
 ---
-
-## Step 0a: Language enforcement
-
-```bash
-# Resolve HOANGSA install path (local preferred over global)
-if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
-  HOANGSA_ROOT="./.claude/hoangsa"
-else
-  HOANGSA_ROOT="$HOME/.claude/hoangsa"
-fi
-
-LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
-```
-
-All user-facing text — questions, options, explanations, reports, status updates — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow. Do not switch languages mid-conversation even if the workflow runs for many steps. Template examples in this workflow are illustrative — adapt them to match the user's `lang` preference.
-
----
-
-## Step 0b: Model selection
-
-```bash
-DESIGNER_MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model designer)
-```
-
-Use the `designer` model for spec writing and design discussions. This respects both the project's `profile` setting and any per-role `model_overrides` in config.json.
-
----
-
-## Step 0c: Thoth install check
-
-```bash
-command -v thoth &>/dev/null && echo "THOTH_AVAILABLE" || echo "THOTH_NOT_INSTALLED"
-```
-
-Store result as `THOTH_STATUS`.
-
-- If `THOTH_AVAILABLE` → continue. Use Thoth tools for codebase exploration during design.
-- If `THOTH_NOT_INSTALLED` → set `THOTH_STATUS` = `THOTH_UNAVAILABLE`, continue. Will use Grep/Glob instead.
 
 ---
 
@@ -78,6 +40,10 @@ Initialize state for this session:
 ```bash
 "$HOANGSA_ROOT/bin/hoangsa-cli" state init "$SESSION_DIR"
 # → creates state.json in SESSION_DIR with status: "pending"
+```
+
+```
+thoth_workflow_start({name: "hoangsa/menu", session_id: "$SESSION_ID"})
 ```
 
 ### 1c. Git context check
@@ -395,6 +361,12 @@ Still ask one question at a time. Adapt questions to the task type — different
 
 Be smart about depth: a quick config change doesn't need 5 deep-dive questions. A complex new feature does. Match the number of questions to the complexity of the task — 1-2 for simple tasks, 3-5 for complex ones.
 
+If the user's choices reveal strong design preferences (e.g., "always use interfaces", "prefer functional over OOP", "no magic strings"):
+
+```
+thoth_remember_preference({text: "<preference>"})
+```
+
 ### 3e. Write CONTEXT.md
 
 Save to `$SESSION_DIR/CONTEXT.md`:
@@ -641,6 +613,18 @@ status: "draft"
 
 **After drafting:** Show the full document to user.
 
+### Architecture validation via knowledge graph
+
+Before finalizing the DESIGN-SPEC, query the knowledge graph for existing architecture:
+
+```
+thoth_kg_query({entity: "<primary module being designed>", direction: "both"})
+```
+
+Check for conflicts between the new design and existing architectural decisions:
+- If KG shows module A depends on module B, but the new design removes or changes B → flag as risk
+- If KG shows a design pattern was chosen for a reason → surface that reason to the user
+
 Then check `review_style` preference:
 
 ```bash
@@ -684,6 +668,14 @@ If `review_style` is `null` → after the first review round, save based on beha
 
 ```bash
 "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . review_style "whole_document"
+```
+
+### Persist design decisions to knowledge graph
+
+For each interface, dependency, or architectural choice in the DESIGN-SPEC:
+
+```
+thoth_kg_add({subject: "<module>", predicate: "implements|exposes|depends_on", object: "<interface/dependency>", confidence: 0.9})
 ```
 
 ---
@@ -881,6 +873,10 @@ Update state to reflect design is complete:
 
 ```bash
 "$HOANGSA_ROOT/bin/hoangsa-cli" state update "$SESSION_ID" '{"status":"design"}'
+```
+
+```
+thoth_workflow_complete({name: "hoangsa/menu"})
 ```
 
 ```bash

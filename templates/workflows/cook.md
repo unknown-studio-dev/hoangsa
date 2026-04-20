@@ -6,39 +6,9 @@ You are the orchestrator. Mission: execute the plan wave-by-wave, verify results
 
 > **MUST complete ALL steps in order. DO NOT skip any step. DO NOT stop before Step 6.**
 >
-> 0. Setup (lang + Thoth) → 1. Load & validate plan → 2. Confirm with user → 3. Execute waves → 4. Escalation + quality gate → 5. Verification (3-tier) → 6. Final report + chain
+> 1. Load & validate plan → 2. Confirm with user → 3. Execute waves → 4. Escalation + quality gate → 5. Verification (3-tier) → 6. Final report + chain
 
 ---
-
-## Step 0a: Language enforcement
-
-```bash
-# Resolve HOANGSA install path (local preferred over global)
-if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
-  HOANGSA_ROOT="./.claude/hoangsa"
-else
-  HOANGSA_ROOT="$HOME/.claude/hoangsa"
-fi
-
-LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
-```
-
-All user-facing text — status updates, questions, reports, error messages, escalation prompts, progress displays — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow. Do not switch languages mid-conversation. Template examples in this workflow are illustrative — adapt them to match the user's `lang` preference.
-
----
-
-## Step 0b: Thoth install check
-
-Check if Thoth is installed:
-
-```bash
-command -v thoth &>/dev/null && echo "THOTH_AVAILABLE" || echo "THOTH_NOT_INSTALLED"
-```
-
-Store result as `THOTH_STATUS`.
-
-- If `THOTH_AVAILABLE` → continue. Pass `THOTH_STATUS` to all worker prompts so they can use Thoth tools.
-- If `THOTH_NOT_INSTALLED` → set `THOTH_STATUS` = `THOTH_UNAVAILABLE`, continue. Workers will use Grep/Glob instead.
 
 ---
 
@@ -51,6 +21,14 @@ SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)
 ```
 
 If `found: false` → ask user to run `/hoangsa:prepare` first, stop.
+
+### 1a-bis. Register workflow with Thoth
+
+```
+thoth_workflow_start({name: "hoangsa/cook", session_id: "$SESSION_ID"})
+```
+
+This enables multi-session tracking — if cook is abandoned mid-wave, `thoth_workflow_list` shows it as active.
 
 ### 1b. Validate plan.json
 
@@ -125,6 +103,14 @@ Only continue when user confirms.
 
 ## Step 3: Execute wave-by-wave
 
+### Session memory warm-up
+
+```
+thoth_wakeup()
+```
+
+Load compact memory index at cook start to ensure recall is fast during execution.
+
 ### Model selection
 
 ```bash
@@ -174,6 +160,12 @@ If the file `$SESSION_DIR/task-<task.id>.context.json` exists (created by `/hoan
 
 ### Worker prompt template:
 
+**Agent type selection:** Use typed agent definitions based on task type:
+- Implementation tasks → `$HOANGSA_ROOT/agents/hoangsa-worker-impl.md` (sonnet, 25 turns, full tools + thoth)
+- Research/analysis tasks → `$HOANGSA_ROOT/agents/hoangsa-worker-readonly.md` (sonnet, 15 turns, read-only)
+- Simplify pass → `$HOANGSA_ROOT/agents/hoangsa-simplify.md` (haiku, 10 turns, edit-only)
+- Quality review → `$HOANGSA_ROOT/agents/hoangsa-reviewer.md` (haiku, 15 turns, read-only + bash)
+
 For each task, spawn a subagent with this context. **State filtering:** Only pass the task envelope below — do NOT include session history, other tasks' results, plan metadata, or orchestrator conversation. Each worker gets a clean, focused context.
 
 **Excluded state** (never pass to workers):
@@ -183,8 +175,16 @@ For each task, spawn a subagent with this context. **State filtering:** Only pas
 - Session-level metadata (state.json, DESIGN-SPEC frontmatter)
 - Skill content (workers get the registry, load on demand — see below)
 
+**Prompt ordering (cache-optimized):** Static content FIRST, dynamic content LAST. This maximizes Anthropic prompt cache hit rates — the identical static prefix across all workers in a wave produces cache hits.
+
 ```
 You are a HOANGSA worker. Execute this task precisely.
+
+## Worker Rules
+
+<COMPOSED_RULES — static, identical for all workers in this wave>
+
+---
 
 ## Task Envelope
 
@@ -215,7 +215,16 @@ Do NOT read skills unless your task specifically requires them.
 
 1. Read all context_pointers files first
 2. Before modifying any function/class/method, run thoth_impact({target: "symbolName", direction: "upstream"}) to check blast radius (if Thoth is available)
+2b. Before starting, search for past work on this area:
+    thoth_archive_search({query: "<task.name> <primary module>"})
+    Use findings to avoid repeating past mistakes or duplicating solutions.
+2c. Query knowledge graph for architectural context:
+    thoth_kg_query({entity: "<primary module>", direction: "both"})
+    Understand architectural relationships before making changes.
 3. If impact returns HIGH or CRITICAL risk — report it, do not proceed without orchestrator acknowledgment
+3b. If Thoth gate blocks your edit (strict mode), request an override:
+    thoth_override_request({rule_id: "<blocked rule>", reason: "Task <task.id> requires this edit: <explanation>", tool_call_hash: "<hash>"})
+    Do NOT use thoth_defer_reflect as a workaround — always use the override system.
 4. Implement the task
 5. Run the acceptance command to verify: <task.acceptance>
 6. If acceptance fails, fix and retry (max 3 attempts)
@@ -231,6 +240,20 @@ After task passes acceptance — track lesson outcomes:
   2. For each relevant lesson:
      - thoth_lesson_outcome({signal: "success", triggers: ["<lesson trigger>"], note: "task <task.id> passed"})
   3. Skip if no lessons match — this is lightweight, not exhaustive
+
+After task passes — update knowledge graph:
+  If you modified public interfaces or added new module relationships:
+    thoth_kg_add({subject: "<module>", predicate: "uses|depends_on|extends", object: "<other module>", confidence: 0.9})
+  If you changed an existing relationship:
+    thoth_kg_invalidate({subject: "<module>", predicate: "<old relationship>", object: "<old target>"})
+    thoth_kg_add({subject: "<module>", predicate: "<new relationship>", object: "<new target>", confidence: 0.9})
+
+After task passes — save key findings for future reference:
+  thoth_turn_save({role: "assistant", text: "Task <task.id>: <one-line summary of what was done and key finding>"})
+
+After task passes — verify change scope:
+  thoth_detect_changes({diff: "<git diff of this task's commit>"})
+  If unexpected symbols are affected, report to orchestrator.
 
 After task fails all retries — track lesson failures:
   1. Find lessons whose triggers should have prevented this kind of failure
@@ -308,7 +331,7 @@ Load worker rules using a **middleware composition chain** (inspired by Deep Age
    - Strip frontmatter from each addon before concatenation
    - Append to worker prompt
 
-Include the composed rules in every worker prompt, appended after the task envelope above.
+Include the composed rules in every worker prompt at the `<COMPOSED_RULES>` position shown in the template above (BEFORE the task envelope — static-first for cache optimization).
 
 ### Post-task: Simplify pass
 
@@ -347,6 +370,14 @@ Commit fixes with message: "refactor(<scope>): simplify <task.id>" — `<scope>`
 **Important:** The simplify pass runs sequentially after each worker (not in parallel with other workers). This ensures the simplified code is what the next wave sees.
 
 **Simplify failure recovery:** If simplify fails (crash, timeout, or reports blocker): log the error, skip simplify for this task, and continue to the next task. Do NOT block the wave.
+
+### Post-wave: Memory and scope verification
+
+After all tasks in a wave complete (and simplify passes finish):
+
+1. **Check pending memory:** `thoth_memory_pending()` — if pending entries are piling up (>5), prompt promote/reject before starting next wave.
+
+2. **Verify wave scope:** Run `thoth_detect_changes({diff: "<git diff of wave commits>"})` to confirm only expected symbols were affected across the wave.
 
 ### Track progress:
 
@@ -407,6 +438,22 @@ States: `⬜ pending` · `⏳ running` · `✅ completed` · `✅ completed ✨`
   │    (orchestrator asks user)          │
   └──────────────────────────────────────┘
 ```
+
+### Override request handling (orchestrator-side):
+
+When a worker files a `thoth_override_request` (because the Thoth gate blocked an edit in strict mode), the orchestrator surfaces it to the user:
+
+```
+🔒 Override requested: <rule_id>
+   Worker: <task.id>
+   Reason: <worker's reason>
+
+   Approve or reject?
+```
+
+Use AskUserQuestion to get the user's decision, then:
+- If approved → `thoth_override_approve({request_id: "<id>"})` — worker can retry the blocked edit
+- If rejected → `thoth_override_reject({request_id: "<id>", reason: "<user's reason>"})` — worker must find an alternative approach
 
 ### When escalating to user:
 
@@ -700,6 +747,14 @@ Semantic check:
 ```
 
 ---
+
+### Finalize workflow tracking
+
+```
+thoth_workflow_complete({name: "hoangsa/cook"})
+```
+
+Mark the cook workflow as complete in Thoth's multi-session tracker.
 
 ## Self-verification checklist
 

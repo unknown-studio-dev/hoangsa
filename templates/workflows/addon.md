@@ -4,23 +4,7 @@ Manage worker-rules addons — list, add, remove with interactive UI.
 
 > **MUST complete ALL steps in order. DO NOT skip any step.**
 >
-> 0. Setup (lang) → 1. List available → 2. User selection → 3. Apply changes → 4. Confirm
-
----
-
-## Step 0: Language enforcement
-
-```bash
-if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
-  HOANGSA_ROOT="./.claude/hoangsa"
-else
-  HOANGSA_ROOT="$HOME/.claude/hoangsa"
-fi
-
-LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
-```
-
-All user-facing text **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English).
+> 1. List available → 2. User selection → 3. Apply changes → 4. Confirm
 
 ---
 

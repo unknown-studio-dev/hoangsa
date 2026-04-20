@@ -4,23 +4,7 @@ Quản lý rules của HOANGSA — thêm, xóa, hoặc xem danh sách rules qua 
 
 > **MUST complete ALL steps in order. DO NOT skip any step.**
 >
-> 0. Setup (lang) → 1. Chọn action → 2. Wizard (nếu add) → 3. Apply → 4. Confirm
-
----
-
-## Step 0: Language enforcement
-
-```bash
-if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
-  HOANGSA_ROOT="./.claude/hoangsa"
-else
-  HOANGSA_ROOT="$HOME/.claude/hoangsa"
-fi
-
-LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
-```
-
-All user-facing text **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English).
+> 1. Chọn action → 2. Wizard (nếu add) → 3. Apply → 4. Confirm
 
 ---
 

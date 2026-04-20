@@ -9,23 +9,6 @@ You are the sync agent. Mission: bidirectional sync between HOANGSA sessions and
 
 ---
 
-## Step 0: Language enforcement
-
-```bash
-# Resolve HOANGSA install path (local preferred over global)
-if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
-  HOANGSA_ROOT="./.claude/hoangsa"
-else
-  HOANGSA_ROOT="$HOME/.claude/hoangsa"
-fi
-
-LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
-```
-
-All user-facing text **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow.
-
----
-
 ## Step 1: Read config
 
 Read `.hoangsa/config.json` and check the `task_manager` block:

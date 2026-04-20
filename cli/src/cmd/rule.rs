@@ -17,10 +17,16 @@ pub struct Rule {
     pub id: String,
     pub name: String,
     pub enabled: bool,
+    #[serde(default = "default_enforcement")]
+    pub enforcement: Enforcement,
     pub matcher: String,
     pub conditions: Vec<Condition>,
     pub action: RuleAction,
     pub message: String,
+}
+
+fn default_enforcement() -> Enforcement {
+    Enforcement::Prompt
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +51,14 @@ pub enum ConditionOp {
 pub enum RuleAction {
     Block,
     Warn,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Enforcement {
+    Hook,
+    Preflight,
+    Prompt,
 }
 
 pub fn evaluate_condition(condition: &Condition, field_value: &str) -> bool {
@@ -86,6 +100,10 @@ fn read_rules_config(project_dir: &str) -> Result<Option<RulesConfig>, Box<dyn s
     let content = fs::read_to_string(&path)?;
     let config: RulesConfig = serde_json::from_str(&content)?;
     Ok(Some(config))
+}
+
+pub fn read_rules_config_pub(project_dir: &str) -> Result<Option<RulesConfig>, Box<dyn std::error::Error>> {
+    read_rules_config(project_dir)
 }
 
 pub fn cmd_rule_gate() -> Result<(), Box<dyn std::error::Error>> {
@@ -388,6 +406,7 @@ mod tests {
             id: "test-rule".to_string(),
             name: "Test Rule".to_string(),
             enabled: true,
+            enforcement: Enforcement::Prompt,
             matcher: matcher.to_string(),
             conditions,
             action: RuleAction::Block,
@@ -522,6 +541,71 @@ mod tests {
         assert!(evaluate_rule_conditions(&rule, &tool_input));
     }
 
+    // ── enforcement field tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_enforcement_default_to_prompt() {
+        let json_str = r#"{
+            "id": "test", "name": "Test", "enabled": true,
+            "matcher": "Bash", "conditions": [], "action": "block", "message": "msg"
+        }"#;
+        let rule: Rule = serde_json::from_str(json_str).expect("should parse without enforcement field");
+        assert_eq!(rule.enforcement, Enforcement::Prompt);
+    }
+
+    #[test]
+    fn test_enforcement_hook_roundtrip() {
+        let json_str = r#"{
+            "id": "test", "name": "Test", "enabled": true, "enforcement": "hook",
+            "matcher": "Bash", "conditions": [], "action": "block", "message": "msg"
+        }"#;
+        let rule: Rule = serde_json::from_str(json_str).expect("should parse with enforcement=hook");
+        assert_eq!(rule.enforcement, Enforcement::Hook);
+        let serialized = serde_json::to_string(&rule).expect("should serialize");
+        assert!(serialized.contains(r#""enforcement":"hook""#));
+    }
+
+    #[test]
+    fn test_enforcement_preflight_roundtrip() {
+        let json_str = r#"{
+            "id": "test", "name": "Test", "enabled": true, "enforcement": "preflight",
+            "matcher": "Bash", "conditions": [], "action": "block", "message": "msg"
+        }"#;
+        let rule: Rule = serde_json::from_str(json_str).expect("should parse");
+        assert_eq!(rule.enforcement, Enforcement::Preflight);
+    }
+
+    #[test]
+    fn test_build_rules_block_excludes_hook_enforcement() {
+        let prompt_rule = Rule {
+            id: "prompt-rule".to_string(),
+            name: "Prompt Rule".to_string(),
+            enabled: true,
+            enforcement: Enforcement::Prompt,
+            matcher: "Bash".to_string(),
+            conditions: vec![],
+            action: RuleAction::Block,
+            message: "visible".to_string(),
+        };
+        let hook_rule = Rule {
+            id: "hook-rule".to_string(),
+            name: "Hook Rule".to_string(),
+            enabled: true,
+            enforcement: Enforcement::Hook,
+            matcher: "Bash".to_string(),
+            conditions: vec![],
+            action: RuleAction::Block,
+            message: "invisible".to_string(),
+        };
+        let prompt_only: Vec<&Rule> = vec![&prompt_rule, &hook_rule]
+            .into_iter()
+            .filter(|r| r.enforcement == Enforcement::Prompt)
+            .collect();
+        let block = build_rules_block(&prompt_only);
+        assert!(block.contains("Prompt Rule"));
+        assert!(!block.contains("Hook Rule"));
+    }
+
     #[test]
     fn test_rule_matcher_no_match() {
         // Tool name "Bash" should NOT match matcher "Edit|Write"
@@ -555,8 +639,12 @@ pub fn cmd_rule_sync(project_dir: &str) -> Result<(), Box<dyn std::error::Error>
         Some(c) => c,
     };
 
-    // 2. Collect enabled rules
-    let enabled_rules: Vec<&Rule> = config.rules.iter().filter(|r| r.enabled).collect();
+    // 2. Collect enabled rules with prompt enforcement (hook/preflight rules are invisible to LLM)
+    let enabled_rules: Vec<&Rule> = config
+        .rules
+        .iter()
+        .filter(|r| r.enabled && r.enforcement == Enforcement::Prompt)
+        .collect();
     let synced = enabled_rules.len();
 
     // 3. Build markdown block

@@ -120,11 +120,8 @@ pub fn cmd_init(session_dir: Option<&str>, cwd: &str) {
     let state = json!({
         "session_id": session_id,
         "status": "design",
-        "current_command": null,
         "task_type": task_type,
-        "stack": "",
         "language": prefs.language,
-        "tasks": [],
         "preferences": {
             "auto_taste": prefs.auto_taste,
             "auto_plate": prefs.auto_plate,

@@ -6,23 +6,6 @@ You are the ship orchestrator. Mission: review code changes (code + security) in
 
 ---
 
-## Step 0: Language enforcement
-
-```bash
-# Resolve HOANGSA install path (local preferred over global)
-if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
-  HOANGSA_ROOT="./.claude/hoangsa"
-else
-  HOANGSA_ROOT="$HOME/.claude/hoangsa"
-fi
-
-LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
-```
-
-All user-facing text — confirmations, questions, summaries — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow.
-
----
-
 ## Step 0b: Model selection + config metadata
 
 ```bash
@@ -63,6 +46,34 @@ DIFF_STAT=$(git diff --stat $BASE_BRANCH...HEAD 2>/dev/null)
    Changed files: <from DIFF_STAT>
 ```
 
+Register the ship workflow with Thoth:
+```
+thoth_workflow_start({name: "hoangsa/ship", session_id: "$SESSION_ID"})
+```
+
+### Step 1b: Blast-radius analysis
+
+Run change detection to understand the impact scope of the branch:
+
+```
+thoth_detect_changes({diff: "$(git diff $BASE_BRANCH...HEAD)"})
+```
+
+Present blast-radius summary alongside the git state:
+
+```
+Impact analysis:
+  Symbols changed: <N> (d=0)
+  Direct dependents: <N> (d=1 — WILL BREAK if API changed)
+  Indirect dependents: <N> (d=2 — should test)
+
+  High-risk symbols:
+    - <symbol> — <N> direct callers
+    - <symbol> — <N> direct callers
+```
+
+If any d=1 dependents exist for changed symbols, flag them in the review as "high-risk changes."
+
 ---
 
 ## Step 2: Parallel review
@@ -73,6 +84,8 @@ Launch 2 agents in parallel using the Agent tool:
 Spawn a subagent that:
 - Gets the diff: `git diff $BASE_BRANCH...HEAD`
 - Reviews for: bugs, logic errors, code quality, naming, dead code
+- Uses `thoth_detect_changes` blast-radius output to prioritize review on high-impact symbols
+- Runs `thoth_symbol_context` on any symbol flagged as high-risk to understand its full dependency graph
 - Uses confidence scoring (0-100 scale):
   - 0: False positive
   - 25: Might be real
@@ -86,6 +99,7 @@ Spawn a subagent that:
 Spawn a subagent that:
 - Gets the diff: `git diff $BASE_BRANCH...HEAD`
 - Reviews for: injection (SQL, command, XSS), authentication/authorization issues, secrets/credentials exposure, unsafe deserialization, path traversal, SSRF, insecure crypto, hardcoded secrets
+- Uses `thoth_impact` on security-sensitive functions (auth, crypto, input parsing) to verify no callers bypass validation
 - Same confidence scoring as Agent A
 - Returns structured list: each issue has severity, file, line, description, confidence
 
@@ -237,6 +251,10 @@ STATE=$("$HOANGSA_ROOT/bin/hoangsa-cli" state get "$SESSION_DIR")
   - `null` (first time) → ask user, save preference
 
 After chaining (or skipping), show final summary:
+
+```
+thoth_workflow_complete({name: "hoangsa/ship"})
+```
 
 ```
 Ship complete!

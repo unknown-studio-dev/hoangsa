@@ -6,23 +6,6 @@ You are the status reporter. Mission: show the current session's task progress o
 
 ---
 
-## Step 0: Language enforcement
-
-```bash
-# Resolve HOANGSA install path (local preferred over global)
-if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
-  HOANGSA_ROOT="./.claude/hoangsa"
-else
-  HOANGSA_ROOT="$HOME/.claude/hoangsa"
-fi
-
-LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
-```
-
-All user-facing text — status updates, reports, progress displays — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow.
-
----
-
 ## Step 1: Locate active session
 
 ```bash
@@ -164,6 +147,67 @@ Thoth Memory:
 If `PENDING_F + PENDING_L > 0`, suggest:
 ```
   Tip: <N> pending entries — run thoth_memory_promote or thoth_memory_reject to process
+```
+
+### Step 4c: Knowledge graph status
+
+```
+thoth_kg_stats()
+```
+
+Display:
+
+```
+Knowledge Graph:
+  Total triples: <N>
+  Current (valid): <N>
+  Expired (historical): <N>
+```
+
+### Step 4d: Active workflows
+
+```
+thoth_workflow_list()
+```
+
+Display any active (non-completed) workflows:
+
+```
+Active Workflows:
+  - hoangsa/cook (session: <id>) — started <date>
+  - hoangsa/fix (session: <id>) — started <date>
+```
+
+If no active workflows → show "No active workflows."
+
+### Step 4e: Conversation archive status
+
+```
+thoth_archive_status()
+```
+
+Display:
+
+```
+Conversation Archive:
+  Total sessions: <N>
+  Total turns: <N>
+  Curated: <N>
+```
+
+### Step 4f: Installed skills
+
+```
+thoth_skills_list()
+```
+
+Display:
+
+```
+Thoth Skills:
+  - <skill-1>
+  - <skill-2>
+  ...
 ```
 
 ---

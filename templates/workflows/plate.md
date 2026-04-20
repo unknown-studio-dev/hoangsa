@@ -6,23 +6,6 @@ You are the committer. Mission: stage changed files and commit with a convention
 
 ---
 
-## Step 0: Language enforcement
-
-```bash
-# Resolve HOANGSA install path (local preferred over global)
-if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
-  HOANGSA_ROOT="./.claude/hoangsa"
-else
-  HOANGSA_ROOT="$HOME/.claude/hoangsa"
-fi
-
-LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
-```
-
-All user-facing text — confirmations, questions, summaries — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow.
-
----
-
 ## Step 0b: Model selection + config metadata
 
 ```bash
@@ -45,6 +28,27 @@ Show the user a summary of what will be staged.
 
 ---
 
+## Step 1b: Change scope validation
+
+Before staging, validate that changes match expected scope:
+
+```
+thoth_detect_changes({diff: "$(git diff)"})
+```
+
+Check for:
+- Unexpected symbols affected (files you didn't intend to change)
+- High blast-radius changes that need extra review
+
+If unexpected symbols are found, warn the user before staging:
+```
+⚠️ Unexpected symbols affected:
+  - <symbol> in <file> — not in task scope
+  Proceed with staging? (yes/skip these files)
+```
+
+---
+
 ## Step 2: Stage files
 
 Run `git add` on the relevant changed files.
@@ -57,8 +61,9 @@ Exclude files that are clearly out of scope (e.g. `.env`, secrets, large binarie
 If `.thoth/MEMORY.pending.md` or `.thoth/LESSONS.pending.md` has entries, handle them before committing:
 
 ```bash
-PENDING_F=$(grep -c '^### ' .thoth/MEMORY.pending.md 2>/dev/null || echo 0)
-PENDING_L=$(grep -c '^### ' .thoth/LESSONS.pending.md 2>/dev/null || echo 0)
+# Use Thoth MCP for accurate pending count
+thoth_memory_pending()
+# Returns structured list of pending facts and lessons
 ```
 
 If `PENDING_F + PENDING_L > 0`:
@@ -77,6 +82,16 @@ If `PENDING_F + PENDING_L > 0`:
 3. If `memory_mode` in `.thoth/config.toml` is `"auto"` → skip this step (entries were already committed directly)
 
 This ensures staged memory from workers gets promoted before the commit, keeping MEMORY.md and LESSONS.md in sync with the codebase state.
+
+### Step 2c: Memory housekeeping
+
+Run TTL-based eviction before commit to keep memory lean:
+
+```
+thoth_memory_forget()
+```
+
+This removes expired episodes (>30 days by default) and enforces byte caps on MEMORY.md/LESSONS.md. Keeps the commit clean by ensuring memory state is current.
 
 ---
 
@@ -110,6 +125,11 @@ Ask the user to confirm or provide an alternative message.
 ## Step 5: Commit
 
 Run `git commit -m "<confirmed message>"`.
+
+Register plate completion:
+```
+thoth_workflow_complete({name: "hoangsa/plate"})
+```
 
 ---
 

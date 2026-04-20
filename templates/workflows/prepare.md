@@ -10,37 +10,6 @@ You are the decomposer. Mission: turn spec into an executable JSON plan with **a
 
 ---
 
-## Step 0: Language enforcement
-
-```bash
-# Resolve HOANGSA install path (local preferred over global)
-if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
-  HOANGSA_ROOT="./.claude/hoangsa"
-else
-  HOANGSA_ROOT="$HOME/.claude/hoangsa"
-fi
-
-LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
-```
-
-All user-facing text — status updates, questions, reports, error messages, progress displays — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow. Do not switch languages mid-conversation. Template examples in this workflow are illustrative — adapt them to match the user's `lang` preference.
-
----
-
-## Step 0b: Model selection + config metadata
-
-```bash
-PLANNER_MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model planner)
-INTERACTION=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . interaction_level)
-```
-
-Use the `planner` model for plan generation and task decomposition. This respects both the project's `profile` setting and any per-role `model_overrides` in config.json.
-
-Adapt verbosity based on `interaction_level`:
-- `"detailed"` → show full DAG explanation, budget breakdown per task, traceability matrix
-- `"concise"` → show wave summary and total budget only
-- `null` → default to `"detailed"`
-
 ---
 
 ## Step 1: Load session
@@ -65,6 +34,10 @@ Validate immediately:
 
 If errors → show errors, ask user to fix spec first.
 
+```
+thoth_workflow_start({name: "hoangsa/prepare", session_id: "$SESSION_ID"})
+```
+
 ---
 
 ## Step 1b: Load external task reference
@@ -72,17 +45,6 @@ If errors → show errors, ask user to fix spec first.
 If `$SESSION_DIR/EXTERNAL-TASK.md` exists, read it and include external task reference (provider, task_id, acceptance criteria) in plan metadata. This ensures traceability from external task to plan.
 
 ---
-
-## Step 1c: Thoth install check
-
-```bash
-command -v thoth &>/dev/null && echo "THOTH_AVAILABLE" || echo "THOTH_NOT_INSTALLED"
-```
-
-Store result as `THOTH_STATUS`.
-
-- If `THOTH_AVAILABLE` → continue. Use Thoth in Step 3 for dependency analysis.
-- If `THOTH_NOT_INSTALLED` → set `THOTH_STATUS` = `THOTH_UNAVAILABLE`, continue. Will use Grep/Glob instead.
 
 ---
 
@@ -111,6 +73,19 @@ From filesystem:
 ---
 
 ## Step 3: Decompose into tasks
+
+### Dependency-aware task ordering via knowledge graph
+
+Before generating the task DAG, query the knowledge graph for module dependencies:
+
+```
+thoth_kg_query({entity: "<each module referenced in DESIGN-SPEC>", direction: "both"})
+```
+
+Use KG relationships to:
+1. Order tasks so upstream modules are implemented before downstream consumers
+2. Identify cross-module dependencies that require careful ordering
+3. Flag modules with high fan-in (many dependents) as higher risk — consider earlier implementation
 
 ### 3a. Map requirements → tasks
 
@@ -337,7 +312,13 @@ When user approves:
 ```bash
 # Final validation
 "$HOANGSA_ROOT/bin/hoangsa-cli" validate plan "$SESSION_DIR/plan.json"
+```
 
+```
+thoth_workflow_complete({name: "hoangsa/prepare"})
+```
+
+```bash
 # Commit
 "$HOANGSA_ROOT/bin/hoangsa-cli" commit \
   "prepare(<scope>): create execution plan for <component>" \

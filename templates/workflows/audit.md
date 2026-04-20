@@ -6,34 +6,6 @@ Perform a comprehensive codebase audit across 8 dimensions, producing a detailed
 
 ---
 
-## Step 0a: Language enforcement
-
-```bash
-# Resolve HOANGSA install path (local preferred over global)
-if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
-  HOANGSA_ROOT="./.claude/hoangsa"
-else
-  HOANGSA_ROOT="$HOME/.claude/hoangsa"
-fi
-
-LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
-```
-
-All user-facing text — questions, reports, summaries, error messages — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow. Do not switch languages mid-conversation. Template examples in this workflow are illustrative — adapt them to match the user's `lang` preference.
-
----
-
-## Step 0b: Thoth install check
-
-```bash
-command -v thoth &>/dev/null && echo "THOTH_AVAILABLE" || echo "THOTH_NOT_INSTALLED"
-```
-
-Store result as `THOTH_STATUS`.
-
-- If `THOTH_AVAILABLE` → continue. Audit agents will use Thoth for dependency graph, dead code detection, and architectural analysis.
-- If `THOTH_NOT_INSTALLED` → set `THOTH_STATUS` = `THOTH_UNAVAILABLE`, continue. Audit will use Grep/Glob instead.
-
 ---
 
 ## Step 1: Session & output setup
@@ -248,6 +220,10 @@ Agents must:
 - Only scan files within `AUDIT_PATHS` (use these as base directories for Grep/Glob)
 - Skip all files matching `AUDIT_EXCLUDES` — do not read, grep, or report findings from excluded paths
 
+Use conversation archive to identify audit focus areas:
+  thoth_archive_topics() — find most-discussed areas (likely areas of churn)
+  Areas with high conversation volume may need more audit attention.
+
 Example agent invocation:
 ```
 Agent tool → subagent per dimension
@@ -279,6 +255,11 @@ Use the resolved model for all scanning agents.
 ### Dimension 1: Architecture & Structure
 
 Goal: Identify structural problems that make the codebase hard to understand, maintain, or extend.
+
+Use knowledge graph for dependency analysis:
+  thoth_kg_stats() — overview of architecture graph health
+  thoth_kg_timeline() — trace design evolution over time
+  thoth_kg_query({entity: "<key module>"}) — understand module relationships
 
 ```
 Scan for:
@@ -916,6 +897,23 @@ Top simplification opportunities:
 2. [file:line] — <what to simplify and how>
 ...
 ```
+
+---
+
+### Memory Health Agent (additional dimension)
+
+Analyze the quality and health of Thoth memory:
+
+1. `thoth_memory_show()` — read full MEMORY.md and LESSONS.md
+2. `thoth_memory_history({limit: 20})` — recent memory operations
+3. Check for:
+   - Stale facts that reference deleted files or renamed symbols
+   - Duplicate or near-duplicate entries
+   - Lessons with high failure rates (should be quarantined)
+   - Facts that contradict current code state
+4. For stale or contradictory entries, recommend removal:
+   `thoth_memory_remove({kind: "fact|lesson", text: "<substring of stale entry>"})`
+5. Report findings with specific entries to remove/update
 
 ---
 

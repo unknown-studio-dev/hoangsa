@@ -519,8 +519,8 @@ fn test_resolve_model(t: &mut TestRunner) {
 
     let out = t.run_json(&["resolve-model", "orchestrator"], &dir);
     t.check(
-        "orchestrator → haiku",
-        out["model"] == "haiku",
+        "orchestrator → opus",
+        out["model"] == "opus",
         &format!("got {out:?}"),
     );
 
@@ -571,7 +571,6 @@ fn test_state(t: &mut TestRunner) {
         let ok = out["success"] == true
             && s["session_id"] == "test-session"
             && s["status"] == "design"
-            && s["tasks"].as_array().is_some_and(|a| a.is_empty())
             && s["preferences"]["auto_taste"].is_null()
             && s["preferences"]["auto_plate"].is_null()
             && s["preferences"]["auto_serve"].is_null()
@@ -624,8 +623,7 @@ fn test_state(t: &mut TestRunner) {
     {
         let sd = dir.join(".hoangsa/sessions/test-session");
         let before = t.run_json(&["state", "get", sd.to_str().unwrap()], &dir);
-        let patch =
-            json!({"status":"planned","tasks":[{"id":"T-01","name":"test","status":"pending"}]});
+        let patch = json!({"status":"planned"});
         let out = t.run_json(
             &["state", "update", sd.to_str().unwrap(), &patch.to_string()],
             &dir,
@@ -633,9 +631,6 @@ fn test_state(t: &mut TestRunner) {
         let s = &out["state"];
         let ok = out["success"] == true
             && s["status"] == "planned"
-            && s["tasks"]
-                .as_array()
-                .is_some_and(|a| a.len() == 1 && a[0]["id"] == "T-01")
             && s["updated_at"].as_str().unwrap_or("")
                 >= before["updated_at"].as_str().unwrap_or("")
             && s["session_id"] == "test-session";

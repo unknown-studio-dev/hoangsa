@@ -133,7 +133,7 @@ Model Profiles:
 │ researcher  │ opus       │ sonnet     │ haiku      │
 │ designer    │ opus       │ opus       │ sonnet     │
 │ planner     │ opus       │ sonnet     │ haiku      │
-│ orchestrator│ opus       │ haiku      │ haiku      │
+│ orchestrator│ opus       │ opus       │ haiku      │
 │ worker      │ opus       │ sonnet     │ haiku      │
 │ reviewer    │ opus       │ sonnet     │ haiku      │
 │ tester      │ sonnet     │ haiku      │ haiku      │
@@ -1056,6 +1056,119 @@ Otherwise → save based on choice.
 
 ---
 
+## Step 6b: Workflow quality & optimization config
+
+Configure quality and optimization settings that control cook/fix/menu/prepare workflows.
+
+These 6 settings are the same keys controlled by `pref set . profile <name>` presets. Init lets the user pick a preset or customize individually.
+
+Use AskUserQuestion:
+  question: "Cấu hình quality & optimization cho workflow?"
+  header: "Quality"
+  options:
+    - label: "Recommended", description: "quality_gate=on, simplify=on, test_runs=1, research=inline, context=selective, thoth_strict=off"
+    - label: "Strict", description: "Tất cả on/full, test_runs=2 — chất lượng cao nhất, tốn token"
+    - label: "Minimal", description: "Tất cả off/inline/selective — nhanh, tiết kiệm token"
+    - label: "Tuỳ chỉnh", description: "Chọn on/off cho từng setting"
+  multiSelect: false
+
+If "Recommended":
+
+```bash
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . quality_gate true
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . simplify_pass true
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . test_runs 1
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . research_mode inline
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . context_mode selective
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . thoth_strict false
+```
+
+If "Strict":
+
+```bash
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . quality_gate true
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . simplify_pass true
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . test_runs 2
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . research_mode full
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . context_mode full
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . thoth_strict true
+```
+
+If "Minimal":
+
+```bash
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . quality_gate false
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . simplify_pass false
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . test_runs 1
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . research_mode inline
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . context_mode selective
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . thoth_strict false
+```
+
+If "Tuỳ chỉnh" → ask each setting individually.
+
+First batch (up to 4 questions per AskUserQuestion call):
+
+Use AskUserQuestion:
+  1. question: "Quality gate — chạy kiểm tra chất lượng sau mỗi task?"
+     header: "Gate"
+     options:
+       - label: "On", description: "Review code quality sau mỗi task trong cook/fix"
+       - label: "Off", description: "Bỏ qua quality gate — nhanh hơn"
+  2. question: "Simplify pass — tự động simplify code sau khi implement?"
+     header: "Simplify"
+     options:
+       - label: "On", description: "Chạy simplify pass để clean up code"
+       - label: "Off", description: "Bỏ qua simplify — giữ nguyên code"
+  3. question: "Số lần chạy test cho mỗi task?"
+     header: "Test runs"
+     options:
+       - label: "1", description: "Chạy 1 lần — đủ cho hầu hết cases"
+       - label: "2", description: "Chạy 2 lần — phát hiện flaky tests"
+       - label: "3", description: "Chạy 3 lần — strict, cho CI-grade confidence"
+  4. question: "Research mode — cách chạy research trong menu workflow?"
+     header: "Research"
+     options:
+       - label: "inline (recommended)", description: "Research ngay trong context — nhanh, ít token"
+       - label: "full", description: "Spawn subagent chạy /hoangsa:research đầy đủ — kỹ hơn, tốn token"
+
+Second batch:
+
+Use AskUserQuestion:
+  1. question: "Context mode — cách load context cho worker trong prepare?"
+     header: "Context"
+     options:
+       - label: "selective (recommended)", description: "Chỉ load context liên quan đến task — tiết kiệm token"
+       - label: "full", description: "Load toàn bộ context pack — đầy đủ nhất, tốn token"
+  2. question: "Thoth strict — bắt buộc impact analysis trước mỗi edit?"
+     header: "Thoth"
+     options:
+       - label: "Off (recommended)", description: "Thoth là khuyến khích, worker có thể skip để tiết kiệm token"
+       - label: "On", description: "Bắt buộc thoth_impact/thoth_recall trước mỗi edit — an toàn hơn, tốn token"
+
+Save each setting via `"$HOANGSA_ROOT/bin/hoangsa-cli" pref set .` accordingly.
+
+---
+
+## Step 6c: Research scope
+
+Configure what sources the `/hoangsa:research` workflow searches:
+
+Use AskUserQuestion:
+  question: "Research scope — nguồn nào khi chạy /hoangsa:research?"
+  header: "Scope"
+  options:
+    - label: "both (recommended)", description: "Codebase + web search — đầy đủ nhất"
+    - label: "codebase", description: "Chỉ phân tích codebase — không search web"
+    - label: "web", description: "Chỉ search web — không phân tích codebase"
+  multiSelect: false
+
+```bash
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . research_scope "<chosen value>"
+```
+
+---
+
 ## Step 7: Thoth index
 
 If project has code (Flow A or A-lite):
@@ -1067,6 +1180,15 @@ Indexing codebase with Thoth...
 ```bash
 timeout 120 thoth --json index . && rm -f .thoth/.outdated && echo "THOTH_OK" || echo "THOTH_FAIL"
 ```
+
+After successful indexing, warm up the memory and show skills:
+
+```
+thoth_wakeup()
+thoth_skills_list()
+```
+
+Display installed Thoth skills in the Step 8 report.
 
 If `thoth index` fails or times out (>120s), warn user: "Thoth indexing failed. You can retry later with `/hoangsa:index`." Continue with remaining steps — indexing is non-blocking.
 
@@ -1080,6 +1202,11 @@ Project mới — skip indexing. Chạy /hoangsa:index sau khi có code.
 
 ## Step 8: Report
 
+Retrieve memory and skills data for the report:
+```
+thoth_memory_show()
+```
+
 ```
 ✅ HOANGSA initialized!
 
@@ -1089,6 +1216,8 @@ Project mới — skip indexing. Chạy /hoangsa:index sau khi có code.
    Packages:     3
    Worker rules: .hoangsa/worker-rules.md (addons: react, typescript, python)
    Thoth:        ✅ indexed (148 symbols)
+   Memory: <N> facts, <N> lessons
+   Skills: <list of installed Thoth skills>
 
    Get started:
      /hoangsa:menu     — design a new feature

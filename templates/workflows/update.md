@@ -6,23 +6,6 @@ You are the update agent. Mission: check for HOANGSA updates, show changelog, ob
 
 ---
 
-## Step 0: Language enforcement
-
-```bash
-# Resolve HOANGSA install path (local preferred over global)
-if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
-  HOANGSA_ROOT="./.claude/hoangsa"
-else
-  HOANGSA_ROOT="$HOME/.claude/hoangsa"
-fi
-
-LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang 2>/dev/null || echo "en")
-```
-
-All user-facing text — version info, changelog display, confirmation prompts, completion messages — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English). This applies throughout the **ENTIRE** workflow.
-
----
-
 ## Step 1: Detect installed version
 
 Detect whether HOANGSA is installed locally or globally by checking both locations and validating install integrity:

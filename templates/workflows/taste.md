@@ -8,21 +8,6 @@ You are the test runner. Mission: run acceptance tests for all tasks in the plan
 
 ---
 
-## Step 0: Language enforcement
-
-```bash
-# Resolve HOANGSA install path (local preferred over global)
-if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
-  HOANGSA_ROOT="./.claude/hoangsa"
-else
-  HOANGSA_ROOT="$HOME/.claude/hoangsa"
-fi
-
-LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
-```
-
-All user-facing text — status updates, questions, reports, error messages, progress displays — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow. Do not switch languages mid-conversation. Template examples in this workflow are illustrative — adapt them to match the user's `lang` preference.
-
 ---
 
 ## Step 1: Load session and plan
@@ -58,6 +43,8 @@ Extract from config:
 
 ---
 
+---
+
 ## Step 2: Run acceptance tests per task
 
 For each task in plan.json:
@@ -76,6 +63,21 @@ Running acceptance tests...
     $ <acceptance command>
     ❌ failed — <error summary>
 ```
+
+---
+
+### Step 2a-bis: Change-aware test targeting
+
+Run change detection to understand what symbols the tests should cover:
+
+```
+thoth_detect_changes({diff: "$(git diff main...HEAD)"})
+```
+
+Use the detected symbols to:
+1. Verify that tests exercise the changed symbols (not just adjacent code)
+2. Flag any changed symbol with d=1 dependents that has NO test coverage
+3. Include in the Test Quality Gate report (Step 2b) as additional context
 
 ---
 

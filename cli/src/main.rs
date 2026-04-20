@@ -129,6 +129,27 @@ fn main() {
         ("hook", "rule-gate") => {
             let _ = cmd::rule::cmd_rule_gate();
         }
+        ("hook", "enforce") => {
+            cmd::hook::cmd_enforce(&cwd);
+        }
+        ("hook", "post-enforce") => {
+            cmd::hook::cmd_post_enforce(&cwd);
+        }
+        ("hook", "state-record") => {
+            cmd::hook::cmd_state_record(&cwd);
+        }
+        ("hook", "state-check") => {
+            cmd::hook::cmd_state_check(&cwd, &rest);
+        }
+        ("hook", "state-clear") => {
+            cmd::hook::cmd_state_clear(&cwd);
+        }
+        ("enforce", "override") => {
+            cmd::hook::cmd_enforce_override(&cwd, &rest);
+        }
+        ("enforce", "report") => {
+            cmd::hook::cmd_enforce_report(&cwd);
+        }
         ("rule", "list") => {
             let dir = rest.first().copied().unwrap_or(&cwd);
             let _ = cmd::rule::cmd_rule_list(dir);
@@ -165,6 +186,9 @@ fn main() {
         }
         ("stats", "summary") => {
             cmd::stats::cmd_summary(&rest);
+        }
+        ("stats", "cache") => {
+            cmd::cache::cmd_cache(&rest, &cwd);
         }
         ("budget", "estimate") => {
             cmd::budget::cmd_estimate(rest.first().copied(), rest.get(1).copied())
@@ -219,6 +243,7 @@ Usage:
   budget breakdown <plan_path>
   stats record '<json>'
   stats summary [--last N] [--complexity low|medium|high]
+  stats cache [-n top] [-s session_id]
 "
             );
             std::process::exit(1);

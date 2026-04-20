@@ -4,39 +4,9 @@ Analyze a bug, create a minimal fix plan, implement the fixes, and chain to tast
 
 > **MUST complete ALL steps in order. DO NOT skip any step. DO NOT stop before Step 6.**
 >
-> 0. Setup (lang + Thoth + task link) → 1. Analyze bug → 2. Cross-layer trace → 3. Confirm fix plan → 4. Implement fixes → 5. Chain to taste → 6. Report + sync
+> 1. Analyze bug → 2. Cross-layer trace → 3. Confirm fix plan → 4. Implement fixes → 5. Chain to taste → 6. Report + sync
 
 ---
-
-## Step 0a: Language enforcement
-
-```bash
-# Resolve HOANGSA install path (local preferred over global)
-if [ -x "./.claude/hoangsa/bin/hoangsa-cli" ]; then
-  HOANGSA_ROOT="./.claude/hoangsa"
-else
-  HOANGSA_ROOT="$HOME/.claude/hoangsa"
-fi
-
-LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang)
-```
-
-All user-facing text — status updates, questions, reports, error messages, progress displays — **MUST** use the language from `lang` preference (`vi` → Vietnamese, `en` → English, `null` → default English). This applies throughout the **ENTIRE** workflow. Do not switch languages mid-conversation. Template examples in this workflow are illustrative — adapt them to match the user's `lang` preference.
-
----
-
-## Step 0b: Thoth install check
-
-Check if Thoth is installed:
-
-```bash
-command -v thoth &>/dev/null && echo "THOTH_AVAILABLE" || echo "THOTH_NOT_INSTALLED"
-```
-
-Store result as `THOTH_STATUS`.
-
-- If `THOTH_AVAILABLE` → continue. Pass `THOTH_STATUS` to all worker prompts so they can use Thoth tools.
-- If `THOTH_NOT_INSTALLED` → set `THOTH_STATUS` = `THOTH_UNAVAILABLE`, continue. Workers will use Grep/Glob instead.
 
 ---
 
@@ -112,6 +82,22 @@ fi
 ---
 
 ## Step 2: Analyze the bug
+
+### 2a-pre. Search past conversations and architecture context
+
+Search for past fixes of similar bugs:
+```
+thoth_archive_search({query: "<error message or bug description>"})
+```
+
+If results found → check if same root cause was seen before, learn from prior fix approach.
+
+Query knowledge graph for architectural context around the buggy component:
+```
+thoth_kg_query({entity: "<buggy module/component>", direction: "both"})
+```
+
+Understand what depends on and is depended on by the broken component.
 
 ### 2a. Initial analysis
 
@@ -255,6 +241,12 @@ SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session init fix "$SLUG")
 # → { "id": "fix/null-pointer-user-service", ... }
 ```
 
+Register the fix workflow with Thoth for multi-session tracking:
+
+```
+thoth_workflow_start({name: "hoangsa/fix", session_id: "$SESSION_ID"})
+```
+
 ### Git context check
 
 Apply the shared git-context module from `git-context.md`:
@@ -339,6 +331,9 @@ Instructions:
 5. Run the acceptance command to verify: <task.acceptance>
 6. If acceptance fails, fix and retry (max 3 attempts)
 7. Commit with message: "fix(<scope>): <task.name>" — `<scope>` = primary module/package from task.files, NOT session_id/branch name
+8. After committing, verify change scope:
+   thoth_detect_changes({diff: "<git diff of your commit>"})
+   Confirm only expected symbols were affected — hotfix must be minimal.
 
 Acceptance command: <task.acceptance>
 ```
@@ -423,6 +418,25 @@ Also log the fix event for background review context:
 thoth_episode_append({event: "bug_fixed", data: {root_cause: "<summary>", files_changed: [<list>], layers_affected: [<list>]}})
 ```
 
+### Update invalidated facts
+
+If the bug revealed that an existing fact in MEMORY.md is wrong (e.g., "X uses Y" was incorrect):
+
+```
+thoth_memory_replace({kind: "fact", old_text: "<incorrect fact substring>", new_text: "<corrected fact>"})
+```
+
+This keeps the memory accurate — bugs often expose incorrect assumptions that were persisted as facts.
+
+### Update knowledge graph
+
+If the fix changed architectural relationships (e.g., module A no longer depends on module B, or a new dependency was introduced):
+
+```
+thoth_kg_invalidate({subject: "<module>", predicate: "<old relationship>", object: "<old target>"})
+thoth_kg_add({subject: "<module>", predicate: "<new relationship>", object: "<new target>", confidence: 0.9})
+```
+
 ### Track lesson outcomes
 
 After fix is verified, update confidence scores on lessons that guided the fix:
@@ -443,6 +457,14 @@ If this fix revealed a pattern seen in ≥5 existing lessons (e.g., same module 
 
 Skip this step if Thoth is unavailable or the fix was trivial (typo, missing import).
 
+### Save fix summary for future reference
+
+```
+thoth_turn_save({role: "assistant", text: "Fix: <bug summary> | Root cause: <root cause layer> — <description> | Files: <changed files>"})
+```
+
+This creates a searchable record of the fix that future `thoth_archive_search` can find.
+
 ---
 
 ## Step 5: Auto-chain to taste
@@ -458,6 +480,12 @@ Fix applied. Running tests via /hoangsa:taste...
 ```
 
 Then invoke the taste workflow.
+
+### Finalize workflow tracking
+
+```
+thoth_workflow_complete({name: "hoangsa/fix"})
+```
 
 ---
 
