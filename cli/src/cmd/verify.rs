@@ -41,6 +41,32 @@ impl TestRunner {
         parse_last_json(&stdout)
     }
 
+    fn run_cli_with_stdin(&self, args: &[&str], cwd: &Path, stdin_data: &str) -> (bool, String, String) {
+        use std::io::Write;
+        use std::process::Stdio;
+        let mut child = Command::new(&self.cli)
+            .args(args)
+            .current_dir(cwd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn hoangsa-cli");
+        if let Some(stdin) = child.stdin.take() {
+            let mut stdin = stdin;
+            stdin.write_all(stdin_data.as_bytes()).ok();
+        }
+        let output = child.wait_with_output().expect("failed to wait for hoangsa-cli");
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        (output.status.success(), stdout, stderr)
+    }
+
+    fn run_json_with_stdin(&self, args: &[&str], cwd: &Path, stdin_data: &str) -> Value {
+        let (_, stdout, _) = self.run_cli_with_stdin(args, cwd, stdin_data);
+        parse_last_json(&stdout)
+    }
+
     fn check(&mut self, name: &str, result: bool, msg: &str) {
         if result {
             self.passed += 1;
@@ -1321,6 +1347,243 @@ fn test_addon(t: &mut TestRunner) {
     cleanup(&dir);
 }
 
+// ─── rule engine tests ───────────────────────────────────────────────────────
+
+fn test_rule_engine(t: &mut TestRunner) {
+    eprintln!("\n\x1b[1m● rule engine\x1b[0m");
+
+    // Helper: build a minimal rule JSON string
+    let make_rule = |id: &str, enabled: bool, action: &str| -> String {
+        json!({
+            "id": id,
+            "name": format!("Test rule {}", id),
+            "enabled": enabled,
+            "matcher": "Edit",
+            "conditions": [{ "field": "path", "op": "contains", "value": "forbidden" }],
+            "action": action,
+            "message": format!("Rule {} fired", id)
+        })
+        .to_string()
+    };
+
+    // ── T-RULE-01: rule list empty ──────────────────────────────────────────
+    {
+        let dir = tmp_project();
+        let d = dir.to_str().unwrap();
+        let out = t.run_json(&["rule", "list", d], &dir);
+        t.check(
+            "rule list empty",
+            out["rules"].as_array().is_some_and(|a| a.is_empty())
+                && out["count"] == 0,
+            &format!("got {out:?}"),
+        );
+        cleanup(&dir);
+    }
+
+    // ── T-RULE-02: rule add and list ────────────────────────────────────────
+    {
+        let dir = tmp_project();
+        let d = dir.to_str().unwrap();
+        let rule_json = make_rule("R-001", true, "block");
+        let add_out = t.run_json(&["rule", "add", d, &rule_json], &dir);
+        t.check(
+            "rule add success",
+            add_out["success"] == true && add_out["id"] == "R-001",
+            &format!("got {add_out:?}"),
+        );
+        let list_out = t.run_json(&["rule", "list", d], &dir);
+        t.check(
+            "rule list shows added rule",
+            list_out["count"] == 1
+                && list_out["rules"]
+                    .as_array()
+                    .is_some_and(|a| a.iter().any(|r| r["id"] == "R-001")),
+            &format!("got {list_out:?}"),
+        );
+        cleanup(&dir);
+    }
+
+    // ── T-RULE-03: rule remove ──────────────────────────────────────────────
+    {
+        let dir = tmp_project();
+        let d = dir.to_str().unwrap();
+        let rule_json = make_rule("R-002", true, "block");
+        t.run_json(&["rule", "add", d, &rule_json], &dir);
+        let rm_out = t.run_json(&["rule", "remove", d, "R-002"], &dir);
+        t.check(
+            "rule remove success",
+            rm_out["success"] == true && rm_out["removed"] == "R-002",
+            &format!("got {rm_out:?}"),
+        );
+        let list_out = t.run_json(&["rule", "list", d], &dir);
+        t.check(
+            "rule list empty after remove",
+            list_out["count"] == 0
+                && list_out["rules"].as_array().is_some_and(|a| a.is_empty()),
+            &format!("got {list_out:?}"),
+        );
+        cleanup(&dir);
+    }
+
+    // ── T-RULE-04: rule enable / disable ────────────────────────────────────
+    {
+        let dir = tmp_project();
+        let d = dir.to_str().unwrap();
+        // Add disabled rule
+        let rule_json = make_rule("R-003", false, "block");
+        t.run_json(&["rule", "add", d, &rule_json], &dir);
+        // Enable it
+        let en_out = t.run_json(&["rule", "enable", d, "R-003"], &dir);
+        t.check(
+            "rule enable success",
+            en_out["success"] == true && en_out["enabled"] == true,
+            &format!("got {en_out:?}"),
+        );
+        // Verify list reflects enabled=true
+        let list_out = t.run_json(&["rule", "list", d], &dir);
+        let enabled_flag = list_out["rules"]
+            .as_array()
+            .and_then(|a| a.iter().find(|r| r["id"] == "R-003"))
+            .and_then(|r| r["enabled"].as_bool())
+            .unwrap_or(false);
+        t.check(
+            "rule enable persisted",
+            enabled_flag,
+            &format!("got {list_out:?}"),
+        );
+        // Disable it
+        let dis_out = t.run_json(&["rule", "disable", d, "R-003"], &dir);
+        t.check(
+            "rule disable success",
+            dis_out["success"] == true && dis_out["enabled"] == false,
+            &format!("got {dis_out:?}"),
+        );
+        cleanup(&dir);
+    }
+
+    // ── T-RULE-05: rule gate block ──────────────────────────────────────────
+    {
+        let dir = tmp_project();
+        let d = dir.to_str().unwrap();
+        let rule_json = make_rule("R-BLOCK", true, "block");
+        t.run_json(&["rule", "add", d, &rule_json], &dir);
+        // PreToolUse JSON that matches: tool_name=Edit, path contains "forbidden"
+        let hook_payload = json!({
+            "tool_name": "Edit",
+            "tool_input": { "path": "/project/forbidden/secret.rs" }
+        })
+        .to_string();
+        let out = t.run_json_with_stdin(&["hook", "rule-gate"], &dir, &hook_payload);
+        t.check(
+            "rule gate block decision",
+            out["decision"] == "block",
+            &format!("got {out:?}"),
+        );
+        cleanup(&dir);
+    }
+
+    // ── T-RULE-06: rule gate approve ────────────────────────────────────────
+    {
+        let dir = tmp_project();
+        let d = dir.to_str().unwrap();
+        let rule_json = make_rule("R-BLOCK2", true, "block");
+        t.run_json(&["rule", "add", d, &rule_json], &dir);
+        // Non-matching payload: path does NOT contain "forbidden"
+        let hook_payload = json!({
+            "tool_name": "Edit",
+            "tool_input": { "path": "/project/src/main.rs" }
+        })
+        .to_string();
+        let out = t.run_json_with_stdin(&["hook", "rule-gate"], &dir, &hook_payload);
+        t.check(
+            "rule gate approve non-matching",
+            out["decision"] == "approve",
+            &format!("got {out:?}"),
+        );
+        cleanup(&dir);
+    }
+
+    // ── T-RULE-07: rule gate no rules — graceful degradation ────────────────
+    {
+        // Project dir with no .hoangsa/rules.json at all
+        let dir = tmp_project();
+        let hook_payload = json!({
+            "tool_name": "Edit",
+            "tool_input": { "path": "/anything" }
+        })
+        .to_string();
+        let out = t.run_json_with_stdin(&["hook", "rule-gate"], &dir, &hook_payload);
+        t.check(
+            "rule gate no rules → approve",
+            out["decision"] == "approve",
+            &format!("got {out:?}"),
+        );
+        cleanup(&dir);
+    }
+
+    // ── T-RULE-08: rule sync updates CLAUDE.md ──────────────────────────────
+    {
+        let dir = tmp_project();
+        let d = dir.to_str().unwrap();
+        let rule_json = make_rule("R-SYNC", true, "block");
+        t.run_json(&["rule", "add", d, &rule_json], &dir);
+        let sync_out = t.run_json(&["rule", "sync", d], &dir);
+        t.check(
+            "rule sync success",
+            sync_out["success"] == true && sync_out["synced"].as_u64().unwrap_or(0) >= 1,
+            &format!("got {sync_out:?}"),
+        );
+        // Verify CLAUDE.md contains markers
+        let claude_md = fs::read_to_string(dir.join("CLAUDE.md")).unwrap_or_default();
+        t.check(
+            "rule sync CLAUDE.md has start marker",
+            claude_md.contains("<!-- hoangsa-rules-start -->"),
+            "start marker missing",
+        );
+        t.check(
+            "rule sync CLAUDE.md has end marker",
+            claude_md.contains("<!-- hoangsa-rules-end -->"),
+            "end marker missing",
+        );
+        t.check(
+            "rule sync CLAUDE.md contains rule name",
+            claude_md.contains("R-SYNC"),
+            "rule id not found in CLAUDE.md",
+        );
+        cleanup(&dir);
+    }
+
+    // ── T-RULE-09: rule gate warn action → approve with reason ──────────────
+    {
+        let dir = tmp_project();
+        let d = dir.to_str().unwrap();
+        let warn_rule = make_rule("R-WARN", true, "warn");
+        t.run_json(&["rule", "add", d, &warn_rule], &dir);
+        // Matching payload — warn rule should not block, but should include a reason
+        let hook_payload = json!({
+            "tool_name": "Edit",
+            "tool_input": { "path": "/project/forbidden/file.rs" }
+        })
+        .to_string();
+        let out = t.run_json_with_stdin(&["hook", "rule-gate"], &dir, &hook_payload);
+        t.check(
+            "rule gate warn → approve decision",
+            out["decision"] == "approve",
+            &format!("got {out:?}"),
+        );
+        t.check(
+            "rule gate warn includes reason",
+            out["reason"].is_string()
+                && out["reason"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("R-WARN"),
+            &format!("got {out:?}"),
+        );
+        cleanup(&dir);
+    }
+}
+
 // ─── entry point ─────────────────────────────────────────────────────────────
 
 pub fn cmd_verify(project_dir: &str) {
@@ -1355,6 +1618,7 @@ pub fn cmd_verify(project_dir: &str) {
     test_full_state_lifecycle(&mut t);
     test_media(&mut t);
     test_addon(&mut t);
+    test_rule_engine(&mut t);
 
     eprintln!("\n\x1b[1m─── results ───\x1b[0m");
     let total = t.passed + t.failed;
