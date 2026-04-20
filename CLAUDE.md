@@ -5,21 +5,22 @@ This project uses **Thoth MCP** as its long-term memory. Initialized on 2026-04-
 
 ### Memory workflow
 
-- Persist facts via `thoth_remember_fact({text, tags?})` → `./.thoth/MEMORY.md`.
-- Persist lessons via `thoth_remember_lesson({trigger, advice})` → `./.thoth/LESSONS.md`.
+- Persist facts via `thoth_remember_fact({text, tags?})` → `/Users/nat/.thoth/projects/desktop-hoangsa/MEMORY.md`.
+- Persist lessons via `thoth_remember_lesson({trigger, advice})` → `/Users/nat/.thoth/projects/desktop-hoangsa/LESSONS.md`.
+- Persist user preferences via `thoth_remember_preference({text, tags?})` → `/Users/nat/.thoth/projects/desktop-hoangsa/USER.md`.
 - Before every Write / Edit / Bash: call `thoth_recall({query})` at least once.
 - The `UserPromptSubmit` hook auto-recalls for context but passes `log_event: false`, so that ceremonial recall does NOT satisfy the `thoth-gate` PreToolUse gate — only agent-initiated recalls do.
-- Browse raw memory without tool calls: open `./.thoth/MEMORY.md` and `./.thoth/LESSONS.md`.
+- Browse raw memory without tool calls: open `/Users/nat/.thoth/projects/desktop-hoangsa/MEMORY.md` and `/Users/nat/.thoth/projects/desktop-hoangsa/LESSONS.md`.
 - Remove this block and all Thoth wiring: `thoth uninstall`.
 
 ### Code intelligence tools
 
 | Tool | Params | Purpose |
 |------|--------|---------|
-| `thoth_recall` | `query`, `top_k?` (default 8) | Hybrid search (symbol + BM25 + graph + markdown) |
-| `thoth_impact` | `fqn`, `direction?` (up/down/both), `depth?` (1-8) | Blast radius — who breaks if this symbol changes |
+| `thoth_recall` | `query`, `top_k?` (default 8), `scope?` (curated/archive/all) | Hybrid search (symbol + BM25 + graph + markdown + semantic) |
+| `thoth_impact` | `fqn`, `direction?` (up/down/both), `depth?` (default 3, 1-8) | Blast radius — who breaks if this symbol changes |
 | `thoth_symbol_context` | `fqn`, `limit?` (default 32) | 360° view: callers, callees, imports, siblings, doc |
-| `thoth_detect_changes` | `diff` (git diff output), `depth?` (1-6) | Find symbols touched by a diff + their blast radius |
+| `thoth_detect_changes` | `diff` (git diff output), `depth?` (default 2, 1-6) | Find symbols touched by a diff + their blast radius |
 | `thoth_index` | `path?` (default ".") | Reindex source tree |
 
 ### Before editing code
@@ -114,3 +115,19 @@ Before completing any code modification task, verify:
 - Context: `thoth --json context "<symbol>"`
 - Changes: `thoth --json changes`
 <!-- thoth:code-intel:end -->
+
+<!-- hoangsa-rules-start -->
+## HOANGSA Rules (auto-generated — DO NOT edit manually)
+
+### ⛔ Hard Rules (block)
+| Rule | Trigger | Condition | Message |
+|------|---------|-----------|---------|
+| Block direct .claude/ edits | Edit|Write | file_path contains ".claude/" | Do not edit files in .claude/ directly — use hoangsa-cli or bin/install to manage |
+
+### ⚠️ Warnings
+| Rule | Trigger | Condition | Message |
+|------|---------|-----------|---------|
+| Avoid bare unwrap() | Edit|Write | new_string regex "\bunwrap\(\)" | Use expect("context") or ? instead of unwrap() — makes panic debugging easier |
+| No todo!/unimplemented! in commits | Edit|Write | new_string regex "\b(todo!|unimplemented!)" | Do not commit unimplemented code — finish it or create an issue instead |
+
+<!-- hoangsa-rules-end -->

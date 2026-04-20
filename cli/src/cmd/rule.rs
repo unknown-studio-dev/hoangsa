@@ -580,7 +580,7 @@ pub fn cmd_rule_sync(project_dir: &str) -> Result<(), Box<dyn std::error::Error>
         let end_of_end = end_idx + END_MARKER.len();
         format!("{}{}{}", &existing[..start_idx], block, &existing[end_of_end..])
     } else if existing.is_empty() {
-        block
+        block.clone()
     } else if existing.ends_with('\n') {
         format!("{existing}\n{block}")
     } else {
@@ -588,12 +588,35 @@ pub fn cmd_rule_sync(project_dir: &str) -> Result<(), Box<dyn std::error::Error>
     };
 
     // 6. Write CLAUDE.md
-    fs::write(&claude_md_path, updated)?;
+    fs::write(&claude_md_path, &updated)?;
+
+    // 7. Sync to AGENTS.md (subagents read this instead of CLAUDE.md)
+    let agents_md_path = Path::new(project_dir).join("AGENTS.md");
+    let agents_existing = if agents_md_path.exists() {
+        fs::read_to_string(&agents_md_path)?
+    } else {
+        String::new()
+    };
+    let agents_updated = if let (Some(start_idx), Some(end_idx)) = (
+        agents_existing.find(START_MARKER),
+        agents_existing.find(END_MARKER),
+    ) {
+        let end_of_end = end_idx + END_MARKER.len();
+        format!("{}{}{}", &agents_existing[..start_idx], block, &agents_existing[end_of_end..])
+    } else if agents_existing.is_empty() {
+        block
+    } else if agents_existing.ends_with('\n') {
+        format!("{agents_existing}\n{block}")
+    } else {
+        format!("{agents_existing}\n\n{block}")
+    };
+    fs::write(&agents_md_path, agents_updated)?;
 
     out(&json!({
         "success": true,
         "synced": synced,
-        "claude_md": claude_md_path.to_string_lossy()
+        "claude_md": claude_md_path.to_string_lossy(),
+        "agents_md": agents_md_path.to_string_lossy()
     }));
     Ok(())
 }
