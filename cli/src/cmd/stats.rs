@@ -532,26 +532,12 @@ mod tests {
     #[test]
     fn test_stats_record_appends_not_overwrites() {
         // REQ-03: writing 2 records must result in both being present (append mode)
-        // Test the append behavior directly via the file-system helpers, which exercise
-        // the same OpenOptions::append(true) path that cmd_record uses internally.
         let dir = make_temp_dir("record_appends");
         let stats_dir = dir.join(".hoangsa").join("stats");
-        fs::create_dir_all(&stats_dir).expect("create stats dir");
-        let file_path = stats_dir.join("token-usage.jsonl");
 
         let r1 = sample_record("low", 10000, 9000);
         let r2 = sample_record("high", 30000, 35000);
-
-        // Write two records using the same append mode that cmd_record uses
-        for record in &[&r1, &r2] {
-            let line = serde_json::to_string(record).expect("serialize record");
-            let mut file = fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&file_path)
-                .expect("open file in append mode");
-            writeln!(file, "{}", line).expect("write line");
-        }
+        write_records_to_stats_dir(&stats_dir, &[r1, r2]);
 
         let records = load_records(dir.to_str().expect("path str"));
         cleanup(&dir);

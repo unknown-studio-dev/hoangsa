@@ -493,6 +493,17 @@ pub fn cmd_breakdown(plan_path: Option<&str>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cmd::stats::CalibrationSamples;
+
+    /// Returns a CalibrationFactors with all factors at 1.0 and zero sample counts.
+    fn no_cal() -> CalibrationFactors {
+        CalibrationFactors {
+            low: 1.0,
+            medium: 1.0,
+            high: 1.0,
+            sample_counts: CalibrationSamples { low: 0, medium: 0, high: 0 },
+        }
+    }
 
     #[test]
     fn test_budget_complexity_profile_low() {
@@ -530,38 +541,25 @@ mod tests {
 
     #[test]
     fn test_budget_estimate_tool_overhead_low() {
-        // low: (5+10)/2 = 7 calls × 800 = 5600
         let overhead = estimate_tool_overhead("low");
         assert_eq!(overhead, 5600);
     }
 
     #[test]
     fn test_budget_estimate_tool_overhead_medium() {
-        // medium: (15+25)/2 = 20 calls × 800 = 16000
         let overhead = estimate_tool_overhead("medium");
         assert_eq!(overhead, 16000);
     }
 
     #[test]
     fn test_budget_estimate_tool_overhead_high() {
-        // high: (30+50)/2 = 40 calls × 800 = 32000
         let overhead = estimate_tool_overhead("high");
         assert_eq!(overhead, 32000);
     }
 
     #[test]
     fn test_budget_breakdown_cold_no_calibration() {
-        let calibration = CalibrationFactors {
-            low: 1.0,
-            medium: 1.0,
-            high: 1.0,
-            sample_counts: crate::cmd::stats::CalibrationSamples {
-                low: 0,
-                medium: 0,
-                high: 0,
-            },
-        };
-        let breakdown = compute_breakdown("medium", "/tmp", 1000, CacheScenario::Cold, &calibration);
+        let breakdown = compute_breakdown("medium", "/tmp", 1000, CacheScenario::Cold, &no_cal());
 
         // Cold: system_prompt_effective = system_prompt_tokens
         assert_eq!(breakdown.system_prompt_effective, breakdown.system_prompt_tokens);
@@ -575,18 +573,9 @@ mod tests {
 
     #[test]
     fn test_budget_breakdown_warm_reduces_system_prompt_cost() {
-        let calibration = CalibrationFactors {
-            low: 1.0,
-            medium: 1.0,
-            high: 1.0,
-            sample_counts: crate::cmd::stats::CalibrationSamples {
-                low: 0,
-                medium: 0,
-                high: 0,
-            },
-        };
-        let cold = compute_breakdown("high", "/tmp", 0, CacheScenario::Cold, &calibration);
-        let warm = compute_breakdown("high", "/tmp", 0, CacheScenario::Warm, &calibration);
+        let cal = no_cal();
+        let cold = compute_breakdown("high", "/tmp", 0, CacheScenario::Cold, &cal);
+        let warm = compute_breakdown("high", "/tmp", 0, CacheScenario::Warm, &cal);
 
         // Warm scenario: system_prompt_effective = system_prompt_tokens × 0.1
         assert!(warm.system_prompt_effective < cold.system_prompt_effective);
@@ -604,11 +593,7 @@ mod tests {
             low: 1.0,
             medium: 1.5,
             high: 1.0,
-            sample_counts: crate::cmd::stats::CalibrationSamples {
-                low: 0,
-                medium: 10, // >= 5 → calibration applied
-                high: 0,
-            },
+            sample_counts: CalibrationSamples { low: 0, medium: 10, high: 0 },
         };
         let breakdown = compute_breakdown("medium", "/tmp", 0, CacheScenario::Cold, &calibration);
         assert!(breakdown.calibration_applied);
@@ -621,11 +606,7 @@ mod tests {
             low: 2.0,
             medium: 1.0,
             high: 1.0,
-            sample_counts: crate::cmd::stats::CalibrationSamples {
-                low: 3, // < 5 → not applied
-                medium: 0,
-                high: 0,
-            },
+            sample_counts: CalibrationSamples { low: 3, medium: 0, high: 0 },
         };
         let breakdown = compute_breakdown("low", "/tmp", 0, CacheScenario::Cold, &calibration);
         assert!(!breakdown.calibration_applied);
@@ -645,17 +626,7 @@ mod tests {
 
     #[test]
     fn test_budget_safety_margin_is_15_pct() {
-        let calibration = CalibrationFactors {
-            low: 1.0,
-            medium: 1.0,
-            high: 1.0,
-            sample_counts: crate::cmd::stats::CalibrationSamples {
-                low: 0,
-                medium: 0,
-                high: 0,
-            },
-        };
-        let breakdown = compute_breakdown("low", "/tmp", 0, CacheScenario::Cold, &calibration);
+        let breakdown = compute_breakdown("low", "/tmp", 0, CacheScenario::Cold, &no_cal());
         let subtotal = breakdown.work_tokens
             + breakdown.system_prompt_effective
             + breakdown.context_pack_tokens
@@ -666,25 +637,15 @@ mod tests {
 
     #[test]
     fn test_budget_context_pack_tokens_included_in_total() {
-        let calibration = CalibrationFactors {
-            low: 1.0,
-            medium: 1.0,
-            high: 1.0,
-            sample_counts: crate::cmd::stats::CalibrationSamples {
-                low: 0,
-                medium: 0,
-                high: 0,
-            },
-        };
-        let without_pack = compute_breakdown("low", "/tmp", 0, CacheScenario::Cold, &calibration);
-        let with_pack = compute_breakdown("low", "/tmp", 5000, CacheScenario::Cold, &calibration);
+        let cal = no_cal();
+        let without_pack = compute_breakdown("low", "/tmp", 0, CacheScenario::Cold, &cal);
+        let with_pack = compute_breakdown("low", "/tmp", 5000, CacheScenario::Cold, &cal);
         assert!(with_pack.total > without_pack.total);
         assert_eq!(with_pack.context_pack_tokens, 5000);
     }
 
     #[test]
     fn test_budget_default_overhead_constants() {
-        // REQ-01: verify DEFAULT_OVERHEAD values match spec
         assert_eq!(DEFAULT_OVERHEAD.base_rules_tokens, 2500);
         assert!((DEFAULT_OVERHEAD.safety_margin_pct - 0.15).abs() < f64::EPSILON);
         assert!((DEFAULT_OVERHEAD.cache_warm_factor - 0.1).abs() < f64::EPSILON);
@@ -702,21 +663,11 @@ mod tests {
             low: 1.0,
             medium: factor,
             high: 1.0,
-            sample_counts: crate::cmd::stats::CalibrationSamples {
-                low: 0,
-                medium: 5, // exactly at threshold
-                high: 0,
-            },
+            sample_counts: CalibrationSamples { low: 0, medium: 5, high: 0 },
         };
         let uncalibrated = CalibrationFactors {
-            low: 1.0,
             medium: factor,
-            high: 1.0,
-            sample_counts: crate::cmd::stats::CalibrationSamples {
-                low: 0,
-                medium: 0,
-                high: 0,
-            },
+            ..no_cal()
         };
         let with_cal = compute_breakdown("medium", "/tmp", 0, CacheScenario::Cold, &calibration);
         let without_cal = compute_breakdown("medium", "/tmp", 0, CacheScenario::Cold, &uncalibrated);
@@ -732,14 +683,9 @@ mod tests {
     fn test_budget_estimate_without_calibration() {
         // REQ-10: when sample_counts < 5, calibration_applied = false and total is unscaled
         let calibration = CalibrationFactors {
-            low: 1.0,
-            medium: 1.0,
             high: 2.5, // would significantly change total if applied
-            sample_counts: crate::cmd::stats::CalibrationSamples {
-                low: 0,
-                medium: 0,
-                high: 4, // just below threshold
-            },
+            sample_counts: CalibrationSamples { low: 0, medium: 0, high: 4 },
+            ..no_cal()
         };
         let breakdown = compute_breakdown("high", "/tmp", 0, CacheScenario::Cold, &calibration);
         assert!(!breakdown.calibration_applied, "calibration_applied must be false when sample_count < 5");
@@ -774,18 +720,8 @@ mod tests {
     #[test]
     fn test_budget_safety_margin_percentage() {
         // REQ-01: safety margin is exactly 15% of subtotal
-        let calibration = CalibrationFactors {
-            low: 1.0,
-            medium: 1.0,
-            high: 1.0,
-            sample_counts: crate::cmd::stats::CalibrationSamples {
-                low: 0,
-                medium: 0,
-                high: 0,
-            },
-        };
         for complexity in &["low", "medium", "high"] {
-            let bd = compute_breakdown(complexity, "/tmp", 2000, CacheScenario::Cold, &calibration);
+            let bd = compute_breakdown(complexity, "/tmp", 2000, CacheScenario::Cold, &no_cal());
             let subtotal = bd.work_tokens
                 + bd.system_prompt_effective
                 + bd.context_pack_tokens
