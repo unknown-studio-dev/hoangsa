@@ -20,7 +20,7 @@ If the command fails (exit code non-zero) → proceed to Step 2. Otherwise skip 
 ## Step 2: Install thoth
 
 ```bash
-npm install -g @thothpkg/cli
+npm install -g @unknownstudio/thoth
 ```
 
 Wait for completion. If this fails, report the error and stop.
@@ -49,17 +49,7 @@ Parse the output as structured key=value pairs (e.g., `indexed .: files=17 chunk
 
 Wait until the command exits. If exit code is non-zero, report the error output and stop.
 
----
-
-## Step 5: Clear .outdated flag
-
-```bash
-rm -f .thoth/.outdated
-```
-
----
-
-## Step 6: Report result
+## Step 5: Report result
 
 Output exactly:
 ```
