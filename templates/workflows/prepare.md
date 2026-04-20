@@ -246,6 +246,15 @@ Common DAG errors: (1) Circular dependency — break the cycle by splitting the 
 
 ## Step 5b: Generate context packs
 
+First, read the `context_mode` preference to determine how context packs are built:
+
+```bash
+CONTEXT_MODE=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . context_mode | python3 -c "import sys,json; print(json.load(sys.stdin).get('value','full'))")
+```
+
+- If `CONTEXT_MODE` is `"selective"` → context packs use line-range parsing, reading only the specified line ranges from each `context_pointer` entry instead of the full file. This is handled automatically by the `context pack` command which reads the preference from config.
+- If `CONTEXT_MODE` is `"full"` (default) → context packs read entire files (current behavior).
+
 After all checker loops pass, generate a context pack for each task using `context pack`:
 
 ```bash

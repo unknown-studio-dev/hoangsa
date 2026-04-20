@@ -453,7 +453,13 @@ This avoids re-detecting what init already discovered. Research agents should us
 
 ## Step 4: Codebase research (delegate to /hoangsa:research)
 
-Delegate codebase research to the research workflow in **auto mode**, scoped to **codebase only**. Pass the `codebase` metadata from config so research agents don't re-detect project structure from scratch:
+First, read the `research_mode` preference to determine how to run this step:
+
+```bash
+RESEARCH_MODE=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . research_mode | python3 -c "import sys,json; print(json.load(sys.stdin).get('value','') or 'inline')")
+```
+
+**If `RESEARCH_MODE` is `"full"`:** delegate codebase research to the research workflow in **auto mode**, scoped to **codebase only**. Pass the `codebase` metadata from config so research agents don't re-detect project structure from scratch:
 
 ```
 Invoke /hoangsa:research with:
@@ -469,6 +475,14 @@ This avoids duplicating the parallel research agents — the research workflow h
 Set a soft timeout of 120 seconds for research. If research does not complete, proceed with available context and note in DESIGN-SPEC that research was incomplete.
 
 Wait for RESEARCH.md to be written to `$SESSION_DIR/` before proceeding.
+
+**If `RESEARCH_MODE` is `"inline"` (default):** skip the full research agent and perform lightweight inline research instead:
+
+1. Use Thoth recall (if available) or Grep/Glob to find code relevant to the task description from CONTEXT.md
+2. Read key files identified in CONTEXT.md (context_pointers, referenced paths)
+3. Write a minimal `RESEARCH.md` to `$SESSION_DIR/` summarising findings (relevant symbols, files, patterns, dependencies)
+
+Report: `⏭️ Full research skipped (research_mode=inline) — using inline research`
 
 ---
 
