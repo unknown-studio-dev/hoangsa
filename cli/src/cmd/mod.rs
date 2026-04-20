@@ -1,4 +1,5 @@
 pub mod addon;
+pub mod budget;
 pub mod commit;
 pub mod config;
 pub mod context;
