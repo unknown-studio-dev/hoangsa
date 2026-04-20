@@ -9,18 +9,13 @@ use thoth_retrieve::ChromaConfig;
 use thoth_store::{ChromaStore, StoreRoot};
 
 mod archive_cmd;
-mod compact;
 mod daemon;
 mod daemon_cmd;
 mod hooks;
 mod index_cmd;
 mod memory_cmd;
-mod migrate;
-mod mine_cmd;
 mod query_cmd;
 mod resolve;
-mod review;
-mod rule_cmd;
 mod setup;
 mod watch_cmd;
 
@@ -129,43 +124,6 @@ enum Cmd {
         cmd: hooks::SkillsCmd,
     },
 
-    /// Install, remove, or dispatch Claude Code hooks.
-    #[command(hide = true)]
-    Hooks {
-        #[command(subcommand)]
-        cmd: hooks::HooksCmd,
-    },
-
-    /// Register the Thoth MCP server.
-    #[command(hide = true)]
-    Mcp {
-        #[command(subcommand)]
-        cmd: hooks::McpCmd,
-    },
-
-    /// Install skill + hooks + MCP server in one go.
-    #[command(hide = true)]
-    Install {
-        #[arg(long, value_enum, default_value = "project")]
-        scope: hooks::Scope,
-    },
-
-    /// Remove skill + hooks + MCP server from `settings.json`.
-    Uninstall {
-        #[arg(long, value_enum, default_value = "project")]
-        scope: hooks::Scope,
-    },
-
-    /// Run a precision@k evaluation over a gold query set (TOML).
-    Eval {
-        #[arg(long)]
-        gold: PathBuf,
-        #[arg(short = 'k', long, default_value_t = 8)]
-        top_k: usize,
-        #[arg(long, value_enum, default_value_t = query_cmd::EvalMode::Zero)]
-        mode: query_cmd::EvalMode,
-    },
-
     /// Verbatim conversation archive — ingest, search, manage sessions.
     Archive {
         #[command(subcommand)]
@@ -198,48 +156,6 @@ enum Cmd {
         depth: usize,
     },
 
-    /// Maintenance pass over memory (forget pass + reflection debt report).
-    Curate {
-        #[arg(long)]
-        quiet: bool,
-    },
-
-    /// Run a background memory review via LLM.
-    Review {
-        #[arg(long, default_value = "")]
-        backend: String,
-        #[arg(long, default_value = "")]
-        model: String,
-    },
-
-    /// Compact MEMORY.md / LESSONS.md by merging near-duplicate entries.
-    Compact {
-        #[arg(long, default_value = "")]
-        backend: String,
-        #[arg(long, default_value = "")]
-        model: String,
-        #[arg(long)]
-        dry_run: bool,
-    },
-
-    /// Inspect and edit the merged enforcement rule set.
-    Rule {
-        #[command(subcommand)]
-        cmd: rule_cmd::RuleCmd,
-    },
-
-    /// Ingest Claude Code conversation JSONL into episodic memory.
-    Mine {
-        /// Path to a .jsonl file or directory containing them.
-        #[arg(required = true)]
-        source: PathBuf,
-    },
-
-    /// Manage the global project registry.
-    Projects {
-        #[command(subcommand)]
-        cmd: resolve::ProjectsCmd,
-    },
 }
 
 // --------------------------------------------------------------------- entry
@@ -317,25 +233,8 @@ async fn main() -> anyhow::Result<()> {
             memory_cmd::MemoryCmd::Log { limit } => {
                 memory_cmd::run_log(&root, limit, cli.json).await?
             }
-            memory_cmd::MemoryCmd::Migrate {
-                yes,
-                llm,
-                llm_backend,
-                llm_model,
-            } => {
-                migrate::run(
-                    &root,
-                    yes,
-                    if llm {
-                        Some(migrate::LlmOpts {
-                            backend: llm_backend,
-                            model: llm_model,
-                        })
-                    } else {
-                        None
-                    },
-                )
-                .await?;
+            memory_cmd::MemoryCmd::Migrate { .. } => {
+                anyhow::bail!("memory migrate has been removed; migrate manually or via a script");
             }
         },
         Cmd::Skills { cmd } => match cmd {
@@ -345,20 +244,6 @@ async fn main() -> anyhow::Result<()> {
                 None => hooks::skills_install(scope, &root).await?,
             },
         },
-        Cmd::Hooks { cmd } => match cmd {
-            hooks::HooksCmd::Install { scope } => hooks::install(scope, &root).await?,
-            hooks::HooksCmd::Uninstall { scope } => hooks::uninstall(scope).await?,
-            hooks::HooksCmd::Exec { event } => hooks::exec(event, &root).await?,
-        },
-        Cmd::Mcp { cmd } => match cmd {
-            hooks::McpCmd::Install { scope } => hooks::mcp_install(scope, &root).await?,
-            hooks::McpCmd::Uninstall { scope } => hooks::mcp_uninstall(scope).await?,
-        },
-        Cmd::Install { scope } => hooks::install_all(scope, &root).await?,
-        Cmd::Uninstall { scope } => hooks::uninstall_all(scope, &root).await?,
-        Cmd::Eval { gold, top_k, mode } => {
-            query_cmd::run_eval(&root, &gold, top_k, mode, cli.synth, cli.json).await?
-        }
         Cmd::Impact {
             fqn,
             direction,
@@ -370,63 +255,6 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Changes { from, depth } => {
             daemon_cmd::cmd_changes(&root, from.as_deref(), depth, cli.json).await?
         }
-        Cmd::Curate { quiet } => memory_cmd::run_curate(&root, quiet).await?,
-        Cmd::Review { backend, model } => review::cmd_review(&root, &backend, &model).await?,
-        Cmd::Compact {
-            backend,
-            model,
-            dry_run,
-        } => compact::cmd_compact(&root, &backend, &model, dry_run).await?,
-        Cmd::Rule { cmd } => match cmd {
-            rule_cmd::RuleCmd::List { layer } => rule_cmd::cmd_list(&root, layer, cli.json).await?,
-            rule_cmd::RuleCmd::Disable { id, project } => {
-                rule_cmd::cmd_disable(&root, &id, project, cli.json).await?
-            }
-            rule_cmd::RuleCmd::Enable { id, project } => {
-                rule_cmd::cmd_enable(&root, &id, project, cli.json).await?
-            }
-            rule_cmd::RuleCmd::Override { id, tier, project } => {
-                rule_cmd::cmd_override(&root, &id, tier, project, cli.json).await?
-            }
-            rule_cmd::RuleCmd::Add {
-                id,
-                from_lesson,
-                inline,
-                tool,
-                path_glob,
-                cmd_regex,
-                content_regex,
-                natural,
-                message,
-                enforcement,
-                project,
-            } => {
-                rule_cmd::cmd_add(
-                    &root,
-                    id,
-                    from_lesson,
-                    inline,
-                    tool,
-                    path_glob,
-                    cmd_regex,
-                    content_regex,
-                    natural,
-                    message,
-                    enforcement,
-                    project,
-                    cli.json,
-                )
-                .await?
-            }
-            rule_cmd::RuleCmd::Diff => rule_cmd::cmd_diff(&root, cli.json).await?,
-            rule_cmd::RuleCmd::Check {
-                tool,
-                path,
-                cmd,
-                content,
-            } => rule_cmd::cmd_check(&root, tool, path, cmd, content, cli.json).await?,
-            rule_cmd::RuleCmd::Compile => rule_cmd::cmd_compile(&root, cli.json).await?,
-        },
         Cmd::Archive { cmd } => match cmd {
             archive_cmd::ArchiveCmd::Ingest { project, topic } => {
                 archive_cmd::cmd_archive_ingest(&root, project.as_deref(), topic.as_deref()).await?
@@ -452,22 +280,6 @@ async fn main() -> anyhow::Result<()> {
                     cli.json,
                 )
                 .await?
-            }
-            archive_cmd::ArchiveCmd::Curate {
-                backend,
-                model,
-                max_sessions,
-            } => archive_cmd::cmd_archive_curate(&root, &backend, &model, max_sessions).await?,
-        },
-        Cmd::Mine { source } => mine_cmd::run_mine(&root, &source, cli.json).await?,
-        Cmd::Projects { cmd } => match cmd {
-            resolve::ProjectsCmd::List => resolve::cmd_projects_list()?,
-            resolve::ProjectsCmd::Which => resolve::cmd_projects_which(&root)?,
-            resolve::ProjectsCmd::Migrate { dry_run, rm_local } => {
-                resolve::cmd_projects_migrate(dry_run, rm_local).await?;
-            }
-            resolve::ProjectsCmd::MigrateSlugs { dry_run } => {
-                resolve::cmd_projects_migrate_slugs(dry_run).await?;
             }
         },
     }
