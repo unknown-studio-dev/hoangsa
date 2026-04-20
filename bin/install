@@ -741,6 +741,21 @@ function ensureHoangsaHooks(settings, targetDir) {
     `  ${green}✓${reset} Installed lesson-guard hook (recalls lessons before edits)`,
   );
 
+  // --- PreToolUse rule-gate hook (enforces project rules before tool use) ---
+  settings.hooks.PreToolUse.push({
+    _hoangsa_managed: true,
+    hooks: [
+      {
+        type: "command",
+        command: `${cli} hook rule-gate`,
+        timeout: 10,
+      },
+    ],
+  });
+  console.log(
+    `  ${green}✓${reset} Installed rule-gate hook (enforces project rules before tool use)`,
+  );
+
   return true;
 }
 
