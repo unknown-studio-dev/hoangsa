@@ -537,6 +537,187 @@ fn count_incomplete_tasks(plan: &serde_json::Value) -> usize {
         .count()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── coerce_bool ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_coerce_bool_true_literal() {
+        assert_eq!(coerce_bool(&json!(true)), Some(true));
+    }
+
+    #[test]
+    fn test_coerce_bool_false_literal() {
+        assert_eq!(coerce_bool(&json!(false)), Some(false));
+    }
+
+    #[test]
+    fn test_coerce_bool_string_true() {
+        assert_eq!(coerce_bool(&json!("true")), Some(true));
+    }
+
+    #[test]
+    fn test_coerce_bool_string_false() {
+        assert_eq!(coerce_bool(&json!("false")), Some(false));
+    }
+
+    #[test]
+    fn test_coerce_bool_string_yes() {
+        assert_eq!(coerce_bool(&json!("yes")), Some(true));
+    }
+
+    #[test]
+    fn test_coerce_bool_string_no() {
+        assert_eq!(coerce_bool(&json!("no")), Some(false));
+    }
+
+    #[test]
+    fn test_coerce_bool_string_1() {
+        assert_eq!(coerce_bool(&json!("1")), Some(true));
+    }
+
+    #[test]
+    fn test_coerce_bool_string_0() {
+        assert_eq!(coerce_bool(&json!("0")), Some(false));
+    }
+
+    #[test]
+    fn test_coerce_bool_invalid_string() {
+        assert_eq!(coerce_bool(&json!("maybe")), None);
+    }
+
+    #[test]
+    fn test_coerce_bool_null() {
+        assert_eq!(coerce_bool(&json!(null)), None);
+    }
+
+    #[test]
+    fn test_coerce_bool_number() {
+        // Numbers are not booleans and not strings — returns None
+        assert_eq!(coerce_bool(&json!(1)), None);
+    }
+
+    // ── coerce_u64 ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_coerce_u64_number() {
+        assert_eq!(coerce_u64(&json!(42u64)), Some(42));
+    }
+
+    #[test]
+    fn test_coerce_u64_zero() {
+        assert_eq!(coerce_u64(&json!(0u64)), Some(0));
+    }
+
+    #[test]
+    fn test_coerce_u64_numeric_string() {
+        assert_eq!(coerce_u64(&json!("500")), Some(500));
+    }
+
+    #[test]
+    fn test_coerce_u64_non_numeric_string() {
+        assert_eq!(coerce_u64(&json!("abc")), None);
+    }
+
+    #[test]
+    fn test_coerce_u64_null() {
+        assert_eq!(coerce_u64(&json!(null)), None);
+    }
+
+    #[test]
+    fn test_coerce_u64_negative_string() {
+        // "-1" doesn't parse as u64
+        assert_eq!(coerce_u64(&json!("-1")), None);
+    }
+
+    // ── build_recall_query ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_build_recall_query_relative_path() {
+        let q = build_recall_query("src/cmd/pref.rs");
+        assert_eq!(q, "NEVER edit src/cmd/pref.rs");
+    }
+
+    #[test]
+    fn test_build_recall_query_empty_path() {
+        let q = build_recall_query("");
+        // empty path → empty after strip → "NEVER edit "
+        assert!(q.starts_with("NEVER edit"));
+    }
+
+    #[test]
+    fn test_build_recall_query_absolute_non_home_path() {
+        // path that is definitely not under HOME: /tmp/file.rs
+        let q = build_recall_query("/tmp/file.rs");
+        assert!(q.contains("tmp/file.rs"), "expected path segment in query, got: {q}");
+        assert!(q.starts_with("NEVER edit"));
+    }
+
+    // ── count_incomplete_tasks ───────────────────────────────────────────────
+
+    #[test]
+    fn test_count_incomplete_tasks_all_pending() {
+        let plan = json!({
+            "tasks": [
+                { "id": "T-01", "status": "pending" },
+                { "id": "T-02", "status": "running" },
+            ]
+        });
+        assert_eq!(count_incomplete_tasks(&plan), 2);
+    }
+
+    #[test]
+    fn test_count_incomplete_tasks_all_done() {
+        let plan = json!({
+            "tasks": [
+                { "id": "T-01", "status": "completed" },
+                { "id": "T-02", "status": "done" },
+                { "id": "T-03", "status": "skipped" },
+                { "id": "T-04", "status": "failed" },
+            ]
+        });
+        assert_eq!(count_incomplete_tasks(&plan), 0);
+    }
+
+    #[test]
+    fn test_count_incomplete_tasks_mixed() {
+        let plan = json!({
+            "tasks": [
+                { "id": "T-01", "status": "completed" },
+                { "id": "T-02", "status": "pending" },
+                { "id": "T-03", "status": "running" },
+            ]
+        });
+        assert_eq!(count_incomplete_tasks(&plan), 2);
+    }
+
+    #[test]
+    fn test_count_incomplete_tasks_missing_status() {
+        // Missing status field defaults to "pending" (incomplete)
+        let plan = json!({
+            "tasks": [
+                { "id": "T-01" },
+            ]
+        });
+        assert_eq!(count_incomplete_tasks(&plan), 1);
+    }
+
+    #[test]
+    fn test_count_incomplete_tasks_no_tasks_key() {
+        let plan = json!({});
+        assert_eq!(count_incomplete_tasks(&plan), 0);
+    }
+
+    #[test]
+    fn test_count_incomplete_tasks_empty_tasks() {
+        let plan = json!({ "tasks": [] });
+        assert_eq!(count_incomplete_tasks(&plan), 0);
+    }
+}
+
 /// Find the most recently modified session directory.
 fn find_latest_session(sessions_root: &str) -> Option<String> {
     let root = Path::new(sessions_root);

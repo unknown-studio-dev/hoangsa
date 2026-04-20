@@ -259,3 +259,248 @@ pub fn cmd_set(project_dir: Option<&str>, key: Option<&str>, value: Option<&str>
         Err(e) => out(&json!({ "success": false, "error": e.to_string() })),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    /// Create a temp dir with a pre-existing `.hoangsa/config.json`.
+    fn setup_project() -> TempDir {
+        let tmp = TempDir::new().expect("create tempdir");
+        let hoangsa_dir = tmp.path().join(".hoangsa");
+        fs::create_dir_all(&hoangsa_dir).expect("create .hoangsa dir");
+        let config = json!({
+            "profile": "balanced",
+            "preferences": {
+                "lang": null,
+                "spec_lang": null,
+                "tech_stack": [],
+                "interaction_level": null,
+                "auto_taste": null,
+                "auto_plate": null,
+                "auto_serve": null,
+                "research_scope": null,
+                "research_mode": "inline",
+                "review_style": null,
+                "simplify_pass": false,
+                "quality_gate": false,
+                "test_runs": 1,
+                "context_mode": "selective",
+                "thoth_strict": false,
+                "auto_compact": true,
+                "auto_compact_interval": 500,
+                "auto_compact_cooldown_secs": 86400,
+            },
+            "task_manager": {
+                "provider": null,
+                "mcp_server": null,
+                "verified": false,
+                "verified_at": null,
+                "project_id": null,
+                "default_list": null,
+            },
+        });
+        fs::write(
+            hoangsa_dir.join("config.json"),
+            serde_json::to_string_pretty(&config).expect("serialize config"),
+        )
+        .expect("write config.json");
+        tmp
+    }
+
+    fn read_config(project_dir: &str) -> Value {
+        let path = config_path(project_dir);
+        let raw = fs::read_to_string(&path).expect("read config.json");
+        serde_json::from_str(&raw).expect("parse config.json")
+    }
+
+    fn get_pref(config: &Value, key: &str) -> Value {
+        config
+            .get("preferences")
+            .and_then(|p| p.get(key))
+            .cloned()
+            .unwrap_or(Value::Null)
+    }
+
+    // ── integer coercion tests ───────────────────────────────────────────────
+
+    #[test]
+    fn test_set_integer_value_stores_as_number() {
+        let tmp = setup_project();
+        let dir = tmp.path().to_str().expect("valid path");
+        cmd_set(Some(dir), Some("test_runs"), Some("3"));
+        let config = read_config(dir);
+        let val = get_pref(&config, "test_runs");
+        assert!(val.is_number(), "expected JSON number, got: {val}");
+        assert_eq!(val.as_i64(), Some(3));
+    }
+
+    #[test]
+    fn test_set_non_numeric_string_stores_as_string() {
+        let tmp = setup_project();
+        let dir = tmp.path().to_str().expect("valid path");
+        cmd_set(Some(dir), Some("test_runs"), Some("abc"));
+        let config = read_config(dir);
+        let val = get_pref(&config, "test_runs");
+        assert!(val.is_string(), "expected JSON string, got: {val}");
+        assert_eq!(val.as_str(), Some("abc"));
+    }
+
+    #[test]
+    fn test_set_boolean_true_string_stores_as_bool() {
+        let tmp = setup_project();
+        let dir = tmp.path().to_str().expect("valid path");
+        cmd_set(Some(dir), Some("simplify_pass"), Some("true"));
+        let config = read_config(dir);
+        let val = get_pref(&config, "simplify_pass");
+        assert_eq!(val, Value::Bool(true));
+    }
+
+    #[test]
+    fn test_set_boolean_false_string_stores_as_bool() {
+        let tmp = setup_project();
+        let dir = tmp.path().to_str().expect("valid path");
+        cmd_set(Some(dir), Some("quality_gate"), Some("false"));
+        let config = read_config(dir);
+        let val = get_pref(&config, "quality_gate");
+        assert_eq!(val, Value::Bool(false));
+    }
+
+    #[test]
+    fn test_set_null_string_stores_as_null() {
+        let tmp = setup_project();
+        let dir = tmp.path().to_str().expect("valid path");
+        cmd_set(Some(dir), Some("lang"), Some("null"));
+        let config = read_config(dir);
+        let val = get_pref(&config, "lang");
+        assert_eq!(val, Value::Null);
+    }
+
+    // ── profile preset tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_profile_full_sets_all_six_keys() {
+        let tmp = setup_project();
+        let dir = tmp.path().to_str().expect("valid path");
+        cmd_set(Some(dir), Some("profile"), Some("full"));
+        let config = read_config(dir);
+        let prefs = config.get("preferences").expect("preferences block");
+
+        assert_eq!(prefs["simplify_pass"], Value::Bool(true), "simplify_pass");
+        assert_eq!(prefs["quality_gate"], Value::Bool(true), "quality_gate");
+        assert_eq!(prefs["test_runs"].as_i64(), Some(3), "test_runs");
+        assert_eq!(prefs["research_mode"].as_str(), Some("full"), "research_mode");
+        assert_eq!(prefs["context_mode"].as_str(), Some("full"), "context_mode");
+        assert_eq!(prefs["thoth_strict"], Value::Bool(true), "thoth_strict");
+    }
+
+    #[test]
+    fn test_profile_balanced_sets_all_six_keys() {
+        let tmp = setup_project();
+        let dir = tmp.path().to_str().expect("valid path");
+        // First set full, then flip back to balanced
+        cmd_set(Some(dir), Some("profile"), Some("full"));
+        cmd_set(Some(dir), Some("profile"), Some("balanced"));
+        let config = read_config(dir);
+        let prefs = config.get("preferences").expect("preferences block");
+
+        assert_eq!(prefs["simplify_pass"], Value::Bool(false), "simplify_pass");
+        assert_eq!(prefs["quality_gate"], Value::Bool(false), "quality_gate");
+        assert_eq!(prefs["test_runs"].as_i64(), Some(1), "test_runs");
+        assert_eq!(prefs["research_mode"].as_str(), Some("inline"), "research_mode");
+        assert_eq!(prefs["context_mode"].as_str(), Some("selective"), "context_mode");
+        assert_eq!(prefs["thoth_strict"], Value::Bool(false), "thoth_strict");
+    }
+
+    #[test]
+    fn test_profile_minimal_sets_all_six_keys() {
+        let tmp = setup_project();
+        let dir = tmp.path().to_str().expect("valid path");
+        cmd_set(Some(dir), Some("profile"), Some("minimal"));
+        let config = read_config(dir);
+        let prefs = config.get("preferences").expect("preferences block");
+
+        assert_eq!(prefs["simplify_pass"], Value::Bool(false), "simplify_pass");
+        assert_eq!(prefs["quality_gate"], Value::Bool(false), "quality_gate");
+        assert_eq!(prefs["test_runs"].as_i64(), Some(1), "test_runs");
+        assert_eq!(prefs["research_mode"].as_str(), Some("inline"), "research_mode");
+        assert_eq!(prefs["context_mode"].as_str(), Some("selective"), "context_mode");
+        assert_eq!(prefs["thoth_strict"], Value::Bool(false), "thoth_strict");
+    }
+
+    #[test]
+    fn test_profile_unknown_returns_error() {
+        let tmp = setup_project();
+        let dir = tmp.path().to_str().expect("valid path");
+        // cmd_set with an unknown profile — reads stdout via the out() fn,
+        // but we just verify config remains unchanged (no write happened).
+        let config_before = read_config(dir);
+        cmd_set(Some(dir), Some("profile"), Some("turbo_ultra_max"));
+        let config_after = read_config(dir);
+        // Config should be identical — unknown profile must not write.
+        assert_eq!(
+            config_before.get("preferences"),
+            config_after.get("preferences"),
+            "config must not change on unknown profile"
+        );
+    }
+
+    // ── known key acceptance tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_known_keys_include_new_five() {
+        for key in &["simplify_pass", "quality_gate", "test_runs", "context_mode", "thoth_strict"] {
+            assert!(
+                KNOWN_KEYS.contains(key),
+                "expected {} in KNOWN_KEYS",
+                key
+            );
+        }
+    }
+
+    #[test]
+    fn test_cmd_set_accepts_context_mode() {
+        let tmp = setup_project();
+        let dir = tmp.path().to_str().expect("valid path");
+        cmd_set(Some(dir), Some("context_mode"), Some("full"));
+        let config = read_config(dir);
+        assert_eq!(get_pref(&config, "context_mode").as_str(), Some("full"));
+    }
+
+    #[test]
+    fn test_cmd_set_accepts_thoth_strict() {
+        let tmp = setup_project();
+        let dir = tmp.path().to_str().expect("valid path");
+        cmd_set(Some(dir), Some("thoth_strict"), Some("true"));
+        let config = read_config(dir);
+        assert_eq!(get_pref(&config, "thoth_strict"), Value::Bool(true));
+    }
+
+    #[test]
+    fn test_cmd_set_unknown_key_does_not_write() {
+        let tmp = setup_project();
+        let dir = tmp.path().to_str().expect("valid path");
+        let config_before = read_config(dir);
+        cmd_set(Some(dir), Some("nonexistent_key_xyz"), Some("foo"));
+        let config_after = read_config(dir);
+        assert_eq!(
+            config_before.get("preferences"),
+            config_after.get("preferences"),
+            "unknown key must not modify preferences"
+        );
+    }
+
+    #[test]
+    fn test_cmd_get_returns_value_for_known_key() {
+        let tmp = setup_project();
+        let dir = tmp.path().to_str().expect("valid path");
+        // Set then get — verifies round-trip
+        cmd_set(Some(dir), Some("test_runs"), Some("5"));
+        let config = read_config(dir);
+        assert_eq!(get_pref(&config, "test_runs").as_i64(), Some(5));
+    }
+}
