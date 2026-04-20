@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "thoth": {
+      "command": "thoth-mcp",
+      "args": [],
+      "env": {
+        "RUST_LOG": "info"
+      }
+    }
+  }
+}

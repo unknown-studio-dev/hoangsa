@@ -1,0 +1,36 @@
+# Default danger rules shipped with Thoth.
+# All rules ship at `Block` tier. Users may disable or downgrade them in
+# `~/.thoth/rules.user.toml` or `.thoth/rules.project.toml`.
+#
+# Layer precedence (later overrides earlier by rule ID):
+#   rules.default.toml  →  rules.user.toml  →  rules.project.toml
+
+[rules.no-rm-rf]
+enforcement = "Block"
+tool = "Bash"
+cmd_regex = 'rm\s+-[rf]+\s+[/~]'
+message = "rm -rf on absolute path is forbidden. Use a trash CLI or a scoped relative path."
+
+[rules.no-force-push-main]
+enforcement = "Block"
+tool = "Bash"
+cmd_regex = 'git push.*--force.*(main|master)'
+message = "Force-pushing to main/master is forbidden. Force-push a feature branch instead."
+
+[rules.no-no-verify]
+enforcement = "Block"
+tool = "Bash"
+cmd_regex = '--no-verify'
+message = "Skipping git hooks with --no-verify is forbidden. Fix the failing hook instead."
+
+[rules.no-reset-hard]
+enforcement = "Block"
+tool = "Bash"
+cmd_regex = 'git reset\s+--hard'
+message = "git reset --hard destroys uncommitted work. Stash or branch instead, or request override."
+
+[rules.no-drop-table]
+enforcement = "Block"
+tool = "Bash"
+cmd_regex = 'DROP\s+TABLE|TRUNCATE\s+'
+message = "DROP TABLE / TRUNCATE is forbidden from the agent. Run destructive SQL manually with explicit human confirmation."

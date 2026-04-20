@@ -1,0 +1,96 @@
+[workspace]
+# resolver = "3" enables MSRV-aware dependency resolution — cargo will pick
+# versions whose `rust-version` is <= ours (1.91, set below in
+# `[workspace.package].rust-version`).
+resolver = "3"
+members = [
+    "crates/hoangsa-cli",
+    "crates/thoth",
+    "crates/thoth-core",
+    "crates/thoth-parse",
+    "crates/thoth-store",
+    "crates/thoth-graph",
+    "crates/thoth-memory",
+    "crates/thoth-retrieve",
+    "crates/thoth-cli",
+    "crates/thoth-mcp",
+]
+
+[workspace.package]
+version = "0.0.4"
+edition = "2024"
+rust-version = "1.91"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/pirumu/hoangsa.git"
+authors = ["Than The Van"]
+
+[workspace.dependencies]
+# Internal crates
+thoth          = { path = "crates/thoth",          version = "0.0.4" }
+thoth-core     = { path = "crates/thoth-core",     version = "0.0.4" }
+thoth-parse    = { path = "crates/thoth-parse",    version = "0.0.4" }
+thoth-store    = { path = "crates/thoth-store",    version = "0.0.4" }
+thoth-graph    = { path = "crates/thoth-graph",    version = "0.0.4" }
+thoth-memory   = { path = "crates/thoth-memory",   version = "0.0.4" }
+thoth-retrieve = { path = "crates/thoth-retrieve", version = "0.0.4" }
+thoth-mcp      = { path = "crates/thoth-mcp",      version = "0.0.4" }
+
+# Async + error handling
+tokio        = { version = "1.43", features = ["macros", "rt-multi-thread", "fs", "sync", "time", "io-util"] }
+async-trait  = "0.1.83"
+thiserror    = "2"
+anyhow       = "1.0.89"
+
+# Serde
+serde        = { version = "1.0.210", features = ["derive"] }
+serde_json   = "1.0.128"
+toml         = "0.8.19"
+
+# Logging
+tracing              = "0.1.40"
+tracing-subscriber   = { version = "0.3.18", features = ["env-filter"] }
+
+# Utility
+uuid         = { version = "1.10", features = ["v4", "serde"] }
+time         = { version = "0.3.36", features = ["serde", "formatting", "parsing", "macros"] }
+blake3       = "1.5"
+parking_lot  = "0.12"
+futures      = "0.3"
+
+# CLI
+clap         = { version = "4.5", features = ["derive"] }
+
+# Storage
+redb         = "4.0.0"
+tantivy      = "0.26.0"
+rusqlite     = { version = "0.39.0", features = ["bundled"] }
+
+# HTTP (provider adapters; rustls so no OpenSSL headers on CI boxes)
+reqwest      = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip"] }
+
+# Dev
+tempfile     = "3.13"
+
+[profile.release]
+opt-level     = 3
+lto           = "thin"
+codegen-units = 1
+strip         = "symbols"
+
+[profile.dev]
+opt-level = 0
+debug     = true
+
+# Compile a handful of heavy dependencies with light optimisation even in
+# debug builds (libsqlite3-sys + tantivy dominate `cargo test` wall time).
+[profile.dev.package.libsqlite3-sys]
+opt-level = 1
+
+[profile.dev.package.tantivy]
+opt-level = 1
+
+[profile.dev.package.tantivy-columnar]
+opt-level = 1
+
+[profile.dev.package.tantivy-sstable]
+opt-level = 1

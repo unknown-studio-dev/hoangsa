@@ -1,0 +1,42 @@
+[package]
+name = "thoth-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "The `thoth` command-line interface."
+
+[[bin]]
+name = "thoth"
+path = "src/main.rs"
+
+[features]
+default   = []
+anthropic = ["thoth-retrieve/anthropic", "dep:reqwest"]
+
+[dependencies]
+thoth-core     = { workspace = true }
+thoth-parse    = { workspace = true }
+thoth-store    = { workspace = true }
+thoth-retrieve = { workspace = true }
+thoth-memory   = { workspace = true }
+thoth-mcp      = { workspace = true }
+
+blake3               = { workspace = true }
+tokio                = { workspace = true, features = ["signal", "process", "io-std", "net"] }
+anyhow               = { workspace = true }
+tracing              = { workspace = true }
+tracing-subscriber   = { workspace = true }
+serde                = { workspace = true }
+serde_json           = { workspace = true }
+toml                 = { workspace = true }
+time                 = { workspace = true }
+clap                 = { workspace = true }
+indicatif            = "0.18"
+dialoguer            = { version = "0.12", default-features = false, features = ["fuzzy-select"] }
+reqwest              = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

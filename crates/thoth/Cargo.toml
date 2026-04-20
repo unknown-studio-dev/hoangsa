@@ -1,0 +1,28 @@
+[package]
+name = "thoth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Long-term memory for coding agents — umbrella crate. Re-exports the Thoth public API and wires the individual stores behind a single `CodeMemory` façade."
+
+[dependencies]
+thoth-core     = { workspace = true }
+thoth-parse    = { workspace = true }
+thoth-store    = { workspace = true }
+thoth-graph    = { workspace = true }
+thoth-memory   = { workspace = true }
+thoth-retrieve = { workspace = true }
+
+tokio        = { workspace = true }
+
+[features]
+default = []
+
+[dev-dependencies]
+tokio    = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tempfile = { workspace = true }
+uuid     = { workspace = true }
+time     = { workspace = true }

@@ -1,0 +1,46 @@
+[package]
+name = "thoth-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Storage backends: redb (KV + graph), tantivy (BM25), ChromaDB (vectors), SQLite+FTS5 (episodes), markdown files."
+
+[dependencies]
+thoth-core   = { workspace = true }
+async-trait  = { workspace = true }
+tokio        = { workspace = true, features = ["process"] }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+tracing      = { workspace = true }
+time         = { workspace = true }
+parking_lot  = { workspace = true }
+
+# Graph / KV (redb — pure Rust embedded B-tree store)
+redb         = { workspace = true }
+
+# Full-text search (BM25)
+tantivy      = { workspace = true }
+
+# Episodic log (SQLite + FTS5 contentless index)
+rusqlite     = { workspace = true }
+
+# ChromaDB vector search via Python sidecar (no ONNX in Rust)
+anyhow       = { workspace = true }
+
+[dev-dependencies]
+tokio     = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
+tempfile  = { workspace = true }
+uuid      = { workspace = true }
+paste     = "1"
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+[[bench]]
+name = "graph_bfs"
+harness = false
+
+[[bench]]
+name = "kv_ops"
+harness = false
