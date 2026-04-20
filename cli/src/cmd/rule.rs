@@ -88,6 +88,112 @@ fn read_rules_config(project_dir: &str) -> Result<Option<RulesConfig>, Box<dyn s
     Ok(Some(config))
 }
 
+pub fn cmd_rule_gate() -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::Read;
+
+    // Read all of stdin
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input).ok();
+
+    // Parse the hook payload: {tool_name, tool_input}
+    let parsed: serde_json::Value = serde_json::from_str(&input).unwrap_or(serde_json::json!({}));
+    let tool_name = parsed
+        .get("tool_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let tool_input = parsed
+        .get("tool_input")
+        .cloned()
+        .unwrap_or(serde_json::json!({}));
+
+    // Resolve rules.json path via cwd
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    // Graceful degradation: rules.json missing → approve
+    let config = match read_rules_config(&cwd) {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            out(&json!({"decision": "approve"}));
+            return Ok(());
+        }
+        Err(_) => {
+            // Parse/IO error → approve (graceful degradation, REQ-09)
+            out(&json!({"decision": "approve"}));
+            return Ok(());
+        }
+    };
+
+    let mut warnings: Vec<(String, String, String)> = Vec::new(); // (rule_id, rule_name, message)
+
+    for rule in &config.rules {
+        if !rule.enabled {
+            continue;
+        }
+
+        // Check tool_name matches rule.matcher (pipe-split list)
+        let matcher_matches = rule
+            .matcher
+            .split('|')
+            .any(|m| m.trim() == tool_name);
+        if !matcher_matches {
+            continue;
+        }
+
+        // Evaluate all conditions against tool_input
+        if !evaluate_rule_conditions(rule, &tool_input) {
+            continue;
+        }
+
+        // All conditions matched
+        match rule.action {
+            RuleAction::Block => {
+                // First match wins for block
+                let matched_condition = rule.conditions.first();
+                let field_info = matched_condition
+                    .map(|c| format!("Field: {} matched {} '{}'", c.field, op_label(&c.op), c.value))
+                    .unwrap_or_default();
+                let reason = format!(
+                    "⛔ RULE VIOLATION: {}\n\nRule: {}\n{}\nAction: BLOCK\n\n{}",
+                    rule.id, rule.name, field_info, rule.message
+                );
+                out(&json!({"decision": "block", "reason": reason}));
+                return Ok(());
+            }
+            RuleAction::Warn => {
+                warnings.push((rule.id.clone(), rule.name.clone(), rule.message.clone()));
+            }
+        }
+    }
+
+    // No blocking rule matched
+    if warnings.is_empty() {
+        out(&json!({"decision": "approve"}));
+    } else {
+        let reason = warnings
+            .iter()
+            .map(|(id, name, msg)| {
+                format!("⚠️ RULE WARNING: {}\n\nRule: {}\n\n{}", id, name, msg)
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n---\n\n");
+        out(&json!({"decision": "approve", "reason": reason}));
+    }
+
+    Ok(())
+}
+
+fn op_label(op: &ConditionOp) -> &'static str {
+    match op {
+        ConditionOp::Glob => "glob",
+        ConditionOp::Regex => "regex",
+        ConditionOp::Contains => "contains",
+        ConditionOp::NotContains => "not_contains",
+        ConditionOp::StartsWith => "starts_with",
+    }
+}
+
 fn write_rules_config(project_dir: &str, config: &RulesConfig) -> Result<(), Box<dyn std::error::Error>> {
     let hoangsa_dir = Path::new(project_dir).join(".hoangsa");
     if !hoangsa_dir.exists() {

@@ -123,6 +123,33 @@ fn main() {
         ("hook", "compact-check") => {
             cmd::hook::cmd_compact_check(&cwd);
         }
+        ("hook", "rule-gate") => {
+            let _ = cmd::rule::cmd_rule_gate();
+        }
+        ("rule", "list") => {
+            let dir = rest.first().copied().unwrap_or(&cwd);
+            let _ = cmd::rule::cmd_rule_list(dir);
+        }
+        ("rule", "add") => {
+            let dir = rest.first().copied().unwrap_or(&cwd);
+            let json_arg = rest.get(1).copied().unwrap_or("{}");
+            let _ = cmd::rule::cmd_rule_add(dir, json_arg);
+        }
+        ("rule", "remove") => {
+            let dir = rest.first().copied().unwrap_or(&cwd);
+            let id = rest.get(1).copied().unwrap_or("");
+            let _ = cmd::rule::cmd_rule_remove(dir, id);
+        }
+        ("rule", "enable") => {
+            let dir = rest.first().copied().unwrap_or(&cwd);
+            let id = rest.get(1).copied().unwrap_or("");
+            let _ = cmd::rule::cmd_rule_enable(dir, id);
+        }
+        ("rule", "disable") => {
+            let dir = rest.first().copied().unwrap_or(&cwd);
+            let id = rest.get(1).copied().unwrap_or("");
+            let _ = cmd::rule::cmd_rule_disable(dir, id);
+        }
         ("commit", _) => {
             // commit "<message>" --files f1 f2 ...
             let message = sub;
