@@ -368,6 +368,177 @@ fn build_rules_block(enabled_rules: &[&Rule]) -> String {
     lines.join("\n")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    fn make_condition(field: &str, op: ConditionOp, value: &str) -> Condition {
+        Condition {
+            field: field.to_string(),
+            op,
+            value: value.to_string(),
+        }
+    }
+
+    fn make_rule(matcher: &str, conditions: Vec<Condition>) -> Rule {
+        Rule {
+            id: "test-rule".to_string(),
+            name: "Test Rule".to_string(),
+            enabled: true,
+            matcher: matcher.to_string(),
+            conditions,
+            action: RuleAction::Block,
+            message: "Test block message".to_string(),
+        }
+    }
+
+    // ── condition operator tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_rule_evaluate_glob_match() {
+        let cond = make_condition("path", ConditionOp::Glob, "dist/*");
+        assert!(evaluate_condition(&cond, "dist/bundle.js"));
+    }
+
+    #[test]
+    fn test_rule_evaluate_glob_no_match() {
+        let cond = make_condition("path", ConditionOp::Glob, "dist/*");
+        assert!(!evaluate_condition(&cond, "src/main.rs"));
+    }
+
+    #[test]
+    fn test_rule_evaluate_regex_match() {
+        let cond = make_condition("content", ConditionOp::Regex, r"\beval\s*\(");
+        assert!(evaluate_condition(&cond, "code eval(x)"));
+    }
+
+    #[test]
+    fn test_rule_evaluate_regex_no_match() {
+        let cond = make_condition("content", ConditionOp::Regex, r"\beval\s*\(");
+        assert!(!evaluate_condition(&cond, "code evaluate(x)"));
+    }
+
+    #[test]
+    fn test_rule_evaluate_contains_match() {
+        let cond = make_condition("text", ConditionOp::Contains, "todo");
+        assert!(evaluate_condition(&cond, "add todo item"));
+    }
+
+    #[test]
+    fn test_rule_evaluate_not_contains_match() {
+        let cond = make_condition("text", ConditionOp::NotContains, "todo");
+        assert!(evaluate_condition(&cond, "add item"));
+    }
+
+    #[test]
+    fn test_rule_evaluate_starts_with_match() {
+        let cond = make_condition("path", ConditionOp::StartsWith, "/tmp");
+        assert!(evaluate_condition(&cond, "/tmp/file.txt"));
+    }
+
+    #[test]
+    fn test_rule_evaluate_starts_with_no_match() {
+        let cond = make_condition("path", ConditionOp::StartsWith, "/tmp");
+        assert!(!evaluate_condition(&cond, "/var/file.txt"));
+    }
+
+    #[test]
+    fn test_rule_evaluate_invalid_regex() {
+        // An unclosed bracket is an invalid regex — must return false, not panic
+        let cond = make_condition("content", ConditionOp::Regex, "[unclosed");
+        assert!(!evaluate_condition(&cond, "anything"));
+    }
+
+    #[test]
+    fn test_rule_evaluate_invalid_glob() {
+        // A pattern with only `**` and extra `[` is malformed in some glob libs
+        // We use a pattern that the `glob` crate rejects (unmatched bracket)
+        let cond = make_condition("path", ConditionOp::Glob, "[invalid");
+        assert!(!evaluate_condition(&cond, "anything"));
+    }
+
+    // ── AND logic tests ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_rule_multi_condition_all_match() {
+        let rule = make_rule(
+            "Edit",
+            vec![
+                make_condition("path", ConditionOp::Glob, "dist/*"),
+                make_condition("path", ConditionOp::Contains, "bundle"),
+            ],
+        );
+        let input = json!({ "path": "dist/bundle.js" });
+        assert!(evaluate_rule_conditions(&rule, &input));
+    }
+
+    #[test]
+    fn test_rule_multi_condition_partial_match() {
+        // First condition matches, second does not — AND → false
+        let rule = make_rule(
+            "Edit",
+            vec![
+                make_condition("path", ConditionOp::Glob, "dist/*"),
+                make_condition("path", ConditionOp::Contains, "vendor"),
+            ],
+        );
+        let input = json!({ "path": "dist/bundle.js" });
+        assert!(!evaluate_rule_conditions(&rule, &input));
+    }
+
+    #[test]
+    fn test_rule_missing_field() {
+        // Condition references a field not present in tool_input → false
+        let rule = make_rule(
+            "Edit",
+            vec![make_condition("nonexistent_field", ConditionOp::Contains, "foo")],
+        );
+        let input = json!({ "path": "dist/bundle.js" });
+        assert!(!evaluate_rule_conditions(&rule, &input));
+    }
+
+    // ── gate / matcher logic tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_rule_matcher_match() {
+        // Tool name "Edit" should match against matcher "Edit|Write"
+        let rule = make_rule(
+            "Edit|Write",
+            vec![make_condition("path", ConditionOp::Contains, "dist")],
+        );
+        let tool_name = "Edit";
+        let tool_input = json!({ "path": "dist/bundle.js" });
+
+        let matcher_matches = rule
+            .matcher
+            .split('|')
+            .any(|m| m.trim() == tool_name);
+        assert!(matcher_matches, "Expected tool_name 'Edit' to match matcher 'Edit|Write'");
+
+        // Conditions also pass, so the rule would fire
+        assert!(evaluate_rule_conditions(&rule, &tool_input));
+    }
+
+    #[test]
+    fn test_rule_matcher_no_match() {
+        // Tool name "Bash" should NOT match matcher "Edit|Write"
+        let rule = make_rule(
+            "Edit|Write",
+            vec![make_condition("path", ConditionOp::Contains, "dist")],
+        );
+        let tool_name = "Bash";
+
+        let matcher_matches = rule
+            .matcher
+            .split('|')
+            .any(|m| m.trim() == tool_name);
+        assert!(!matcher_matches, "Expected tool_name 'Bash' NOT to match matcher 'Edit|Write'");
+    }
+}
+
 pub fn cmd_rule_sync(project_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
     let claude_md_path = Path::new(project_dir).join("CLAUDE.md");
 
