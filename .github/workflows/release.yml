@@ -175,31 +175,20 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          cp scripts/install.sh dist/install.sh
-          chmod +x dist/install.sh
-
-          # Mapping: release triple -> cli artifact name
-          declare -A CLI_ARTIFACT=(
-            [darwin-arm64]=cli-darwin-arm64
-            [darwin-x64]=cli-darwin-x64
-            [linux-x64]=cli-linux-x64
-            [linux-arm64]=cli-linux-arm64
-            [linux-x64-musl]=cli-linux-x64-musl
-          )
+          install -m 0755 scripts/install.sh dist/install.sh
 
           for triple in darwin-arm64 darwin-x64 linux-x64 linux-arm64 linux-x64-musl; do
-            cli_art="${CLI_ARTIFACT[$triple]}"
             stage="stage/$triple"
             mkdir -p "$stage/bin"
 
-            cp "artifacts/$cli_art/hoangsa-cli" "$stage/bin/hoangsa-cli"
+            cp "artifacts/cli-$triple/hoangsa-cli" "$stage/bin/hoangsa-cli"
             cp "artifacts/memory-bins-$triple/hoangsa-memory" "$stage/bin/hoangsa-memory"
             cp "artifacts/memory-bins-$triple/hoangsa-memory-mcp" "$stage/bin/hoangsa-memory-mcp"
             chmod +x "$stage"/bin/*
 
             cp -r templates "$stage/templates"
-            cp LICENSE "$stage/LICENSE" 2>/dev/null || true
-            cp VERSION "$stage/VERSION" 2>/dev/null || true
+            [ -f LICENSE ] && cp LICENSE "$stage/LICENSE"
+            [ -f VERSION ] && cp VERSION "$stage/VERSION"
 
             tar -C "$stage" -czf "dist/hoangsa-$triple.tar.gz" .
           done
