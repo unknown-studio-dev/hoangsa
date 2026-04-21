@@ -12,7 +12,7 @@ allowed-tools:
 ---
 
 <objective>
-One-time project onboarding. Detects (or scaffolds) the codebase, sets user preferences, configures model routing, and indexes with Thoth.
+One-time project onboarding. Detects (or scaffolds) the codebase, sets user preferences, configures model routing, and indexes with hoangsa-memory.
 
 Creates `.hoangsa/config.json` with complete project configuration:
 - User preferences (lang, spec_lang, interaction_level, review_style)

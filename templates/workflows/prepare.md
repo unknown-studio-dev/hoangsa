@@ -109,7 +109,7 @@ For precise budget estimation, run:
 
 ### 3e. Context pointers & dependency analysis
 
-**If Thoth available:** For each key symbol mentioned in the DESIGN-SPEC (types, functions, classes to create or modify):
+**If hoangsa-memory available:** For each key symbol mentioned in the DESIGN-SPEC (types, functions, classes to create or modify):
 
 1. Run `memory_symbol_context({name: "symbolName"})` to get callers, callees, and process participation
 2. Use callers/callees to:
@@ -117,7 +117,7 @@ For precise budget estimation, run:
    - Generate precise `context_pointers` — include caller definitions that workers need to see
 3. Run `memory_impact({target: "symbolName", direction: "upstream"})` for symbols being modified → if HIGH/CRITICAL risk, flag in the plan and consider splitting the task
 
-**If Thoth unavailable:** Use Grep/Glob to find references and imports. Less precise but functional.
+**If hoangsa-memory unavailable:** Use Grep/Glob to find references and imports. Less precise but functional.
 
 **Context pointer format:** `absolute/path/to/file:START_LINE-END_LINE`
 

@@ -87,14 +87,14 @@ Parse the result — if `type` is `"docs"` and `files` contains `"RESEARCH.md"`:
 
 ### 2b. Codebase scan
 
-**If THOTH_AVAILABLE:**
+**If MEMORY_AVAILABLE:**
 - Run `memory_recall({query: "<IDEA>"})` to find relevant code, flows, and patterns
 - For top symbols found → run `memory_symbol_context({name: "<symbol>"})` to understand structure
 - Search past conversations for prior brainstorms on similar topics:
   `memory_archive_search({query: "<IDEA>"})`
   If relevant past brainstorms found → surface to user: "You discussed something similar in a past session."
 
-**If THOTH_NOT_INSTALLED:**
+**If MEMORY_NOT_INSTALLED:**
 - Use Glob to find project entry points (`index.*`, `main.*`, `app.*`, `server.*`)
 - Use Grep to find files referencing the idea's keywords
 - Read manifest files (`package.json`, `Cargo.toml`, etc.) for tech stack
@@ -344,7 +344,7 @@ Before reporting completion in Step 7, output this table:
 ```
 | Step | Status |
 |------|--------|
-| 0. Setup (lang + Thoth) | DONE / SKIPPED |
+| 0. Setup (lang + hoangsa-memory) | DONE / SKIPPED |
 | 1. Init session + idea | DONE / SKIPPED |
 | 2. Explore context | DONE / SKIPPED |
 | 3. Clarify intent | DONE / SKIPPED |

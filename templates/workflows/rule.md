@@ -237,7 +237,7 @@ Hiển thị kết quả theo action đã thực hiện:
    Action:   <RULE_ACTION>
    Message:  <RULE_MESSAGE>
 
-Rule đã active ngay. Thoth sẽ enforce rule này ở PreToolUse gate.
+Rule đã active ngay. hoangsa-memory sẽ enforce rule này ở PreToolUse gate.
 ```
 
 **Sau khi remove:**

@@ -117,7 +117,7 @@ First, check hoangsa-memory availability:
 command -v hoangsa-memory &>/dev/null && echo "MEMORY_AVAILABLE" || echo "MEMORY_NOT_INSTALLED"
 ```
 
-Store result as `THOTH_STATUS`.
+Store result as `MEMORY_STATUS`.
 
 ### Model selection
 
@@ -127,7 +127,7 @@ MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model researcher)
 
 Use the resolved model for spawning research agents.
 
-**THOTH_ACTOR:** Set `THOTH_ACTOR=hoangsa/research-<agent>` for research agents. This selects the `hoangsa/research-*` gate policy (gate disabled) so read-only research agents are not blocked by the gate.
+**MEMORY_ACTOR:** Set `MEMORY_ACTOR=hoangsa/research-<agent>` for research agents. This selects the `hoangsa/research-*` gate policy (gate disabled) so read-only research agents are not blocked by the gate.
 
 Launch 3 parallel research agents:
 
@@ -136,7 +136,7 @@ Launch 3 parallel research agents:
 Goal: Understand how the codebase is organized relative to the research topic.
 
 ```
-If THOTH_STATUS == "MEMORY_AVAILABLE":
+If MEMORY_STATUS == "MEMORY_AVAILABLE":
   - Run memory_recall({query: "<RESEARCH_TOPIC>"}) to find relevant execution flows
   - Run memory_symbol_context({name: "<key symbol found>"}) for top symbols
 Else (MEMORY_NOT_INSTALLED fallback):
@@ -155,7 +155,7 @@ Output:
 Goal: Identify coding patterns and conventions used in the codebase.
 
 ```
-If THOTH_STATUS == "MEMORY_AVAILABLE":
+If MEMORY_STATUS == "MEMORY_AVAILABLE":
   - Use memory_symbol_context({name: "<relevant function or class>"}) for key symbols
   - Trace callers and callees to understand patterns
 Else (MEMORY_NOT_INSTALLED fallback):

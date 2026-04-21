@@ -296,7 +296,7 @@ You are a HOANGSA worker. Execute this fix task precisely.
 Task: <task.name>
 ID: <task.id>
 Workspace: <workspace_dir>
-Thoth: <THOTH_STATUS — THOTH_AVAILABLE or THOTH_UNAVAILABLE>
+hoangsa-memory: <MEMORY_STATUS — MEMORY_AVAILABLE or MEMORY_UNAVAILABLE>
 
 Files to modify:
 <task.files — list>
@@ -312,7 +312,7 @@ Cross-layer notes:
 
 Instructions:
 1. Read all context_pointers files first
-2. Use memory_symbol_context({name: "buggySymbol"}) to understand all callers and callees before fixing (if Thoth is available)
+2. Use memory_symbol_context({name: "buggySymbol"}) to understand all callers and callees before fixing (if hoangsa-memory is available)
 3. Run memory_impact({target: "symbolName", direction: "upstream"}) on every symbol you modify — if HIGH/CRITICAL, report to orchestrator
 4. Implement the minimal fix — do not change anything outside scope
 5. Run the acceptance command to verify: <task.acceptance>
@@ -387,7 +387,7 @@ Fixing...
 
 ---
 
-## Step 4b: Persist bug lesson (if Thoth available)
+## Step 4b: Persist bug lesson (if hoangsa-memory available)
 
 After a successful fix, persist the root cause as a lesson so future agents avoid the same trap:
 
@@ -417,7 +417,7 @@ If this fix revealed a pattern seen in ≥5 existing lessons (e.g., same module 
 2. If cluster ≥5 with good success rates → `memory_skill_propose({slug: "<pattern-name>", body: "<SKILL.md content>", source_triggers: ["<trigger1>", "<trigger2>", ...]})`
 3. Report draft to user
 
-Skip this step if Thoth is unavailable or the fix was trivial (typo, missing import).
+Skip this step if hoangsa-memory is unavailable or the fix was trivial (typo, missing import).
 
 ### Save fix summary for future reference
 
@@ -502,7 +502,7 @@ Before reporting completion, output this table. Every row MUST show DONE or SKIP
 ```
 | Step | Status |
 |------|--------|
-| 0. Setup (lang + Thoth + task link) | DONE / SKIPPED |
+| 0. Setup (lang + hoangsa-memory + task link) | DONE / SKIPPED |
 | 1. Analyze bug | DONE / SKIPPED |
 | 2. Cross-layer trace | DONE / SKIPPED |
 | 3. Confirm fix plan | DONE / SKIPPED |

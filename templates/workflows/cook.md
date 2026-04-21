@@ -183,7 +183,7 @@ You are a HOANGSA worker. Execute this task precisely.
 Task: <task.name>
 ID: <task.id>
 Workspace: <workspace_dir>
-hoangsa-memory: <THOTH_STATUS — MEMORY_AVAILABLE or THOTH_UNAVAILABLE>
+hoangsa-memory: <MEMORY_STATUS — MEMORY_AVAILABLE or MEMORY_UNAVAILABLE>
 
 Files to modify:
 <task.files — list>
@@ -226,7 +226,7 @@ After task passes — verify change scope:
   If unexpected symbols are affected, report to orchestrator.
 ```
 
-**THOTH_ACTOR:** Set `THOTH_ACTOR=hoangsa/cook-wave-<N>` environment variable when spawning workers. This selects the `hoangsa/cook-*` gate policy (longer recall window, lower relevance threshold) so workers have less friction during implementation.
+**MEMORY_ACTOR:** Set `MEMORY_ACTOR=hoangsa/cook-wave-<N>` environment variable when spawning workers. This selects the `hoangsa/cook-*` gate policy (longer recall window, lower relevance threshold) so workers have less friction during implementation.
 
 **Token budget tracking:** Track token usage per task. If a task approaches 70% of its budget_tokens, warn. If it exceeds budget, the worker should wrap up current work and report partial completion rather than continuing.
 

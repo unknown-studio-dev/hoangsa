@@ -37,7 +37,7 @@
     "build": "cargo build --release -p hoangsa-cli",
     "build:media": "cargo build --release -p hoangsa-cli --features media && cp target/release/hoangsa-cli target/release/hoangsa-cli-media",
     "build:all": "npm run build:media && npm run build",
-    "build:thoth": "cargo build --release -p thoth-cli -p thoth-mcp",
+    "build:memory": "cargo build --release -p thoth-cli -p thoth-mcp",
     "build:workspace": "cargo build --release --workspace",
     "test": "cargo build --release -p hoangsa-cli && ./target/release/hoangsa-cli verify $(pwd)",
     "verify": "./target/release/hoangsa-cli verify $(pwd)",

@@ -1178,7 +1178,7 @@ Indexing codebase with hoangsa-memory...
 ```
 
 ```bash
-timeout 120 hoangsa-memory --json index . && rm -f .hoangsa-memory/.outdated && echo "THOTH_OK" || echo "THOTH_FAIL"
+timeout 120 hoangsa-memory --json index . && rm -f .hoangsa-memory/.outdated && echo "MEMORY_OK" || echo "MEMORY_FAIL"
 ```
 
 After successful indexing, warm up the memory and show skills:

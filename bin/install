@@ -190,21 +190,21 @@ function writeMcpJson(mcpJsonPath, data) {
   fs.writeFileSync(mcpJsonPath, JSON.stringify(data, null, 2) + "\n");
 }
 
-/** Register thoth MCP server in cwd/.mcp.json, pointing at the binary we
- *  just copied into targetDir. Preserves existing env so prior THOTH_ROOT
- *  wiring (from a pre-monorepo install) continues to resolve the same
+/** Register hoangsa-memory MCP server in cwd/.mcp.json, pointing at the binary we
+ *  just copied into targetDir. Preserves existing env so prior HOANGSA_MEMORY_ROOT
+ *  wiring (from a pre-rename install) continues to resolve the same
  *  on-disk memory. */
-function registerThothMcp(targetDir) {
+function registerMemoryMcp(targetDir) {
   const exeExt = process.platform === "win32" ? ".exe" : "";
-  const thothMcpBin = path.join(
+  const memoryMcpBin = path.join(
     targetDir,
     "hoangsa",
     "bin",
-    `thoth-mcp${exeExt}`,
+    `hoangsa-memory-mcp${exeExt}`,
   );
-  if (!fs.existsSync(thothMcpBin)) {
+  if (!fs.existsSync(memoryMcpBin)) {
     console.log(
-      `  ${yellow}⚠${reset} thoth-mcp binary missing — skipping .mcp.json registration. Run 'npm run build:thoth' then re-install.`,
+      `  ${yellow}⚠${reset} hoangsa-memory-mcp binary missing — skipping .mcp.json registration. Run 'npm run build:memory' then re-install.`,
     );
     return;
   }
@@ -213,17 +213,17 @@ function registerThothMcp(targetDir) {
   const mcpData = readMcpJson(mcpJsonPath);
   if (!mcpData.mcpServers) mcpData.mcpServers = {};
 
-  const existing = mcpData.mcpServers.thoth || {};
+  const existing = mcpData.mcpServers["hoangsa-memory"] || {};
   const env = { RUST_LOG: "info", ...(existing.env || {}) };
 
-  mcpData.mcpServers.thoth = {
-    command: thothMcpBin,
+  mcpData.mcpServers["hoangsa-memory"] = {
+    command: memoryMcpBin,
     args: [],
     env,
   };
   writeMcpJson(mcpJsonPath, mcpData);
   console.log(
-    `  ${green}✓${reset} Registered thoth MCP server in .mcp.json`,
+    `  ${green}✓${reset} Registered hoangsa-memory MCP server in .mcp.json`,
   );
 }
 
@@ -630,9 +630,9 @@ function copyAllFiles(src, targetDir, attribution, wantMedia = false) {
     failures.push("hoangsa-cli binary");
   }
 
-  // Copy thoth binaries (memory indexer + MCP server) from target/release.
+  // Copy hoangsa-memory binaries (memory indexer + MCP server) from target/release.
   // Platform packages don't bundle these yet — dev build required.
-  for (const name of ["thoth", "thoth-mcp"]) {
+  for (const name of ["hoangsa-memory", "hoangsa-memory-mcp"]) {
     const srcPath = path.join(
       __dirname,
       "..",
@@ -647,7 +647,7 @@ function copyAllFiles(src, targetDir, attribution, wantMedia = false) {
       console.log(`  ${green}✓${reset} Installed ${name} binary`);
     } else {
       console.log(
-        `  ${yellow}⚠${reset} ${name} binary not found — run 'npm run build:thoth' to build`,
+        `  ${yellow}⚠${reset} ${name} binary not found — run 'npm run build:memory' to build`,
       );
     }
   }
@@ -760,7 +760,7 @@ function ensureHoangsaHooks(settings, targetDir) {
     `  ${green}✓${reset} Installed Stop hook (workflow completion guard)`,
   );
 
-  // --- PostToolUse post-enforce hook (records thoth events to enforcement log) ---
+  // --- PostToolUse post-enforce hook (records hoangsa-memory events to enforcement log) ---
   if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
   settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter(
     (entry) => !entry._hoangsa_managed,
@@ -775,10 +775,10 @@ function ensureHoangsaHooks(settings, targetDir) {
       },
     ],
     matcher:
-      "mcp__thoth__memory_impact|mcp__thoth__memory_detect_changes|mcp__thoth__memory_recall|Edit|Write|MultiEdit",
+      "mcp__hoangsa-memory__memory_impact|mcp__hoangsa-memory__memory_detect_changes|mcp__hoangsa-memory__memory_recall|Edit|Write|MultiEdit",
   });
   console.log(
-    `  ${green}✓${reset} Installed post-enforce hook (records thoth events for enforcement)`,
+    `  ${green}✓${reset} Installed post-enforce hook (records hoangsa-memory events for enforcement)`,
   );
 
   // --- PreToolUse lesson-guard hook (surfaces relevant lessons before edits) ---
@@ -868,10 +868,10 @@ function install(isGlobal) {
   const settings = readSettings(settingsPath);
   ensureHoangsaHooks(settings, targetDir);
 
-  // Register thoth MCP server in cwd/.mcp.json so Claude Code spawns the
-  // locally-installed thoth-mcp binary on demand. Idempotent — preserves
-  // any existing THOTH_ROOT env setting so prior memory state stays wired.
-  registerThothMcp(targetDir);
+  // Register hoangsa-memory MCP server in cwd/.mcp.json so Claude Code spawns the
+  // locally-installed hoangsa-memory-mcp binary on demand. Idempotent — preserves
+  // any existing HOANGSA_MEMORY_ROOT env setting so prior memory state stays wired.
+  registerMemoryMcp(targetDir);
 
   // Seed default rules.json if missing (idempotent — does nothing if file exists)
   const cliBin = path.join(targetDir, "hoangsa", "bin",

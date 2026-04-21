@@ -435,10 +435,10 @@ Invoke /hoangsa:research with:
   - Scope: "codebase"
   - Mode: "auto"
   - Session: use the current $SESSION_DIR (research output goes to $SESSION_DIR/RESEARCH.md)
-  - Thoth: pass THOTH_STATUS so research agents use Thoth tools when available
+  - hoangsa-memory: pass MEMORY_STATUS so research agents use hoangsa-memory tools when available
 ```
 
-This avoids duplicating the parallel research agents — the research workflow handles structure, patterns, dependencies, and tests analysis with Thoth-first fallback.
+This avoids duplicating the parallel research agents — the research workflow handles structure, patterns, dependencies, and tests analysis with hoangsa-memory-first fallback.
 
 Set a soft timeout of 120 seconds for research. If research does not complete, proceed with available context and note in DESIGN-SPEC that research was incomplete.
 
@@ -446,7 +446,7 @@ Wait for RESEARCH.md to be written to `$SESSION_DIR/` before proceeding.
 
 **If `RESEARCH_MODE` is `"inline"` (default):** skip the full research agent and perform lightweight inline research instead:
 
-1. Use Thoth recall (if available) or Grep/Glob to find code relevant to the task description from CONTEXT.md
+1. Use hoangsa-memory recall (if available) or Grep/Glob to find code relevant to the task description from CONTEXT.md
 2. Read key files identified in CONTEXT.md (context_pointers, referenced paths)
 3. Write a minimal `RESEARCH.md` to `$SESSION_DIR/` summarising findings (relevant symbols, files, patterns, dependencies)
 
@@ -578,7 +578,7 @@ status: "draft"
 
 ### Affected Files
 
-**If Thoth available:** Use `memory_impact({target: "symbolName", direction: "upstream"})` for each symbol being modified to discover all affected files (direct callers at d=1, indirect at d=2). This prevents missing files that import or call the changed code.
+**If hoangsa-memory available:** Use `memory_impact({target: "symbolName", direction: "upstream"})` for each symbol being modified to discover all affected files (direct callers at d=1, indirect at d=2). This prevents missing files that import or call the changed code.
 
 | File | Action | Description | Impact |
 |------|--------|-------------|--------|
@@ -884,7 +884,7 @@ Before reporting completion in Step 8, output this table. Every row MUST show DO
 ```
 | Step | Status |
 |------|--------|
-| 0. Setup (lang + Thoth) | DONE / SKIPPED |
+| 0. Setup (lang + hoangsa-memory) | DONE / SKIPPED |
 | 1. Init session | DONE / SKIPPED |
 | 2. Gather input | DONE / SKIPPED |
 | 3. Create CONTEXT.md | DONE / SKIPPED |
