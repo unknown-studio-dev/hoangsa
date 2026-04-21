@@ -264,6 +264,7 @@ impl Server {
             "memory_archive_status" => self.tool_archive_status().await,
             "memory_archive_topics" => self.tool_archive_topics(arguments).await,
             "memory_archive_search" => self.tool_archive_search(arguments).await,
+            "memory_archive_ingest" => self.tool_archive_ingest(arguments).await,
             other => {
                 return Err(RpcError::new(
                     error_codes::METHOD_NOT_FOUND,
@@ -1965,6 +1966,69 @@ impl Server {
         Ok(ToolOutput::new(json!(arr), text))
     }
 
+    /// Run an archive ingest inside the daemon process so the existing
+    /// ChromaDB sidecar is reused. This is the memory-pressure fix:
+    /// PreCompact / SessionEnd hooks used to spawn a detached CLI which
+    /// booted a fresh ~500 MB Python sidecar per invocation. Concurrent
+    /// Claude Code sessions would pile those up and OOM the machine.
+    /// Forwarding to this tool via the daemon socket keeps the sidecar
+    /// count at one.
+    async fn tool_archive_ingest(&self, args: Value) -> anyhow::Result<ToolOutput> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default)]
+            project: Option<String>,
+            #[serde(default)]
+            topic: Option<String>,
+            #[serde(default)]
+            refresh: bool,
+            #[serde(default)]
+            limit: Option<usize>,
+        }
+        let Args {
+            project,
+            topic,
+            refresh,
+            limit,
+        } = serde_json::from_value(args)?;
+
+        let tracker_path = StoreRoot::archive_path(&self.inner.root);
+        let tracker = thoth_store::ArchiveTracker::open(&tracker_path).await?;
+
+        // Daemon-side ingest requires the already-running ChromaDB
+        // sidecar. If it's not enabled we bail via ToolOutput::error so
+        // the caller can fall back to spawning the CLI.
+        let col = match self.get_chroma().await {
+            Some(_) => self.open_archive_chroma().await?,
+            None => return Ok(ToolOutput::error("ChromaDB not enabled")),
+        };
+
+        let opts = thoth_retrieve::archive::IngestOpts {
+            project_filter: project,
+            topic_override: topic,
+            refresh,
+            limit,
+        };
+        let stats = thoth_retrieve::archive::run_ingest(&tracker, &col, opts).await?;
+
+        let text = format!(
+            "Ingested {} sessions ({} chunks), skipped {} already-ingested. Retention trimmed {} session(s), cleaned {} from ChromaDB.",
+            stats.total_sessions,
+            stats.total_chunks,
+            stats.skipped,
+            stats.retention_trimmed,
+            stats.retention_chroma_cleaned,
+        );
+        let data = json!({
+            "total_sessions": stats.total_sessions,
+            "total_chunks": stats.total_chunks,
+            "skipped": stats.skipped,
+            "retention_trimmed": stats.retention_trimmed,
+            "retention_chroma_cleaned": stats.retention_chroma_cleaned,
+        });
+        Ok(ToolOutput::new(data, text))
+    }
+
     async fn upsert_memory_chroma(&self, kind: &str, text: &str, tags: &[String]) {
         let col = match self.open_memory_chroma().await {
             Ok(c) => c,
@@ -2538,6 +2602,23 @@ fn tools_catalog() -> Vec<Tool> {
                     "topic": { "type": "string", "description": "Filter by topic." }
                 },
                 "required": ["query"]
+            }),
+        },
+        Tool {
+            name: "memory_archive_ingest".to_string(),
+            description: "Ingest Claude Code conversation sessions into the archive via the \
+                          daemon, reusing the running ChromaDB sidecar. Invoked by hook \
+                          forwarding (PreCompact / SessionEnd) so concurrent Claude Code \
+                          sessions don't each spawn their own ~500 MB Python sidecar."
+                .to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string", "description": "Only ingest sessions from this project." },
+                    "topic":   { "type": "string", "description": "Override auto-detected topic for all ingested sessions." },
+                    "refresh": { "type": "boolean", "description": "Re-ingest already-seen sessions (pick up new turns).", "default": false },
+                    "limit":   { "type": "integer", "minimum": 0, "description": "Cap ingest at N most recent session files. 0 disables the implicit first-run cap." }
+                }
             }),
         },
     ]

@@ -325,13 +325,31 @@ fn find_thoth_bin() -> Option<String> {
     None
 }
 
-/// Fire-and-forget `hoangsa-memory archive ingest --refresh` so the
-/// current transcript (including any growth since last ingest) lands in
-/// the archive. Runs fully detached — stdio goes to /dev/null and the
-/// handle is dropped immediately — so the caller (PreCompact /
-/// SessionEnd hook) never stalls the user's session. Retention trimming
-/// runs inside the subprocess.
+/// Fire-and-forget archive ingest so the current transcript (including
+/// any growth since last ingest) lands in the archive. Runs fully
+/// detached from the caller (PreCompact / SessionEnd hook) so the
+/// user's session never stalls. Retention trimming runs inside the
+/// target process.
+///
+/// Routing:
+///   1. If an MCP daemon socket is reachable (at `<root>/mcp.sock`),
+///      send a `memory_archive_ingest` call over it. The daemon runs
+///      the ingest in its own process, reusing its lazy-initialised
+///      ChromaDB Python sidecar.
+///   2. Otherwise, spawn a detached `hoangsa-memory archive ingest
+///      --refresh` subprocess (old behaviour). The advisory flock in
+///      `cmd_archive_ingest` serialises concurrent subprocesses so we
+///      still only boot one sidecar at a time.
+///
+/// The daemon path is the big win — previously every PreCompact /
+/// SessionEnd hook fire spawned a fresh ~500 MB Python sidecar, and
+/// concurrent Claude Code sessions would pile them up and OOM the
+/// machine. Forwarding to the running daemon keeps the sidecar count
+/// at one.
 fn spawn_archive_ingest() {
+    if try_forward_to_daemon() {
+        return;
+    }
     use std::process::{Command, Stdio};
     let Some(bin) = find_thoth_bin() else { return };
     let _ = Command::new(bin)
@@ -340,6 +358,125 @@ fn spawn_archive_ingest() {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn();
+}
+
+/// Try to send a `memory_archive_ingest` request to a running MCP
+/// daemon. Returns `true` iff the request was written AND the daemon
+/// replied within the short timeout.
+///
+/// We wait for the reply on purpose: a bare "connect + write" can
+/// succeed even when the daemon is wedged, which would silently skip
+/// the subprocess fallback. Waiting for the one-line JSON-RPC response
+/// gives us a real liveness signal. The timeout is short (2s) because
+/// this runs inside a hook and we don't want to stall the user's
+/// session when the daemon is unresponsive.
+fn try_forward_to_daemon() -> bool {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+
+    const DAEMON_TIMEOUT: Duration = Duration::from_secs(2);
+
+    let Some(sock_path) = candidate_mcp_socket() else {
+        return false;
+    };
+
+    let mut stream = match UnixStream::connect(&sock_path) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    // Hard wall-clock on both halves of the conversation. Without these,
+    // a half-wedged daemon could block the hook for the kernel default
+    // socket timeout (effectively forever).
+    let _ = stream.set_read_timeout(Some(DAEMON_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(DAEMON_TIMEOUT));
+
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "hoangsa-memory.call",
+        "params": {
+            "name": "memory_archive_ingest",
+            "arguments": { "refresh": true }
+        }
+    });
+    let mut line = match serde_json::to_string(&request) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    line.push('\n');
+
+    if stream.write_all(line.as_bytes()).is_err() {
+        return false;
+    }
+    if stream.flush().is_err() {
+        return false;
+    }
+
+    // One-line JSON-RPC response. We don't inspect it — any reply is a
+    // liveness signal. On timeout / EOF we return false and let the
+    // caller fall back to the subprocess path.
+    let mut reader = BufReader::new(stream);
+    let mut buf = String::new();
+    matches!(reader.read_line(&mut buf), Ok(n) if n > 0)
+}
+
+/// Locate an MCP daemon socket. Tries the local `.hoangsa-memory/` in
+/// the current working directory first, then the global
+/// `~/.hoangsa-memory/projects/<slug>/` layout (mirroring the resolver
+/// in `thoth-mcp::main`).
+fn candidate_mcp_socket() -> Option<std::path::PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+
+    // Local root
+    let local = cwd.join(".hoangsa-memory").join("mcp.sock");
+    if local.exists() {
+        return Some(local);
+    }
+
+    // Global root — readable-slug layout: last two cwd components,
+    // lowercased, non-alnum → '-'. Matches `thoth-mcp::main::project_slug`.
+    let home = std::env::var_os("HOME")?;
+    let slug = project_slug(&cwd);
+    let global = std::path::PathBuf::from(home)
+        .join(".hoangsa-memory")
+        .join("projects")
+        .join(slug)
+        .join("mcp.sock");
+    if global.exists() {
+        return Some(global);
+    }
+    None
+}
+
+/// Last-two-path-components slug (lowercased, non-alnum → '-'). Kept
+/// in sync with `thoth-mcp::main::project_slug` so the hook finds the
+/// same socket the daemon binds.
+fn project_slug(path: &Path) -> String {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let components: Vec<&str> = canonical
+        .components()
+        .filter_map(|c| c.as_os_str().to_str())
+        .collect();
+    let n = components.len();
+    let parts = if n >= 2 {
+        &components[n - 2..]
+    } else {
+        &components[..]
+    };
+    let raw = parts.join("-");
+    let mut result = String::with_capacity(raw.len());
+    let mut prev_dash = false;
+    for c in raw.chars().flat_map(|c| c.to_lowercase()) {
+        if c.is_ascii_alphanumeric() {
+            result.push(c);
+            prev_dash = false;
+        } else if !prev_dash {
+            result.push('-');
+            prev_dash = true;
+        }
+    }
+    result.trim_matches('-').to_string()
 }
 
 /// `hook session-archive`

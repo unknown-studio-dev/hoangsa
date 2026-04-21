@@ -17,6 +17,7 @@ thoth-parse  = { workspace = true }
 thoth-store  = { workspace = true }
 thoth-graph  = { workspace = true }
 tokio        = { workspace = true }
+anyhow       = { workspace = true }
 serde        = { workspace = true }
 toml         = { workspace = true }
 tracing      = { workspace = true }

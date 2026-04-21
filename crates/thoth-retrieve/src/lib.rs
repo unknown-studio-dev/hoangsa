@@ -20,11 +20,13 @@
 #![deny(rust_2018_idioms)]
 #![warn(missing_docs)]
 
+pub mod archive;
 pub mod config;
 pub mod enrich;
 pub mod indexer;
 pub mod retriever;
 
+pub use archive::{IngestOpts, IngestStats, run_ingest};
 pub use config::{ChromaConfig, IndexConfig, OutputConfig, RetrieveConfig, WatchConfig};
 pub use enrich::{enrich_chunks, extract_docstring};
 pub use indexer::{IndexProgress, IndexStats, Indexer, chunk_id, read_span};
