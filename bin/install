@@ -190,21 +190,84 @@ function writeMcpJson(mcpJsonPath, data) {
   fs.writeFileSync(mcpJsonPath, JSON.stringify(data, null, 2) + "\n");
 }
 
-/** Register hoangsa-memory MCP server in cwd/.mcp.json, pointing at the binary we
- *  just copied into targetDir. Preserves existing env so prior HOANGSA_MEMORY_ROOT
- *  wiring (from a pre-rename install) continues to resolve the same
- *  on-disk memory. */
-function registerMemoryMcp(targetDir) {
+/** Stable per-user install root for the hoangsa-memory binaries.
+ *  Lives outside any specific project so the memory / MCP server can be
+ *  shared by every project on the machine without re-bundling. */
+function memoryGlobalBinDir() {
+  return path.join(os.homedir(), ".hoangsa-memory", "bin");
+}
+
+/** Install `hoangsa-memory` + `hoangsa-memory-mcp` globally under
+ *  `~/.hoangsa-memory/bin/`. Source is the monorepo `target/release/` —
+ *  if missing, auto-invoke `npm run build:memory` so the user gets a
+ *  one-shot install experience. Returns `true` when both binaries are
+ *  present at the global dest on return, `false` when either is still
+ *  missing (build failed or source tree unavailable). */
+function installMemoryGlobal() {
+  const exeExt = process.platform === "win32" ? ".exe" : "";
+  const names = ["hoangsa-memory", "hoangsa-memory-mcp"];
+  const destDir = memoryGlobalBinDir();
+  const releaseDir = path.join(__dirname, "..", "target", "release");
+
+  const anyMissing = () =>
+    names.some((n) => !fs.existsSync(path.join(releaseDir, `${n}${exeExt}`)));
+
+  if (anyMissing()) {
+    console.log(
+      `  ${dim}Building hoangsa-memory binaries (npm run build:memory)...${reset}`,
+    );
+    try {
+      execSync("npm run build:memory", {
+        cwd: path.join(__dirname, ".."),
+        stdio: "inherit",
+      });
+    } catch (_) {
+      console.log(
+        `  ${yellow}⚠${reset} Build failed — skipping hoangsa-memory global install. Run 'npm run build:memory' manually then re-run install.`,
+      );
+      return false;
+    }
+  }
+  if (anyMissing()) {
+    console.log(
+      `  ${yellow}⚠${reset} hoangsa-memory binaries still missing after build — skipping global install.`,
+    );
+    return false;
+  }
+
+  fs.mkdirSync(destDir, { recursive: true });
+  for (const name of names) {
+    const src = path.join(releaseDir, `${name}${exeExt}`);
+    const dest = path.join(destDir, `${name}${exeExt}`);
+    fs.copyFileSync(src, dest);
+    fs.chmodSync(dest, 0o755);
+    console.log(
+      `  ${green}✓${reset} Installed ${name} → ${tildify(dest)} (global)`,
+    );
+  }
+  return true;
+}
+
+/** Replace `$HOME` prefix with `~` for display — purely cosmetic. */
+function tildify(p) {
+  const home = os.homedir();
+  return p.startsWith(home) ? "~" + p.slice(home.length) : p;
+}
+
+/** Register hoangsa-memory MCP server in cwd/.mcp.json, pointing at the
+ *  global binary installed under `~/.hoangsa-memory/bin/`. Absolute path
+ *  so the registration works regardless of whether the user has the
+ *  global dir on $PATH. Preserves existing env entries (e.g. a custom
+ *  HOANGSA_MEMORY_ROOT) so repeat installs don't clobber user tweaks. */
+function registerMemoryMcp() {
   const exeExt = process.platform === "win32" ? ".exe" : "";
   const memoryMcpBin = path.join(
-    targetDir,
-    "hoangsa",
-    "bin",
+    memoryGlobalBinDir(),
     `hoangsa-memory-mcp${exeExt}`,
   );
   if (!fs.existsSync(memoryMcpBin)) {
     console.log(
-      `  ${yellow}⚠${reset} hoangsa-memory-mcp binary missing — skipping .mcp.json registration. Run 'npm run build:memory' then re-install.`,
+      `  ${yellow}⚠${reset} hoangsa-memory-mcp not found at ${tildify(memoryMcpBin)} — skipping .mcp.json registration.`,
     );
     return;
   }
@@ -214,16 +277,35 @@ function registerMemoryMcp(targetDir) {
   if (!mcpData.mcpServers) mcpData.mcpServers = {};
 
   const existing = mcpData.mcpServers["hoangsa-memory"] || {};
-  const env = { RUST_LOG: "info", ...(existing.env || {}) };
+  // Preserve any prior HOANGSA_MEMORY_ROOT the user set; carry over a
+  // legacy THOTH_ROOT entry from the rename era so state wired up before
+  // Phase A continues to resolve the same on-disk memory.
+  const existingEnv = existing.env || {};
+  const env = { RUST_LOG: "info", ...existingEnv };
+  if (env.THOTH_ROOT && !env.HOANGSA_MEMORY_ROOT) {
+    env.HOANGSA_MEMORY_ROOT = env.THOTH_ROOT;
+    delete env.THOTH_ROOT;
+  }
 
   mcpData.mcpServers["hoangsa-memory"] = {
     command: memoryMcpBin,
     args: [],
     env,
   };
+
+  // Drop the pre-rename `thoth` server entry — its binary no longer
+  // exists and leaving it in place makes Claude Code log spawn errors
+  // on every session.
+  if (mcpData.mcpServers.thoth) {
+    delete mcpData.mcpServers.thoth;
+    console.log(
+      `  ${dim}  (removed stale 'thoth' entry from .mcp.json)${reset}`,
+    );
+  }
+
   writeMcpJson(mcpJsonPath, mcpData);
   console.log(
-    `  ${green}✓${reset} Registered hoangsa-memory MCP server in .mcp.json`,
+    `  ${green}✓${reset} Registered hoangsa-memory MCP server in .mcp.json (→ ${tildify(memoryMcpBin)})`,
   );
 }
 
@@ -630,27 +712,10 @@ function copyAllFiles(src, targetDir, attribution, wantMedia = false) {
     failures.push("hoangsa-cli binary");
   }
 
-  // Copy hoangsa-memory binaries (memory indexer + MCP server) from target/release.
-  // Platform packages don't bundle these yet — dev build required.
-  for (const name of ["hoangsa-memory", "hoangsa-memory-mcp"]) {
-    const srcPath = path.join(
-      __dirname,
-      "..",
-      "target",
-      "release",
-      `${name}${exeExt}`,
-    );
-    const destPath = path.join(binDestDir, `${name}${exeExt}`);
-    if (fs.existsSync(srcPath)) {
-      fs.copyFileSync(srcPath, destPath);
-      fs.chmodSync(destPath, 0o755);
-      console.log(`  ${green}✓${reset} Installed ${name} binary`);
-    } else {
-      console.log(
-        `  ${yellow}⚠${reset} ${name} binary not found — run 'npm run build:memory' to build`,
-      );
-    }
-  }
+  // Install hoangsa-memory binaries globally under `~/.hoangsa-memory/bin/`
+  // so one build serves every project on the machine. Auto-builds with
+  // `npm run build:memory` if target/release is stale.
+  installMemoryGlobal();
 
   // Copy CHANGELOG.md (optional — skip silently if not present in package)
   const changelogSrc = path.join(__dirname, "..", "CHANGELOG.md");
@@ -868,10 +933,11 @@ function install(isGlobal) {
   const settings = readSettings(settingsPath);
   ensureHoangsaHooks(settings, targetDir);
 
-  // Register hoangsa-memory MCP server in cwd/.mcp.json so Claude Code spawns the
-  // locally-installed hoangsa-memory-mcp binary on demand. Idempotent — preserves
-  // any existing HOANGSA_MEMORY_ROOT env setting so prior memory state stays wired.
-  registerMemoryMcp(targetDir);
+  // Register hoangsa-memory MCP server in cwd/.mcp.json so Claude Code
+  // spawns the globally-installed hoangsa-memory-mcp binary on demand.
+  // Idempotent — preserves any existing HOANGSA_MEMORY_ROOT env setting
+  // so prior memory state stays wired.
+  registerMemoryMcp();
 
   // Seed default rules.json if missing (idempotent — does nothing if file exists)
   const cliBin = path.join(targetDir, "hoangsa", "bin",
