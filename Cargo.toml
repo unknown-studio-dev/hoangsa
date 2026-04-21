@@ -13,6 +13,7 @@ members = [
     "crates/hoangsa-memory-retrieve",
     "crates/hoangsa-memory",
     "crates/hoangsa-memory-mcp",
+    "crates/hoangsa-proxy",
 ]
 
 [workspace.package]
