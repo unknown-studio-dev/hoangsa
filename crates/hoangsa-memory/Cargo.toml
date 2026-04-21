@@ -1,0 +1,36 @@
+[package]
+name = "hoangsa-memory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "The `hoangsa-memory` command-line interface (memory + code-intelligence for hoangsa-cc)."
+
+[[bin]]
+name = "hoangsa-memory"
+path = "src/main.rs"
+
+[dependencies]
+hoangsa-memory-core     = { workspace = true }
+hoangsa-memory-parse    = { workspace = true }
+hoangsa-memory-store    = { workspace = true }
+hoangsa-memory-retrieve = { workspace = true }
+hoangsa-memory-policy   = { workspace = true }
+hoangsa-memory-mcp      = { workspace = true }
+
+blake3               = { workspace = true }
+tokio                = { workspace = true, features = ["signal", "process", "io-std", "net"] }
+anyhow               = { workspace = true }
+tracing              = { workspace = true }
+tracing-subscriber   = { workspace = true }
+serde                = { workspace = true }
+serde_json           = { workspace = true }
+toml                 = { workspace = true }
+time                 = { workspace = true }
+clap                 = { workspace = true }
+indicatif            = "0.18"
+
+[dev-dependencies]
+tempfile = { workspace = true }
