@@ -20,14 +20,10 @@
 #![deny(rust_2018_idioms)]
 #![warn(missing_docs)]
 
-pub mod background_review;
 pub mod cap;
 pub mod config;
-pub mod lesson_clusters;
 pub mod lesson_matcher;
 pub mod manager;
-pub mod promotion;
-pub mod reflection;
 pub mod rules;
 pub mod text_sim;
 pub mod working;
@@ -40,14 +36,7 @@ pub use cap::{
 pub use config::{
     ActorPolicyConfig, DisciplineConfig, EnforcementConfig, MemoryConfig, gate_defaults,
 };
-pub use lesson_clusters::{
-    DEFAULT_CLUSTER_JACCARD, DEFAULT_CLUSTER_MIN_SIZE, LessonCluster, detect_clusters,
-};
 pub use manager::{ForgetReport, MemoryManager, NudgeReport};
-pub use reflection::{
-    ReflectionDebt, mark_last_review, mark_session_start, mutations_since_last_review,
-    read_last_review,
-};
 pub use working::{WorkingMemory, WorkingNote};
 
 use time::OffsetDateTime;
