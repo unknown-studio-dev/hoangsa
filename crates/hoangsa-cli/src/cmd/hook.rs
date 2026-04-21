@@ -1136,17 +1136,16 @@ fn build_detect_changes_event(tool_input: &serde_json::Value, full_payload: &ser
         for line in diff.lines() {
             if let Some(path) = line.strip_prefix("+++ b/") {
                 files.push(path.to_string());
-            } else if let Some(path) = line.strip_prefix("--- a/") {
-                if path != "/dev/null" {
+            } else if let Some(path) = line.strip_prefix("--- a/")
+                && path != "/dev/null" {
                     files.push(path.to_string());
                 }
-            }
         }
     }
 
     // Also check tool_result for file mentions
-    if files.is_empty() {
-        if let Some(result) = full_payload.get("tool_result").and_then(|v| v.as_str()) {
+    if files.is_empty()
+        && let Some(result) = full_payload.get("tool_result").and_then(|v| v.as_str()) {
             // Parse result looking for file paths
             for line in result.lines() {
                 let trimmed = line.trim();
@@ -1161,7 +1160,6 @@ fn build_detect_changes_event(tool_input: &serde_json::Value, full_payload: &ser
                 }
             }
         }
-    }
 
     files.sort();
     files.dedup();
@@ -1184,9 +1182,11 @@ fn build_recall_event(tool_input: &serde_json::Value) -> Option<serde_json::Valu
 }
 
 /// Resolve a symbol (FQN or bare name) to a source file path.
+///
 /// 1. Ask the hoangsa-memory CLI for the symbol's canonical location (uses the code graph).
 /// 2. On miss or when hoangsa-memory is unavailable, fall back to a config-driven grep
 ///    built from `enforcement.symbol_patterns` (same source as extract_symbols).
+///
 /// Both paths scan from `cwd` — no more hardcoded `cli/src/` / `src/`.
 fn resolve_symbol_to_file(cwd: &str, symbol: &str) -> Option<String> {
     use std::process::Command;
@@ -1197,14 +1197,13 @@ fn resolve_symbol_to_file(cwd: &str, symbol: &str) -> Option<String> {
     // Preferred: hoangsa-memory index lookup.
     if let Some(memory_bin) = find_memory_bin() {
         let memory_root = Path::new(cwd).join(".hoangsa-memory");
-        if memory_root.exists() {
-            if let Ok(out) = Command::new(&memory_bin)
+        if memory_root.exists()
+            && let Ok(out) = Command::new(&memory_bin)
                 .args(["--root", &memory_root.to_string_lossy()])
                 .args(["context", bare, "--json"])
                 .current_dir(cwd)
                 .output()
-            {
-                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+                && let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
                     if let Some(path) = v.get("symbol").and_then(|s| s.get("path")).and_then(|p| p.as_str()) {
                         return Some(path.to_string());
                     }
@@ -1212,8 +1211,6 @@ fn resolve_symbol_to_file(cwd: &str, symbol: &str) -> Option<String> {
                         return Some(path.to_string());
                     }
                 }
-            }
-        }
     }
 
     // Fallback: in-process regex walk using the configured symbol patterns.
@@ -1563,6 +1560,51 @@ fn chrono_now() -> String {
     format!("{}Z", secs)
 }
 
+/// Find the most recently modified session directory.
+fn find_latest_session(sessions_root: &str) -> Option<String> {
+    let root = Path::new(sessions_root);
+    let type_dirs = fs::read_dir(root).ok()?;
+
+    let known_types = ["feat", "fix", "refactor", "perf", "test", "docs", "chore"];
+    let mut best: Option<(std::time::SystemTime, String)> = None;
+
+    for type_entry in type_dirs.filter_map(|e| e.ok()) {
+        let ft = type_entry.file_type().ok()?;
+        if !ft.is_dir() {
+            continue;
+        }
+        let type_name = type_entry.file_name().into_string().ok()?;
+        if !known_types.contains(&type_name.as_str()) {
+            continue;
+        }
+
+        let name_dirs = match fs::read_dir(type_entry.path()) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+
+        for name_entry in name_dirs.filter_map(|e| e.ok()) {
+            if !name_entry
+                .file_type()
+                .map(|ft| ft.is_dir())
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            let mtime = name_entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+
+            if best.as_ref().is_none_or(|(t, _)| mtime > *t) {
+                best = Some((mtime, name_entry.path().to_string_lossy().to_string()));
+            }
+        }
+    }
+
+    best.map(|(_, path)| path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1799,49 +1841,4 @@ mod tests {
         let num_part = &ts[..ts.len() - 1];
         assert!(num_part.parse::<u64>().is_ok());
     }
-}
-
-/// Find the most recently modified session directory.
-fn find_latest_session(sessions_root: &str) -> Option<String> {
-    let root = Path::new(sessions_root);
-    let type_dirs = fs::read_dir(root).ok()?;
-
-    let known_types = ["feat", "fix", "refactor", "perf", "test", "docs", "chore"];
-    let mut best: Option<(std::time::SystemTime, String)> = None;
-
-    for type_entry in type_dirs.filter_map(|e| e.ok()) {
-        let ft = type_entry.file_type().ok()?;
-        if !ft.is_dir() {
-            continue;
-        }
-        let type_name = type_entry.file_name().into_string().ok()?;
-        if !known_types.contains(&type_name.as_str()) {
-            continue;
-        }
-
-        let name_dirs = match fs::read_dir(type_entry.path()) {
-            Ok(d) => d,
-            Err(_) => continue,
-        };
-
-        for name_entry in name_dirs.filter_map(|e| e.ok()) {
-            if !name_entry
-                .file_type()
-                .map(|ft| ft.is_dir())
-                .unwrap_or(false)
-            {
-                continue;
-            }
-            let mtime = name_entry
-                .metadata()
-                .and_then(|m| m.modified())
-                .unwrap_or(std::time::UNIX_EPOCH);
-
-            if best.as_ref().is_none_or(|(t, _)| mtime > *t) {
-                best = Some((mtime, name_entry.path().to_string_lossy().to_string()));
-            }
-        }
-    }
-
-    best.map(|(_, path)| path)
 }

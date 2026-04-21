@@ -22,6 +22,7 @@ pub struct VideoInfo {
 }
 
 #[derive(Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct FrameExtractResult {
     pub video: String,
     pub frames_dir: String,
@@ -40,6 +41,7 @@ pub struct MontageResult {
 }
 
 #[derive(Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct FfmpegStatus {
     pub available: bool,
     pub path: String,
@@ -108,8 +110,8 @@ pub fn cmd_check_ffmpeg() {
         .stderr(std::process::Stdio::piped())
         .output();
 
-    if let Ok(output) = system_result {
-        if output.status.success() {
+    if let Ok(output) = system_result
+        && output.status.success() {
             let ffmpeg_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
             // Get version
@@ -136,7 +138,6 @@ pub fn cmd_check_ffmpeg() {
             }));
             return;
         }
-    }
 
     // Try npm ffmpeg-static
     let npm_result = Command::new("node")
@@ -145,8 +146,8 @@ pub fn cmd_check_ffmpeg() {
         .stderr(std::process::Stdio::piped())
         .output();
 
-    if let Ok(output) = npm_result {
-        if output.status.success() {
+    if let Ok(output) = npm_result
+        && output.status.success() {
             let ffmpeg_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !ffmpeg_path.is_empty() && ffmpeg_path != "null" {
                 out(&json!({
@@ -158,7 +159,6 @@ pub fn cmd_check_ffmpeg() {
                 return;
             }
         }
-    }
 
     out(&json!({
         "available": false,
@@ -1133,7 +1133,7 @@ mod tests {
         // canvas_w = 4 * 320 = 1280, canvas_h = 1 * 320 = 320
         let montage_img = image::open(&output_path).expect("failed to open montage output");
         let expected_w = 4 * 320;
-        let expected_h = 1 * 320;
+        let expected_h = 320;
         assert_eq!(
             montage_img.width(),
             expected_w,

@@ -37,11 +37,10 @@ pub fn cmd_plan(file_path: &str) {
         _ => {}
     }
 
-    if let Some(wd) = plan.get("workspace_dir").and_then(|v| v.as_str()) {
-        if !is_absolute(wd) {
+    if let Some(wd) = plan.get("workspace_dir").and_then(|v| v.as_str())
+        && !is_absolute(wd) {
             errors.push("workspace_dir must be an absolute path".to_string());
         }
-    }
 
     if let Some(task_arr) = tasks {
         for t in task_arr {
@@ -61,28 +60,25 @@ pub fn cmd_plan(file_path: &str) {
                     errors.push(format!("Task {tid}: missing {f}"));
                 }
             }
-            if let Some(complexity) = t.get("complexity").and_then(|v| v.as_str()) {
-                if !["low", "medium", "high"].contains(&complexity) {
+            if let Some(complexity) = t.get("complexity").and_then(|v| v.as_str())
+                && !["low", "medium", "high"].contains(&complexity) {
                     errors.push(format!("Task {tid}: complexity must be low|medium|high"));
                 }
-            }
-            if let Some(budget) = t.get("budget_tokens").and_then(|v| v.as_u64()) {
-                if budget > 80000 {
+            if let Some(budget) = t.get("budget_tokens").and_then(|v| v.as_u64())
+                && budget > 80000 {
                     warnings.push(format!("Task {tid}: budget {budget} exceeds 80k limit"));
                 }
-            }
             match t.get("files").and_then(|v| v.as_array()) {
                 Some(files) if files.is_empty() => {
                     errors.push(format!("Task {tid}: files must be non-empty array"));
                 }
                 Some(files) => {
                     for f in files {
-                        if let Some(fp) = f.as_str() {
-                            if !is_absolute(fp) {
+                        if let Some(fp) = f.as_str()
+                            && !is_absolute(fp) {
                                 errors
                                     .push(format!("Task {tid}: file path not absolute: {fp}"));
                             }
-                        }
                     }
                 }
                 None => {
@@ -103,15 +99,13 @@ pub fn cmd_plan(file_path: &str) {
             }
             if let Some(acceptance) = t.get("acceptance").and_then(|v| v.as_str()) {
                 let trimmed = acceptance.trim();
-                if !trimmed.is_empty() {
-                    if let Some(first_char) = trimmed.chars().next() {
-                        if !first_char.is_ascii_lowercase() {
+                if !trimmed.is_empty()
+                    && let Some(first_char) = trimmed.chars().next()
+                        && !first_char.is_ascii_lowercase() {
                             warnings.push(format!(
                                 "Task {tid}: acceptance may not be a runnable command"
                             ));
                         }
-                    }
-                }
             }
         }
     }
@@ -129,8 +123,7 @@ pub fn cmd_plan(file_path: &str) {
     // Budget sanity
     if let (Some(task_arr), Some(total_budget)) =
         (tasks, plan.get("budget_tokens").and_then(|v| v.as_f64()))
-    {
-        if total_budget > 0.0 {
+        && total_budget > 0.0 {
             let sum: f64 = task_arr
                 .iter()
                 .filter_map(|t| t.get("budget_tokens").and_then(|v| v.as_f64()))
@@ -142,7 +135,6 @@ pub fn cmd_plan(file_path: &str) {
                 ));
             }
         }
-    }
 
     let task_count = tasks.map(|a| a.len()).unwrap_or(0);
     out(&json!({
@@ -195,8 +187,8 @@ pub fn cmd_resolve(file_path: &str) {
             // Resolve files[]
             if let Some(files) = task.get_mut("files").and_then(|v| v.as_array_mut()) {
                 for file_val in files.iter_mut() {
-                    if let Some(fp) = file_val.as_str().map(|s| s.to_string()) {
-                        if let Some((resolved, reason)) =
+                    if let Some(fp) = file_val.as_str().map(|s| s.to_string())
+                        && let Some((resolved, reason)) =
                             resolve_path(&fp, &workspace_dir, workspace_path, &file_index)
                         {
                             fixes.push(json!({
@@ -208,7 +200,6 @@ pub fn cmd_resolve(file_path: &str) {
                             }));
                             *file_val = Value::String(resolved);
                         }
-                    }
                 }
             }
 
@@ -331,12 +322,11 @@ fn resolve_path(
             }
         }
         // Try matching just the filename
-        if let Some(fname) = abs_path.file_name().and_then(|f| f.to_str()) {
-            if let Some(matched) = fuzzy_match(fname, file_index) {
+        if let Some(fname) = abs_path.file_name().and_then(|f| f.to_str())
+            && let Some(matched) = fuzzy_match(fname, file_index) {
                 let resolved = workspace_path.join(&matched).to_string_lossy().to_string();
                 return Some((resolved, format!("fuzzy_filename:{fname}→{matched}")));
             }
-        }
     }
 
     None // path is absolute and exists — no change needed

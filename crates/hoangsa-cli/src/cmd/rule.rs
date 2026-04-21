@@ -258,6 +258,7 @@ pub fn default_rules() -> Vec<Rule> {
     fn cond(field: &str, op: ConditionOp, value: &str) -> Condition {
         Condition { field: field.to_string(), op, value: value.to_string() }
     }
+    #[allow(clippy::too_many_arguments)]
     fn rule(
         id: &str,
         name: &str,
@@ -549,6 +550,92 @@ fn build_rules_block(enabled_rules: &[&Rule]) -> String {
     lines.join("\n")
 }
 
+pub fn cmd_rule_sync(project_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let claude_md_path = Path::new(project_dir).join("CLAUDE.md");
+
+    // 1. Read rules config
+    let config = match read_rules_config(project_dir)? {
+        None => {
+            out(&json!({
+                "success": true,
+                "synced": 0,
+                "claude_md": claude_md_path.to_string_lossy()
+            }));
+            return Ok(());
+        }
+        Some(c) => c,
+    };
+
+    // 2. Collect enabled rules with prompt enforcement (hook/preflight rules are invisible to LLM)
+    let enabled_rules: Vec<&Rule> = config
+        .rules
+        .iter()
+        .filter(|r| r.enabled && r.enforcement == Enforcement::Prompt)
+        .collect();
+    let synced = enabled_rules.len();
+
+    // 3. Build markdown block
+    let block = build_rules_block(&enabled_rules);
+
+    // 4. Read or initialize CLAUDE.md
+    let existing = if claude_md_path.exists() {
+        fs::read_to_string(&claude_md_path)?
+    } else {
+        String::new()
+    };
+
+    // 5. Replace between markers or append
+    const START_MARKER: &str = "<!-- hoangsa-rules-start -->";
+    const END_MARKER: &str = "<!-- hoangsa-rules-end -->";
+
+    let updated = if let (Some(start_idx), Some(end_idx)) = (
+        existing.find(START_MARKER),
+        existing.find(END_MARKER),
+    ) {
+        let end_of_end = end_idx + END_MARKER.len();
+        format!("{}{}{}", &existing[..start_idx], block, &existing[end_of_end..])
+    } else if existing.is_empty() {
+        block.clone()
+    } else if existing.ends_with('\n') {
+        format!("{existing}\n{block}")
+    } else {
+        format!("{existing}\n\n{block}")
+    };
+
+    // 6. Write CLAUDE.md
+    fs::write(&claude_md_path, &updated)?;
+
+    // 7. Sync to AGENTS.md (subagents read this instead of CLAUDE.md)
+    let agents_md_path = Path::new(project_dir).join("AGENTS.md");
+    let agents_existing = if agents_md_path.exists() {
+        fs::read_to_string(&agents_md_path)?
+    } else {
+        String::new()
+    };
+    let agents_updated = if let (Some(start_idx), Some(end_idx)) = (
+        agents_existing.find(START_MARKER),
+        agents_existing.find(END_MARKER),
+    ) {
+        let end_of_end = end_idx + END_MARKER.len();
+        format!("{}{}{}", &agents_existing[..start_idx], block, &agents_existing[end_of_end..])
+    } else if agents_existing.is_empty() {
+        block
+    } else if agents_existing.ends_with('\n') {
+        format!("{agents_existing}\n{block}")
+    } else {
+        format!("{agents_existing}\n\n{block}")
+    };
+    fs::write(&agents_md_path, agents_updated)?;
+
+    out(&json!({
+        "success": true,
+        "synced": synced,
+        "claude_md": claude_md_path.to_string_lossy(),
+        "agents_md": agents_md_path.to_string_lossy()
+    }));
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -787,90 +874,4 @@ mod tests {
             .any(|m| m.trim() == tool_name);
         assert!(!matcher_matches, "Expected tool_name 'Bash' NOT to match matcher 'Edit|Write'");
     }
-}
-
-pub fn cmd_rule_sync(project_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let claude_md_path = Path::new(project_dir).join("CLAUDE.md");
-
-    // 1. Read rules config
-    let config = match read_rules_config(project_dir)? {
-        None => {
-            out(&json!({
-                "success": true,
-                "synced": 0,
-                "claude_md": claude_md_path.to_string_lossy()
-            }));
-            return Ok(());
-        }
-        Some(c) => c,
-    };
-
-    // 2. Collect enabled rules with prompt enforcement (hook/preflight rules are invisible to LLM)
-    let enabled_rules: Vec<&Rule> = config
-        .rules
-        .iter()
-        .filter(|r| r.enabled && r.enforcement == Enforcement::Prompt)
-        .collect();
-    let synced = enabled_rules.len();
-
-    // 3. Build markdown block
-    let block = build_rules_block(&enabled_rules);
-
-    // 4. Read or initialize CLAUDE.md
-    let existing = if claude_md_path.exists() {
-        fs::read_to_string(&claude_md_path)?
-    } else {
-        String::new()
-    };
-
-    // 5. Replace between markers or append
-    const START_MARKER: &str = "<!-- hoangsa-rules-start -->";
-    const END_MARKER: &str = "<!-- hoangsa-rules-end -->";
-
-    let updated = if let (Some(start_idx), Some(end_idx)) = (
-        existing.find(START_MARKER),
-        existing.find(END_MARKER),
-    ) {
-        let end_of_end = end_idx + END_MARKER.len();
-        format!("{}{}{}", &existing[..start_idx], block, &existing[end_of_end..])
-    } else if existing.is_empty() {
-        block.clone()
-    } else if existing.ends_with('\n') {
-        format!("{existing}\n{block}")
-    } else {
-        format!("{existing}\n\n{block}")
-    };
-
-    // 6. Write CLAUDE.md
-    fs::write(&claude_md_path, &updated)?;
-
-    // 7. Sync to AGENTS.md (subagents read this instead of CLAUDE.md)
-    let agents_md_path = Path::new(project_dir).join("AGENTS.md");
-    let agents_existing = if agents_md_path.exists() {
-        fs::read_to_string(&agents_md_path)?
-    } else {
-        String::new()
-    };
-    let agents_updated = if let (Some(start_idx), Some(end_idx)) = (
-        agents_existing.find(START_MARKER),
-        agents_existing.find(END_MARKER),
-    ) {
-        let end_of_end = end_idx + END_MARKER.len();
-        format!("{}{}{}", &agents_existing[..start_idx], block, &agents_existing[end_of_end..])
-    } else if agents_existing.is_empty() {
-        block
-    } else if agents_existing.ends_with('\n') {
-        format!("{agents_existing}\n{block}")
-    } else {
-        format!("{agents_existing}\n\n{block}")
-    };
-    fs::write(&agents_md_path, agents_updated)?;
-
-    out(&json!({
-        "success": true,
-        "synced": synced,
-        "claude_md": claude_md_path.to_string_lossy(),
-        "agents_md": agents_md_path.to_string_lossy()
-    }));
-    Ok(())
 }

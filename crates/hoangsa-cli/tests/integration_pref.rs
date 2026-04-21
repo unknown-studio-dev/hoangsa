@@ -375,14 +375,13 @@ fn test_context_selective_line_range() {
     let lines_text = seg["lines"].as_str().expect("lines must be a string");
     for line in lines_text.lines() {
         // Each line is "// line N" — verify N is in [3, 7]
-        if let Some(n_str) = line.strip_prefix("// line ") {
-            if let Ok(n) = n_str.trim().parse::<usize>() {
+        if let Some(n_str) = line.strip_prefix("// line ")
+            && let Ok(n) = n_str.trim().parse::<usize>() {
                 assert!(
-                    n >= 3 && n <= 7,
+                    (3..=7).contains(&n),
                     "selective mode: line {n} is outside the requested range 3-7"
                 );
             }
-        }
     }
 }
 

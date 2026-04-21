@@ -217,8 +217,8 @@ fn resolve_plan_path(plan_path: Option<&str>, cwd: &str) -> String {
         let state_file = Path::new(cwd).join(".hoangsa/state/session.json");
         if state_file.exists() {
             let state = read_json(state_file.to_str().unwrap_or(""));
-            if state.get("error").is_none() {
-                if let Some(session_id) = state.get("session_id").and_then(|v| v.as_str()) {
+            if state.get("error").is_none()
+                && let Some(session_id) = state.get("session_id").and_then(|v| v.as_str()) {
                     let plan = Path::new(cwd)
                         .join(".hoangsa/sessions")
                         .join(session_id)
@@ -227,7 +227,6 @@ fn resolve_plan_path(plan_path: Option<&str>, cwd: &str) -> String {
                         return plan.to_string_lossy().to_string();
                     }
                 }
-            }
         }
         Path::new(cwd)
             .join("plan.json")

@@ -267,6 +267,7 @@ impl WatchConfig {
 /// ChromaDB integration config (`[chroma]` in `config.toml`).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct ChromaConfig {
     /// Enable ChromaDB semantic search. Default `false`.
     pub enabled: bool,
@@ -275,14 +276,6 @@ pub struct ChromaConfig {
     pub data_path: Option<String>,
 }
 
-impl Default for ChromaConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            data_path: None,
-        }
-    }
-}
 
 impl ChromaConfig {
     /// Load `<root>/config.toml` if it exists, returning the `[chroma]`

@@ -1229,6 +1229,7 @@ impl Server {
 
     /// Resolve `fqn` against the graph with the standard suffix-fallback
     /// + ambiguity UX used by `tool_impact` and `tool_symbol_context`.
+    ///
     /// Returns `Ok((node, canonical_fqn))` on a unique match; on miss or
     /// ambiguity returns `Err(ToolOutput)` pre-rendered as an error.
     /// Keeps the fuzzy-FQN behaviour in one place so the agent-facing
@@ -3194,7 +3195,8 @@ mod enforcement_tools {
     #[test]
     fn tools_catalog_advertises_enforcement_surface() {
         let names: Vec<String> = tools_catalog().into_iter().map(|t| t.name).collect();
-        for needed in ["memory_remember_lesson"] {
+        {
+            let needed = "memory_remember_lesson";
             assert!(
                 names.iter().any(|n| n == needed),
                 "tools catalog missing `{needed}`; have {names:?}"

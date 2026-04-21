@@ -1476,11 +1476,9 @@ pnpm-lock.yaml
             // Sanity: a local-only action that MUST NOT appear in global —
             // included here only so the assertion catches regressions if
             // the planner mistakenly merges local actions into global.
-            let _forbidden_for_global = vec![
-                cwd.join(".mcp.json"),
+            let _forbidden_for_global = [cwd.join(".mcp.json"),
                 cwd.join(".hoangsa").join("rules.json"),
-                cwd.join(".memoryignore"),
-            ];
+                cwd.join(".memoryignore")];
             actions
         }
 
@@ -1834,8 +1832,8 @@ pub fn cmd_install(args: &[&str]) {
             // tarball staging area into `~/.hoangsa-memory/bin/`. Silent when
             // no staging dir is advertised (normal for re-runs) and skipped
             // entirely under `--no-memory`.
-            if !flags.no_memory {
-                if let Some(staging) = relocate::staging_dir_from_env() {
+            if !flags.no_memory
+                && let Some(staging) = relocate::staging_dir_from_env() {
                     let dest_preview = relocate::memory_bin_dir()
                         .unwrap_or_else(|_| PathBuf::from("~/.hoangsa-memory/bin"));
                     for src in relocate::source_memory_bins(&staging) {
@@ -1850,7 +1848,6 @@ pub fn cmd_install(args: &[&str]) {
                         }));
                     }
                 }
-            }
 
             // T-05: mode-aware targets — MCP register, rule + memory_ignore
             // seed (local-only), and quality-skills (global-only). Every

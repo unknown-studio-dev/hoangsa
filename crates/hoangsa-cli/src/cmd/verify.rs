@@ -91,11 +91,10 @@ fn parse_last_json(s: &str) -> Value {
         } else if ch == '}' {
             depth -= 1;
             if depth == 0 {
-                if let Some(s_idx) = start {
-                    if let Ok(v) = serde_json::from_str::<Value>(&s[s_idx..=i]) {
+                if let Some(s_idx) = start
+                    && let Ok(v) = serde_json::from_str::<Value>(&s[s_idx..=i]) {
                         results.push(v);
                     }
-                }
                 start = None;
             }
         }

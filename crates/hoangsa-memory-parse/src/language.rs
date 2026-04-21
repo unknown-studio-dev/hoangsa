@@ -234,7 +234,7 @@ impl Language {
                     .child_by_field_name("macro")?
                     .utf8_text(source)
                     .ok()
-                    .map(|s| last_name_segment(s));
+                    .map(last_name_segment);
             }
             #[cfg(feature = "lang-python")]
             (LanguageKind::Python, "call") => node

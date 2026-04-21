@@ -256,11 +256,10 @@ impl FtsIndex {
             // Damerau-Levenshtein distance 1–2 over body+symbol and try
             // once more before giving up. Runs in the same blocking task
             // so hot-path (non-empty result) pays nothing.
-            if top.is_empty() {
-                if let Some(fz) = build_fuzzy_query(&q, &fields) {
+            if top.is_empty()
+                && let Some(fz) = build_fuzzy_query(&q, &fields) {
                     top = searcher.search(&fz, &collector).map_err(store)?;
                 }
-            }
 
             let mut out = Vec::with_capacity(top.len());
             for (score, addr) in top {
