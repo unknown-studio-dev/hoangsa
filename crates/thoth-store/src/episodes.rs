@@ -56,20 +56,6 @@ pub struct EpisodeHit {
     pub event: Event,
 }
 
-/// A knowledge graph triple with temporal validity.
-#[derive(Debug, Clone, serde::Serialize)]
-#[allow(dead_code, missing_docs)]
-pub struct KgTriple {
-    pub id: i64,
-    pub subject: String,
-    pub predicate: String,
-    pub object: String,
-    pub valid_from: Option<String>,
-    pub valid_to: Option<String>,
-    pub confidence: f64,
-    pub source: Option<String>,
-}
-
 /// A verbatim conversation turn stored in `episodes.db`.
 #[derive(Debug, Clone)]
 pub struct Turn {
@@ -153,30 +139,6 @@ impl EpisodeLog {
             // columns existed. `ALTER TABLE ... ADD COLUMN` errors out if
             // the column is already there, so gate on `PRAGMA table_info`.
             ensure_decay_columns(&c)?;
-
-            // Knowledge graph — temporal entity-relationship triples.
-            c.execute_batch(
-                r#"
-                CREATE TABLE IF NOT EXISTS kg_triples (
-                    id           INTEGER PRIMARY KEY,
-                    subject      TEXT NOT NULL,
-                    predicate    TEXT NOT NULL,
-                    object       TEXT NOT NULL,
-                    valid_from   TEXT,
-                    valid_to     TEXT,
-                    confidence   REAL NOT NULL DEFAULT 1.0,
-                    source       TEXT,
-                    created_at   INTEGER NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_kg_subject
-                    ON kg_triples(subject);
-                CREATE INDEX IF NOT EXISTS idx_kg_object
-                    ON kg_triples(object);
-                CREATE INDEX IF NOT EXISTS idx_kg_predicate
-                    ON kg_triples(predicate);
-                "#,
-            )
-            .map_err(store)?;
 
             // Conversation turns — verbatim archival of user/assistant exchanges.
             c.execute_batch(
@@ -465,167 +427,6 @@ impl EpisodeLog {
         .map_err(|e| Error::Store(format!("join: {e}")))?
     }
 
-    // ---- knowledge graph ---------------------------------------------------
-
-    /// Add a temporal triple. Returns the row id.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn kg_add(
-        &self,
-        subject: String,
-        predicate: String,
-        object: String,
-        valid_from: Option<String>,
-        valid_to: Option<String>,
-        confidence: f64,
-        source: Option<String>,
-    ) -> Result<i64> {
-        let conn = self.conn.clone();
-        let now_ns = OffsetDateTime::now_utc()
-            .unix_timestamp_nanos()
-            .min(i64::MAX as i128) as i64;
-        tokio::task::spawn_blocking(move || -> Result<i64> {
-            let c = conn.lock();
-            c.execute(
-                "INSERT INTO kg_triples(subject, predicate, object, valid_from, valid_to, confidence, source, created_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![subject, predicate, object, valid_from, valid_to, confidence, source, now_ns],
-            )
-            .map_err(store)?;
-            Ok(c.last_insert_rowid())
-        })
-        .await
-        .map_err(|e| Error::Store(format!("join: {e}")))?
-    }
-
-    /// Query all triples for an entity (as subject or object).
-    /// If `as_of` is provided, filter to triples valid at that date.
-    pub async fn kg_query(
-        &self,
-        entity: String,
-        direction: String,
-        as_of: Option<String>,
-    ) -> Result<Vec<KgTriple>> {
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || -> Result<Vec<KgTriple>> {
-            let c = conn.lock();
-            let base = match direction.as_str() {
-                "outgoing" => "SELECT id, subject, predicate, object, valid_from, valid_to, confidence, source FROM kg_triples WHERE subject = ?1",
-                "incoming" => "SELECT id, subject, predicate, object, valid_from, valid_to, confidence, source FROM kg_triples WHERE object = ?1",
-                _ => "SELECT id, subject, predicate, object, valid_from, valid_to, confidence, source FROM kg_triples WHERE subject = ?1 OR object = ?1",
-            };
-            let sql = if as_of.is_some() {
-                format!(
-                    "{base} AND (valid_from IS NULL OR valid_from <= ?2) AND (valid_to IS NULL OR valid_to >= ?2)"
-                )
-            } else {
-                base.to_string()
-            };
-            let mut stmt = c.prepare(&sql).map_err(store)?;
-            let mut rows = if let Some(ref date) = as_of {
-                stmt.query(params![entity, date]).map_err(store)?
-            } else {
-                stmt.query(params![entity]).map_err(store)?
-            };
-            let mut out = Vec::new();
-            while let Some(r) = rows.next().map_err(store)? {
-                out.push(row_to_triple(r)?);
-            }
-            Ok(out)
-        })
-        .await
-        .map_err(|e| Error::Store(format!("join: {e}")))?
-    }
-
-    /// Mark a triple as ended by setting valid_to.
-    pub async fn kg_invalidate(
-        &self,
-        subject: String,
-        predicate: String,
-        object: String,
-        ended: Option<String>,
-    ) -> Result<u64> {
-        let conn = self.conn.clone();
-        let ended = ended.unwrap_or_else(|| {
-            OffsetDateTime::now_utc()
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap_or_default()
-        });
-        tokio::task::spawn_blocking(move || -> Result<u64> {
-            let c = conn.lock();
-            let n = c
-                .execute(
-                    "UPDATE kg_triples SET valid_to = ?4 \
-                     WHERE subject = ?1 AND predicate = ?2 AND object = ?3 AND valid_to IS NULL",
-                    params![subject, predicate, object, ended],
-                )
-                .map_err(store)?;
-            Ok(n as u64)
-        })
-        .await
-        .map_err(|e| Error::Store(format!("join: {e}")))?
-    }
-
-    /// Chronological timeline of triples, optionally filtered by entity.
-    pub async fn kg_timeline(&self, entity: Option<String>, limit: usize) -> Result<Vec<KgTriple>> {
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || -> Result<Vec<KgTriple>> {
-            let c = conn.lock();
-            let (sql, p): (String, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(ref ent) = entity {
-                (
-                    "SELECT id, subject, predicate, object, valid_from, valid_to, confidence, source \
-                     FROM kg_triples WHERE subject = ?1 OR object = ?1 \
-                     ORDER BY created_at DESC LIMIT ?2"
-                        .to_string(),
-                    vec![
-                        Box::new(ent.clone()) as Box<dyn rusqlite::ToSql>,
-                        Box::new(limit as i64),
-                    ],
-                )
-            } else {
-                (
-                    "SELECT id, subject, predicate, object, valid_from, valid_to, confidence, source \
-                     FROM kg_triples ORDER BY created_at DESC LIMIT ?1"
-                        .to_string(),
-                    vec![Box::new(limit as i64) as Box<dyn rusqlite::ToSql>],
-                )
-            };
-            let mut stmt = c.prepare(&sql).map_err(store)?;
-            let params_ref: Vec<&dyn rusqlite::ToSql> = p.iter().map(|b| b.as_ref()).collect();
-            let mut rows = stmt.query(params_ref.as_slice()).map_err(store)?;
-            let mut out = Vec::new();
-            while let Some(r) = rows.next().map_err(store)? {
-                out.push(row_to_triple(r)?);
-            }
-            Ok(out)
-        })
-        .await
-        .map_err(|e| Error::Store(format!("join: {e}")))?
-    }
-
-    /// KG summary stats.
-    pub async fn kg_stats(&self) -> Result<(i64, i64, i64)> {
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || -> Result<(i64, i64, i64)> {
-            let c = conn.lock();
-            let total: i64 = c
-                .query_row("SELECT COUNT(*) FROM kg_triples", [], |r| {
-                    r.get::<_, i64>(0)
-                })
-                .map_err(store)?;
-            let current: i64 = c
-                .query_row(
-                    "SELECT COUNT(*) FROM kg_triples WHERE valid_to IS NULL",
-                    [],
-                    |r| r.get::<_, i64>(0),
-                )
-                .map_err(store)?;
-            let expired = total - current;
-            Ok((total, current, expired))
-        })
-        .await
-        .map_err(|e| Error::Store(format!("join: {e}")))?
-    }
-
     // ---- conversation turns ------------------------------------------------
 
     /// Append a verbatim conversation turn. Returns the row id.
@@ -741,19 +542,6 @@ fn row_to_hit(r: &rusqlite::Row<'_>) -> Result<EpisodeHit> {
         kind,
         at,
         event,
-    })
-}
-
-fn row_to_triple(r: &rusqlite::Row<'_>) -> Result<KgTriple> {
-    Ok(KgTriple {
-        id: r.get(0).map_err(store)?,
-        subject: r.get(1).map_err(store)?,
-        predicate: r.get(2).map_err(store)?,
-        object: r.get(3).map_err(store)?,
-        valid_from: r.get(4).map_err(store)?,
-        valid_to: r.get(5).map_err(store)?,
-        confidence: r.get(6).map_err(store)?,
-        source: r.get(7).map_err(store)?,
     })
 }
 
