@@ -2,12 +2,12 @@
 # hoangsa installer — POSIX sh bootstrap.
 #
 # Usage:
-#   curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh | sh
-#   curl -fsSL https://github.com/pirumu/hoangsa/releases/download/<tag>/install.sh | sh -s -- --local
+#   curl -fsSL https://github.com/unknown-studio-dev/hoangsa/releases/latest/download/install.sh | sh
+#   curl -fsSL https://github.com/unknown-studio-dev/hoangsa/releases/download/<tag>/install.sh | sh -s -- --local
 #
 # Environment variables:
 #   HOANGSA_VERSION     Release tag to install (default: latest)
-#   HOANGSA_REPO        GitHub repo slug (default: pirumu/hoangsa)
+#   HOANGSA_REPO        GitHub repo slug (default: unknown-studio-dev/hoangsa)
 #   HOANGSA_INSTALL_DIR Install root for memory binaries (default: $HOME/.hoangsa-memory)
 #   HOANGSA_CLI_DIR     Install root for hoangsa-cli (default: $HOME/.hoangsa/bin)
 #   HOANGSA_NO_PATH_EDIT If "1", skip rc file edit (reserved for T-10)
@@ -25,7 +25,7 @@ set -eu
 # Config / constants
 # ---------------------------------------------------------------------------
 
-HOANGSA_REPO="${HOANGSA_REPO:-pirumu/hoangsa}"
+HOANGSA_REPO="${HOANGSA_REPO:-unknown-studio-dev/hoangsa}"
 HOANGSA_VERSION="${HOANGSA_VERSION:-latest}"
 HOANGSA_INSTALL_DIR="${HOANGSA_INSTALL_DIR:-$HOME/.hoangsa-memory}"
 HOANGSA_CLI_DIR="${HOANGSA_CLI_DIR:-$HOME/.hoangsa/bin}"
@@ -77,14 +77,14 @@ FLAGS (forwarded to `hoangsa-cli install`):
 
 ENVIRONMENT:
     HOANGSA_VERSION     Release tag (default: latest)
-    HOANGSA_REPO        GitHub repo slug (default: pirumu/hoangsa)
+    HOANGSA_REPO        GitHub repo slug (default: unknown-studio-dev/hoangsa)
     HOANGSA_INSTALL_DIR Install root for memory bins (default: ~/.hoangsa-memory)
     HOANGSA_CLI_DIR     Install root for hoangsa-cli (default: ~/.hoangsa/bin)
     HOANGSA_NO_PATH_EDIT If "1", do not touch rc files (manual export only)
 
 EXAMPLES:
-    curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh | sh
-    curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh | sh -s -- --local
+    curl -fsSL https://github.com/unknown-studio-dev/hoangsa/releases/latest/download/install.sh | sh
+    curl -fsSL https://github.com/unknown-studio-dev/hoangsa/releases/latest/download/install.sh | sh -s -- --local
     HOANGSA_VERSION=v0.1.5 sh install.sh --global --dry-run
 EOF
 }
@@ -252,9 +252,14 @@ print_manual_export() {
         "$HOANGSA_INSTALL_DIR" "$HOANGSA_CLI_DIR"
 }
 
+# Managed-block markers. Used by both the awk strip pass and the append pass
+# below — keep in sync via this single constant.
+HOANGSA_MARK_START='# hoangsa-memory:managed start'
+HOANGSA_MARK_END='# hoangsa-memory:managed end'
+
 # Rewrite the managed block inside the given rc file. Strips any existing
 # block delimited by the managed markers, then appends a fresh one. BSD/GNU
-# awk compatible.
+# awk compatible (plain POSIX awk only — no gensub, no \b, no gawk extensions).
 rewrite_managed_block() {
     _rc="$1"
     _tmp="$_rc.hoangsa.tmp.$$"
@@ -263,33 +268,30 @@ rewrite_managed_block() {
     [ -f "$_rc" ] || touch "$_rc"
 
     # Strip any existing managed block (inclusive of both marker lines).
-    awk '
-        /# hoangsa-memory:managed start/ { flag=1; next }
-        /# hoangsa-memory:managed end/   { flag=0; next }
-        !flag                             { print }
+    # Pass markers in as awk vars so we never duplicate the literal strings.
+    awk -v s="$HOANGSA_MARK_START" -v e="$HOANGSA_MARK_END" '
+        index($0, s) { flag=1; next }
+        index($0, e) { flag=0; next }
+        !flag        { print }
     ' "$_rc" > "$_tmp" || {
         rm -f "$_tmp"
         return 1
     }
 
-    # Ensure trailing newline before appending the fresh block.
-    if [ -s "$_tmp" ]; then
-        _last=$(tail -c 1 "$_tmp" 2>/dev/null || printf '')
-        if [ "$_last" != "" ]; then
-            # tail -c 1 returns empty when the last byte is a newline in
-            # command substitution (trailing newlines are stripped). So a
-            # non-empty value means we need to add a newline.
-            printf '\n' >> "$_tmp"
-        fi
+    # Ensure trailing newline before appending the fresh block. Command
+    # substitution strips trailing newlines, so a non-empty `tail -c 1`
+    # means the file does NOT end in \n.
+    if [ -s "$_tmp" ] && [ -n "$(tail -c 1 "$_tmp" 2>/dev/null)" ]; then
+        printf '\n' >> "$_tmp"
     fi
 
     {
-        printf '# hoangsa-memory:managed start\n'
+        printf '%s\n' "$HOANGSA_MARK_START"
         # shellcheck disable=SC2016  # `$HOME` / `$PATH` are intentionally
         # literal — we write them verbatim into the rc file so the user's
         # shell expands them at source time, not our installer.
         printf 'export PATH="$HOME/.hoangsa-memory/bin:$HOME/.hoangsa/bin:$PATH"\n'
-        printf '# hoangsa-memory:managed end\n'
+        printf '%s\n' "$HOANGSA_MARK_END"
     } >> "$_tmp"
 
     mv -f "$_tmp" "$_rc"
