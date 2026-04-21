@@ -201,6 +201,13 @@ fn main() {
             cmd::budget::cmd_estimate(rest.first().copied(), rest.get(1).copied())
         }
         ("budget", "breakdown") => cmd::budget::cmd_breakdown(rest.first().copied()),
+        ("install", _) => {
+            // Collect every arg after "install" as flag tokens so the
+            // subcommand can do its own parsing (sub may be a flag like
+            // "--global", not a positional subcommand).
+            let rest_all: Vec<&str> = args.iter().skip(1).map(|s| s.as_str()).collect();
+            cmd::install::cmd_install(&rest_all);
+        }
         ("commit", _) => {
             // commit "<message>" --files f1 f2 ...
             let message = sub;
@@ -249,6 +256,7 @@ Usage:
   stats record '<json>'
   stats summary [--last N] [--complexity low|medium|high]
   stats cache [-n top] [-s session_id]
+  install [--global|--local] [--uninstall] [--install-chroma] [--dry-run] [--task-manager=<clickup|asana|none>] [--no-memory] [--skip-path-edit]
 "
             );
             std::process::exit(1);

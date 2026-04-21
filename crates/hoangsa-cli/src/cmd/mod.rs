@@ -6,6 +6,7 @@ pub mod config;
 pub mod context;
 pub mod dag;
 pub mod hook;
+pub mod install;
 #[cfg(feature = "media")]
 pub mod media;
 pub mod model;
