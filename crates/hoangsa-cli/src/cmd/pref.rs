@@ -51,11 +51,33 @@ fn ensure_config(project_dir: &str) -> Option<Value> {
         return Some(defaults);
     }
 
-    let config = read_json(config_file.to_str().unwrap_or(""));
+    let mut config = read_json(config_file.to_str().unwrap_or(""));
     if config.get("error").is_some() {
         return None;
     }
+    if migrate_legacy_prefs(&mut config) {
+        if let Ok(serialized) = serde_json::to_string_pretty(&config) {
+            let _ = fs::write(&config_file, serialized);
+        }
+    }
     Some(config)
+}
+
+/// Rewrite legacy preference keys to their current names. Today this only
+/// covers `thoth_strict` → `memory_strict` (renamed when the internal
+/// subsystem was unified under the `hoangsa-memory` name). Returns `true`
+/// when the config was modified so the caller can persist it.
+fn migrate_legacy_prefs(config: &mut Value) -> bool {
+    let Some(prefs) = config.get_mut("preferences").and_then(Value::as_object_mut) else {
+        return false;
+    };
+    let Some(legacy) = prefs.remove("thoth_strict") else {
+        return false;
+    };
+    if !prefs.contains_key("memory_strict") {
+        prefs.insert("memory_strict".to_string(), legacy);
+    }
+    true
 }
 
 /// Known preference keys.

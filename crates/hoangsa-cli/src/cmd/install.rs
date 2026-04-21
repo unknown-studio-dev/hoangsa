@@ -1236,7 +1236,7 @@ pub mod relocate {
 //   * `--local`  → MCP registration in `<cwd>/.mcp.json`; exit 3 if the
 //                  `hoangsa-memory-mcp` binary is absent from
 //                  `~/.hoangsa-memory/bin/` (REQ-09 hint).
-//   * Rule + `.thothignore` seeds are **local-only** — `--global` must
+//   * Rule + `.memoryignore` seeds are **local-only** — `--global` must
 //     never create them in the user's current directory.
 //   * Quality-gate skills (`silent-failure-hunter`, `pr-test-analyzer`,
 //     `comment-analyzer`, `type-design-analyzer`) install only in
@@ -1262,17 +1262,17 @@ pub mod mode {
         "type-design-analyzer",
     ];
 
-    /// Standard `.thothignore` seed written in `--local` mode when the
-    /// project doesn't already carry one. Covers Thoth's own data dir,
-    /// common JS/TS build output, and generated/large files. Matches the
-    /// repo's top-level `.thothignore` so a fresh HOANGSA project starts
-    /// with the same baseline the monorepo uses.
-    pub const DEFAULT_THOTHIGNORE: &str = "\
-# .thothignore — Thoth-specific ignore rules (gitignore syntax).
+    /// Standard `.memoryignore` seed written in `--local` mode when
+    /// the project doesn't already carry one. Covers hoangsa-memory's own
+    /// data dir, common JS/TS build output, and generated/large files.
+    /// Matches the repo's top-level `.memoryignore` so a fresh
+    /// HOANGSA project starts with the same baseline the monorepo uses.
+    pub const DEFAULT_MEMORY_IGNORE: &str = "\
+# .memoryignore — hoangsa-memory-specific ignore rules (gitignore syntax).
 # Layered on top of .gitignore. Edit freely.
 
-# Thoth data (always ignored by the watcher, but explicit here too)
-.thoth/
+# hoangsa-memory data (always ignored by the watcher, but explicit here too)
+.hoangsa-memory/
 
 # Node / JS / TS
 node_modules/
@@ -1493,14 +1493,14 @@ pnpm-lock.yaml
         Ok(true)
     }
 
-    /// Create `<cwd>/.thothignore` with the default seed when the file
+    /// Create `<cwd>/.memoryignore` with the default seed when the file
     /// is absent. Idempotent — preserves user customizations on re-run.
-    pub fn seed_thothignore(cwd: &Path) -> io::Result<bool> {
-        let path = cwd.join(".thothignore");
+    pub fn seed_memory_ignore(cwd: &Path) -> io::Result<bool> {
+        let path = cwd.join(".memoryignore");
         if path.exists() {
             return Ok(false);
         }
-        fs::write(&path, DEFAULT_THOTHIGNORE)?;
+        fs::write(&path, DEFAULT_MEMORY_IGNORE)?;
         Ok(true)
     }
 
@@ -1573,7 +1573,7 @@ pnpm-lock.yaml
             let _forbidden_for_global = vec![
                 cwd.join(".mcp.json"),
                 cwd.join(".hoangsa").join("rules.json"),
-                cwd.join(".thothignore"),
+                cwd.join(".memoryignore"),
             ];
             actions
         }
@@ -1709,24 +1709,24 @@ pnpm-lock.yaml
         }
 
         #[test]
-        fn seed_thothignore_preserves_existing() {
+        fn seed_memory_ignore_preserves_existing() {
             let cwd = tempdir().expect("cwd tempdir");
             let existing = "custom/\n# user edits\n";
-            fs::write(cwd.path().join(".thothignore"), existing).expect("seed existing");
+            fs::write(cwd.path().join(".memoryignore"), existing).expect("seed existing");
 
-            let wrote = seed_thothignore(cwd.path()).expect("seed");
-            assert!(!wrote, "must not overwrite existing .thothignore");
+            let wrote = seed_memory_ignore(cwd.path()).expect("seed");
+            assert!(!wrote, "must not overwrite existing .memoryignore");
 
-            let back = fs::read_to_string(cwd.path().join(".thothignore")).expect("read back");
+            let back = fs::read_to_string(cwd.path().join(".memoryignore")).expect("read back");
             assert_eq!(back, existing, "user content preserved byte-for-byte");
         }
 
         #[test]
-        fn seed_thothignore_creates_when_absent() {
+        fn seed_memory_ignore_creates_when_absent() {
             let cwd = tempdir().expect("cwd tempdir");
-            let wrote = seed_thothignore(cwd.path()).expect("seed");
-            assert!(wrote, "fresh cwd should get a seeded .thothignore");
-            let back = fs::read_to_string(cwd.path().join(".thothignore")).expect("read back");
+            let wrote = seed_memory_ignore(cwd.path()).expect("seed");
+            assert!(wrote, "fresh cwd should get a seeded .memoryignore");
+            let back = fs::read_to_string(cwd.path().join(".memoryignore")).expect("read back");
             assert!(back.contains("node_modules/"), "seed contains standard ignores");
         }
 
@@ -1946,7 +1946,7 @@ pub fn cmd_install(args: &[&str]) {
                 }
             }
 
-            // T-05: mode-aware targets — MCP register, rule + thothignore
+            // T-05: mode-aware targets — MCP register, rule + memory_ignore
             // seed (local-only), and quality-skills (global-only). Every
             // action attaches the resolved absolute target so REQ-07 /
             // REQ-08 / REQ-09 can be asserted from the preview alone.
@@ -1988,8 +1988,8 @@ pub fn cmd_install(args: &[&str]) {
                         "target": cwd.join(".hoangsa").join("rules.json"),
                     }));
                     actions_json.push(json!({
-                        "action": "seed_thothignore",
-                        "target": cwd.join(".thothignore"),
+                        "action": "seed_memory_ignore",
+                        "target": cwd.join(".memoryignore"),
                     }));
                 }
                 _ => {}
@@ -2178,13 +2178,13 @@ pub fn cmd_install(args: &[&str]) {
         std::process::exit(1);
     }
 
-    // T-05: mode-aware MCP / rules / thothignore / quality-skills.
+    // T-05: mode-aware MCP / rules / memory_ignore / quality-skills.
     // REQ-07 is enforced implicitly — the `Local` arm writes to `cwd`
     // and the `Global` arm writes only under `$HOME`, so no function
     // call here targets the wrong side.
     let mut mcp_target: Option<PathBuf> = None;
     let mut rules_seeded = false;
-    let mut thothignore_seeded = false;
+    let mut memory_ignore_seeded = false;
     let mut quality_skills_pending: Vec<String> = Vec::new();
     let mut quality_skills_present: Vec<String> = Vec::new();
     match mode {
@@ -2237,11 +2237,11 @@ pub fn cmd_install(args: &[&str]) {
                     warnings.push(format!("seed_local_rules: {e}"));
                 }
             }
-            match mode::seed_thothignore(&cwd) {
-                Ok(wrote) => thothignore_seeded = wrote,
+            match mode::seed_memory_ignore(&cwd) {
+                Ok(wrote) => memory_ignore_seeded = wrote,
                 Err(e) => {
-                    eprintln!("install: seed_thothignore: {e}");
-                    warnings.push(format!("seed_thothignore: {e}"));
+                    eprintln!("install: seed_memory_ignore: {e}");
+                    warnings.push(format!("seed_memory_ignore: {e}"));
                 }
             }
         }
@@ -2283,7 +2283,7 @@ pub fn cmd_install(args: &[&str]) {
         "memory_note": memory_note,
         "mcp_target": mcp_target,
         "rules_seeded": rules_seeded,
-        "thothignore_seeded": thothignore_seeded,
+        "memory_ignore_seeded": memory_ignore_seeded,
         "quality_skills_present": quality_skills_present,
         "quality_skills_pending": quality_skills_pending,
     }));

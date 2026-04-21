@@ -1,8 +1,8 @@
-# .thothignore — Thoth-specific ignore rules (gitignore syntax).
+# .memoryignore — hoangsa-memory-specific ignore rules (gitignore syntax).
 # Layered on top of .gitignore. Edit freely.
 
-# Thoth data (always ignored by the watcher, but explicit here too)
-.thoth/
+# hoangsa-memory data (always ignored by the watcher, but explicit here too)
+.hoangsa-memory/
 
 # Node / JS / TS
 node_modules/
