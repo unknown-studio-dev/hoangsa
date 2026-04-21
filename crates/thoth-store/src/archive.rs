@@ -139,6 +139,91 @@ impl ArchiveTracker {
         Ok(exists)
     }
 
+    /// List — but do not delete — every session older than `cutoff_unix`.
+    /// Mirrors [`Self::purge_older_than`] for `--dry-run` callers.
+    pub fn sessions_older_than(&self, cutoff_unix: i64) -> Result<Vec<String>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare("SELECT session_id FROM archive_sessions WHERE ingested_at < ?1")
+            .map_err(store)?;
+        let ids = stmt
+            .query_map(params![cutoff_unix], |r| r.get::<_, String>(0))
+            .map_err(store)?
+            .collect::<std::result::Result<_, _>>()
+            .map_err(store)?;
+        Ok(ids)
+    }
+
+    /// Delete every session whose `ingested_at` is older than `cutoff_unix`
+    /// seconds. Returns the list of removed `session_id`s so the caller
+    /// can also purge the corresponding chunks from ChromaDB.
+    pub fn purge_older_than(&self, cutoff_unix: i64) -> Result<Vec<String>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare("SELECT session_id FROM archive_sessions WHERE ingested_at < ?1")
+            .map_err(store)?;
+        let ids: Vec<String> = stmt
+            .query_map(params![cutoff_unix], |r| r.get::<_, String>(0))
+            .map_err(store)?
+            .collect::<std::result::Result<_, _>>()
+            .map_err(store)?;
+        conn.execute(
+            "DELETE FROM archive_sessions WHERE ingested_at < ?1",
+            params![cutoff_unix],
+        )
+        .map_err(store)?;
+        Ok(ids)
+    }
+
+    /// Delete every tracked session. Returns all removed `session_id`s.
+    pub fn purge_all(&self) -> Result<Vec<String>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare("SELECT session_id FROM archive_sessions")
+            .map_err(store)?;
+        let ids: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(store)?
+            .collect::<std::result::Result<_, _>>()
+            .map_err(store)?;
+        conn.execute("DELETE FROM archive_sessions", [])
+            .map_err(store)?;
+        Ok(ids)
+    }
+
+    /// Return the oldest `n` sessions — used to trim when the archive grows
+    /// past a configured cap. Oldest first.
+    pub fn oldest_sessions(&self, n: i64) -> Result<Vec<String>> {
+        if n <= 0 {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT session_id FROM archive_sessions \
+                 ORDER BY ingested_at ASC LIMIT ?1",
+            )
+            .map_err(store)?;
+        let ids = stmt
+            .query_map(params![n], |r| r.get::<_, String>(0))
+            .map_err(store)?
+            .collect::<std::result::Result<_, _>>()
+            .map_err(store)?;
+        Ok(ids)
+    }
+
+    /// Delete a specific session by id. Returns whether a row was removed.
+    pub fn delete_session(&self, session_id: &str) -> Result<bool> {
+        let conn = self.conn.lock();
+        let n = conn
+            .execute(
+                "DELETE FROM archive_sessions WHERE session_id = ?1",
+                params![session_id],
+            )
+            .map_err(store)?;
+        Ok(n > 0)
+    }
+
     /// Mark a session as curated (facts/lessons extracted).
     pub fn mark_curated(&self, session_id: &str) -> Result<()> {
         let conn = self.conn.lock();

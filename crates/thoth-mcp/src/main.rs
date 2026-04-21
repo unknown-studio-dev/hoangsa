@@ -13,7 +13,7 @@
 //! HOANGSA_MEMORY_ROOT=/path/.hoangsa-memory hoangsa-memory-mcp
 //! ```
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use thoth_mcp::{Server, run_socket, run_stdio, socket_path};
 
@@ -65,8 +65,12 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Resolve root: `$HOANGSA_MEMORY_ROOT` > `./.hoangsa-memory/` >
-/// `~/.hoangsa-memory/projects/{slug}/`.
+/// Resolve root: `$HOANGSA_MEMORY_ROOT` > populated `./.hoangsa-memory/` >
+/// `~/.hoangsa-memory/projects/{readable-slug}/`.
+///
+/// Mirrors `thoth_cli::resolve_root`: an empty/unpopulated local
+/// `.hoangsa-memory/` must not shadow the global root, and the global
+/// layout is readable-slug only (legacy blake3 hash dirs are ignored).
 fn resolve_root() -> PathBuf {
     if let Ok(env) = std::env::var("HOANGSA_MEMORY_ROOT") {
         let p = PathBuf::from(env);
@@ -75,19 +79,47 @@ fn resolve_root() -> PathBuf {
         }
     }
     let local = PathBuf::from(".hoangsa-memory");
-    if local.is_dir() {
+    let local_populated = local.is_dir() && is_populated_root(&local);
+    if local_populated {
         return local;
     }
     if let Some(home) = std::env::var_os("HOME")
         && let Ok(cwd) = std::env::current_dir()
     {
-        let canonical = cwd.canonicalize().unwrap_or(cwd);
-        let hash = blake3::hash(canonical.to_string_lossy().as_bytes());
-        let slug = &hash.to_hex()[..12];
-        return PathBuf::from(home)
-            .join(".hoangsa-memory")
-            .join("projects")
-            .join(slug);
+        let projects = PathBuf::from(home).join(".hoangsa-memory").join("projects");
+        return projects.join(project_slug(&cwd));
     }
     local
+}
+
+/// Human-readable slug: last two path components, lowercased, non-alnum → `-`.
+fn project_slug(path: &Path) -> String {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let components: Vec<&str> = canonical
+        .components()
+        .filter_map(|c| c.as_os_str().to_str())
+        .collect();
+    let n = components.len();
+    let parts = if n >= 2 { &components[n - 2..] } else { &components[..] };
+    let raw = parts.join("-");
+    let mut result = String::with_capacity(raw.len());
+    let mut prev_dash = false;
+    for c in raw.chars().flat_map(|c| c.to_lowercase()) {
+        if c.is_ascii_alphanumeric() {
+            result.push(c);
+            prev_dash = false;
+        } else if !prev_dash {
+            result.push('-');
+            prev_dash = true;
+        }
+    }
+    result.trim_matches('-').to_string()
+}
+
+fn is_populated_root(root: &Path) -> bool {
+    let graph = root.join("graph.redb");
+    match std::fs::metadata(&graph) {
+        Ok(m) => m.is_file() && m.len() > 4096,
+        Err(_) => false,
+    }
 }

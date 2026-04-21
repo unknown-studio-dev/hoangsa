@@ -23,7 +23,7 @@ use thoth_core::Result;
 use thoth_graph::{Edge, EdgeKind, Graph, Node};
 use thoth_parse::{
     LanguageRegistry, SourceChunk, SymbolKind,
-    walk::{WalkOptions, walk_sources},
+    walk::{WalkOptions, walk_sources, walk_text_sources},
 };
 use thoth_store::{ChromaCol, ChunkDoc, StoreRoot, SymbolRow};
 use tracing::debug;
@@ -298,6 +298,52 @@ impl Indexer {
             stats.lock().embedded += embedded;
         }
 
+        // Phase B2: non-code text files (markdown, shell, TOML, etc.).
+        // These go through a lighter path — FTS only, no symbols or graph
+        // edges — so the BM25 stage can find hits inside READMEs, workflow
+        // templates, install scripts, without the tree-sitter walker
+        // needing to understand their syntax. Purge-before-write mirrors
+        // the code path so edits re-flow cleanly.
+        let text_files = walk_text_sources(&root, &self.registry, &self.walk_opts);
+        let text_total = text_files.len();
+        if text_total > 0 {
+            self.emit(IndexProgress {
+                stage: "text",
+                done: 0,
+                total: text_total,
+                path: None,
+            });
+            let text_done = Arc::new(AtomicUsize::new(0));
+            let _: Vec<()> = stream::iter(text_files)
+                .map(|path| {
+                    let this = self.clone();
+                    let stats = stats.clone();
+                    let done = text_done.clone();
+                    async move {
+                        match this.index_text_file(&path).await {
+                            Ok(n) => {
+                                let mut st = stats.lock();
+                                st.files += 1;
+                                st.chunks += n;
+                            }
+                            Err(e) => {
+                                debug!(?path, error = %e, "skip text: index error");
+                            }
+                        }
+                        let d = done.fetch_add(1, Ordering::Relaxed) + 1;
+                        this.emit(IndexProgress {
+                            stage: "text",
+                            done: d,
+                            total: text_total,
+                            path: Some(&path),
+                        });
+                    }
+                })
+                .buffer_unordered(self.concurrency)
+                .collect()
+                .await;
+        }
+
         // Phase C: commit FTS.
         self.emit(IndexProgress {
             stage: "commit",
@@ -310,6 +356,45 @@ impl Indexer {
         let final_stats = *stats.lock();
         debug!(?final_stats, "index complete");
         Ok(final_stats)
+    }
+
+    /// Index a single non-code text file into BM25 only. Returns the
+    /// number of chunks written. No symbols, no graph edges — the body
+    /// simply becomes searchable text.
+    pub async fn index_text_file(&self, path: &Path) -> Result<usize> {
+        let bytes = tokio::fs::read(path).await?;
+        let new_hash = blake3::hash(&bytes);
+        let hash_key = hash_meta_key(path);
+        let new_hash_bytes: &[u8] = new_hash.as_bytes();
+        if let Some(prev) = self.store.kv.get_meta(hash_key.clone()).await?
+            && prev.as_slice() == new_hash_bytes
+        {
+            return Ok(0);
+        }
+
+        self.store
+            .fts
+            .delete_path(&path.to_string_lossy())
+            .await?;
+
+        let chunks = thoth_parse::parse_text_file(path).await?;
+        let chunk_docs: Vec<ChunkDoc> = chunks
+            .iter()
+            .map(|c| ChunkDoc {
+                id: chunk_id(&c.path, c.start_line, c.end_line),
+                path: c.path.to_string_lossy().into_owned(),
+                symbol: c.symbol.clone(),
+                body: c.body.clone(),
+                start_line: c.start_line,
+                end_line: c.end_line,
+                language: c.language.to_string(),
+            })
+            .collect();
+        let n = chunk_docs.len();
+        self.store.fts.index_chunks_batch(chunk_docs).await?;
+
+        self.store.kv.put_meta(hash_key, new_hash_bytes).await?;
+        Ok(n)
     }
 
     /// Index a single file. Public so callers (e.g. the watcher) can
@@ -456,13 +541,36 @@ impl Indexer {
         self.graph.upsert_nodes_batch(nodes).await?;
 
         // Build the file-local resolution map.
+        //
+        // `resolution` is used for *whole-callee* lookups — when the parser
+        // emitted a bare `foo` or a callee that happens to match an alias
+        // outright. Local symbol FQNs take precedence (first-writer-wins),
+        // then aliases fill in crate-path targets.
+        //
+        // `local_type_heads` is the *receiver-type* map used by the
+        // `head::tail` composer below. Only **locally-defined Type**
+        // symbols go here. Alias-driven composition (mapping `ChromaStore`
+        // through `use thoth_store::ChromaStore` → `thoth_store::ChromaStore::open`)
+        // is deliberately excluded: the defined symbol is written under
+        // its file-stem module (`chroma::ChromaStore::open`), so the
+        // alias-composed target never matches any node and just poisons
+        // the edge table with phantom FQNs. Cross-file callers of an
+        // external type are surfaced via the 2-segment suffix BFS in
+        // `thoth_graph::Graph::impact` instead.
         let mut resolution: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        let mut local_type_heads: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
         for sym in &table.symbols {
             if let Some(leaf) = sym.fqn.rsplit("::").next() {
                 resolution
                     .entry(leaf.to_string())
                     .or_insert_with(|| sym.fqn.clone());
+                if sym.kind == SymbolKind::Type {
+                    local_type_heads
+                        .entry(leaf.to_string())
+                        .or_insert_with(|| sym.fqn.clone());
+                }
             }
         }
         for (local, target) in &table.aliases {
@@ -472,12 +580,37 @@ impl Indexer {
         // --- batch all edges (calls + imports + extends) in one transaction ---
         let mut all_edges: Vec<Edge> = Vec::new();
 
-        // Call edges
+        // Call edges.
+        //
+        // Resolution is language-agnostic — parser already normalised
+        // Rust `::` and Py/JS/TS/Go `.` to `::` and shaped the callee as
+        // `head::tail` (or bare `tail`) via `tail_receiver_and_name`.
+        //
+        // Lookup order:
+        // 1. Whole callee string matches a symbol / alias → take that FQN.
+        // 2. `head::tail` and `head` is a *locally-defined type* →
+        //    compose `local_type_heads[head]::tail` (so methods on a type
+        //    defined in this file get properly nested).
+        // 3. Otherwise leave the 2-segment target `head::tail` as-is.
+        //    That shape is what the graph's suffix walks (`impact` /
+        //    `in_neighbors`) match against to surface cross-file callers
+        //    of external types — *without* fabricating a crate-path FQN
+        //    via alias composition, which never matches the defined
+        //    symbol's file-stem-rooted FQN.
+        // 4. Bare callee (no `::`) → leave as-is; leaf-fallback in
+        //    `Graph::impact` picks it up.
         for (caller, callee) in &table.calls {
-            let resolved = resolution
-                .get(callee)
-                .cloned()
-                .unwrap_or_else(|| callee.clone());
+            let resolved = if let Some(direct) = resolution.get(callee) {
+                direct.clone()
+            } else if let Some((head, tail)) = callee.rsplit_once("::") {
+                if let Some(head_fqn) = local_type_heads.get(head) {
+                    format!("{head_fqn}::{tail}")
+                } else {
+                    callee.clone()
+                }
+            } else {
+                callee.clone()
+            };
             all_edges.push(Edge {
                 from: caller.clone(),
                 to: resolved,
@@ -630,7 +763,7 @@ fn symbol_kind_tag(k: SymbolKind) -> &'static str {
 /// baked into the hash meta key invalidates every previously-stored
 /// hash sentinel in one go, so the next indexer run re-parses every
 /// file even when its bytes haven't changed.
-const PARSER_SCHEMA_VERSION: u32 = 3;
+const PARSER_SCHEMA_VERSION: u32 = 6;
 
 /// Meta key under which we store the blake3 hash of the last-indexed bytes
 /// of `path`. Kept private to the indexer — callers shouldn't need to read

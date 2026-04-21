@@ -23,10 +23,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use thoth_core::{
-    Chunk, Event, Prompt, Query, QueryScope, Result, Retrieval, RetrievalSource, Synthesizer,
+    Chunk, Prompt, Query, QueryScope, Result, Retrieval, RetrievalSource, Synthesizer,
 };
 use thoth_graph::Graph;
-use thoth_store::{ChromaCol, EpisodeHit, FtsHit, KvStore, MarkdownStore, StoreRoot, SymbolRow};
+use thoth_store::{ChromaCol, FtsHit, KvStore, MarkdownStore, StoreRoot, SymbolRow};
 use uuid::Uuid;
 
 use crate::indexer::{chunk_id, read_span};
@@ -162,18 +162,20 @@ impl Retriever {
             .take(8)
             .collect();
 
-        // Stages 3 (graph), 4 (markdown), 4b (lessons), 5 (episodic)
-        // are all independent once `seeds` are known — run them concurrently.
-        let (graph_hits, md_hits, lesson_hits, ep_hits) = tokio::join!(
+        // Stages 3 (graph), 4 (markdown), 4b (lessons) are independent
+        // once `seeds` are known — run them concurrently. Episodic is
+        // deliberately excluded from default recall: past-query echoes
+        // create a feedback loop (ask the same thing N times → own echoes
+        // rise to top-N) and add noise without signal. Callers who need
+        // episodic lookup use `memory_turns_search` explicitly.
+        let (graph_hits, md_hits, lesson_hits) = tokio::join!(
             self.graph_stage(&seeds),
             self.markdown_stage(&search_text, &scope.tags),
             self.lessons_stage(&search_text),
-            self.episodic_stage(&search_text, k * 2),
         );
         let graph_hits = filter_scope(graph_hits?, scope);
         let md_hits = md_hits?;
         let lesson_hits = lesson_hits?;
-        let ep_hits = ep_hits?;
 
         for (rank, cand) in graph_hits.iter().enumerate() {
             fuse(&mut fused, cand, rank);
@@ -190,12 +192,6 @@ impl Retriever {
         //     path (`LESSONS.md` vs `MEMORY.md`), which is enough for callers
         //     to tell them apart in renders.
         for (rank, cand) in lesson_hits.iter().enumerate() {
-            fuse(&mut fused, cand, rank);
-        }
-
-        // 5. episodic log — past queries / answers / outcomes. Scope filters
-        //    do not apply; episodes are cross-cutting.
-        for (rank, cand) in ep_hits.iter().enumerate() {
             fuse(&mut fused, cand, rank);
         }
 
@@ -228,6 +224,34 @@ impl Retriever {
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+
+        // Noise filtering. Two guards:
+        //
+        // 1. `min_score` (caller-set) — an absolute floor for callers
+        //    who know their corpus and want to demand strong hits.
+        // 2. Internal floor (0.05) — dumps obvious junk where nothing
+        //    reached even rank-3 in any single stage. Calibrated low
+        //    because a legit single-source markdown fact on a small
+        //    corpus can score 0.08 and must still come through.
+        //
+        // Dispersion-based "is this a uniform-tie out-of-domain query?"
+        // heuristics were tried and reverted — every epsilon that caught
+        // out-of-domain ties also killed legitimate small-corpus clusters
+        // in recall_accuracy. The real defence against context pollution
+        // stays in preview-only mode at the tool layer: even if some
+        // junk hit sneaks past the floor its body is stripped and it
+        // costs the caller one preview line, not kilobytes of source.
+        const NOISE_FLOOR: f32 = 0.05;
+        if q.min_score > 0.0 {
+            ranked.retain(|row| row.score >= q.min_score);
+        }
+        if ranked
+            .first()
+            .map(|r| r.score < NOISE_FLOOR)
+            .unwrap_or(false)
+        {
+            ranked.clear();
+        }
 
         // Dedup by (path, symbol) *before* truncating to k so we don't
         // lose a slot to a near-duplicate hit. Different spans of the
@@ -382,38 +406,9 @@ impl Retriever {
         Ok(out)
     }
 
-    /// Search the episodic log for relevant past events. Silently returns
-    /// an empty vec if the FTS5 query can't be built (e.g. the user query
-    /// contained only stopwords or punctuation).
-    ///
-    /// Every hit also has its `access_count` / `last_accessed_ns` bumped on
-    /// the way out so the decay-based forget pass (DESIGN §9) sees the
-    /// retrieval. Bump failures are logged and ignored — they must not
-    /// break recall.
-    async fn episodic_stage(&self, text: &str, k: usize) -> Result<Vec<Candidate>> {
-        let match_expr = match fts5_match_expr(text) {
-            Some(m) => m,
-            None => return Ok(Vec::new()),
-        };
-        let hits: Vec<EpisodeHit> = match self.store.episodes.search(match_expr, k).await {
-            Ok(h) => h,
-            // A malformed MATCH expression, a locked DB, etc. shouldn't
-            // break the rest of retrieval. Log-worthy, but not fatal.
-            Err(_) => return Ok(Vec::new()),
-        };
-        let now_ns = now_unix_ns();
-        let mut out = Vec::with_capacity(hits.len());
-        for h in hits {
-            let row_id = h.id;
-            if let Some(c) = Candidate::from_episode(h) {
-                out.push(c);
-                if let Err(e) = self.store.episodes.bump_access_by_id(row_id, now_ns).await {
-                    tracing::debug!(error = %e, row_id, "episodic: bump_access failed");
-                }
-            }
-        }
-        Ok(out)
-    }
+    // episodic_stage removed: past-query echoes created a feedback loop
+    // without adding retrieval signal. Use `memory_turns_search` for
+    // explicit conversation-archive lookup instead.
 
     /// Semantic vector search via ChromaDB. Returns `Ok(None)` when
     /// ChromaDB is not configured.
@@ -539,24 +534,6 @@ impl Candidate {
         }
     }
 
-    /// Build a candidate from an episodic log hit. Returns `None` when the
-    /// event kind carries no surfaceable text (e.g. `FileDeleted`, which is
-    /// useful for audit but nothing for retrieval to show).
-    fn from_episode(h: EpisodeHit) -> Option<Self> {
-        let preview = episode_preview(&h.event)?;
-        // Stable id scoped under an `episode:` prefix so it never collides
-        // with file-backed chunk ids or markdown memory ids.
-        let id = format!("episode:{}", h.id);
-        Some(Self {
-            id,
-            path: PathBuf::from("<episodes.db>"),
-            start_line: 0,
-            end_line: 0,
-            symbol: None,
-            source: RetrievalSource::Episodic,
-            preview: Some(preview),
-        })
-    }
 }
 
 struct FusedRow {
@@ -636,16 +613,6 @@ fn short_preview(body: &str) -> String {
         .join(" ⏎ ")
 }
 
-/// Current wall-clock as Unix nanoseconds, clamped into `i64`. Used when
-/// stamping `last_accessed_ns` on episodic rows.
-fn now_unix_ns() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
-        .unwrap_or(0)
-}
-
 /// Apply a [`QueryScope`] filter to a batch of candidates. An empty scope is
 /// a no-op. When any of `paths` / `languages` / `symbols` is non-empty, a
 /// candidate must pass every populated axis to survive:
@@ -719,63 +686,6 @@ fn path_language_matches(path: &Path, lang: &str) -> bool {
         "go" => ext == "go",
         "markdown" => matches!(ext.as_str(), "md" | "markdown"),
         other => ext == other, // fall back to raw-extension match
-    }
-}
-
-/// Render a retrieval-friendly preview of an episodic event. Returns `None`
-/// for events that have no useful surface text (e.g. `FileDeleted`, which
-/// is audit-only).
-fn episode_preview(ev: &Event) -> Option<String> {
-    use thoth_core::Outcome;
-    match ev {
-        Event::QueryIssued { text, .. } => Some(format!("past query: {text}")),
-        Event::AnswerReturned { chunk_ids, .. } if !chunk_ids.is_empty() => {
-            Some(format!("past answer cited: {}", chunk_ids.join(", ")))
-        }
-        Event::OutcomeObserved { outcome, .. } => Some(match outcome {
-            Outcome::Test { passed, suite } => {
-                let status = if *passed { "pass" } else { "fail" };
-                format!("past outcome — test {suite}: {status}")
-            }
-            Outcome::Commit { sha, .. } => format!("past outcome — commit {sha}"),
-            Outcome::Revert { sha, reason } => {
-                let why = reason.as_deref().unwrap_or("");
-                format!("past outcome — revert {sha}: {why}")
-                    .trim()
-                    .to_string()
-            }
-            Outcome::UserFeedback { signal, note } => {
-                let tail = note.as_deref().unwrap_or("");
-                format!("past outcome — feedback {signal:?}: {tail}")
-                    .trim()
-                    .to_string()
-            }
-            Outcome::Error { summary, .. } => format!("past outcome — error: {summary}"),
-        }),
-        Event::FileChanged { path, .. } => Some(format!("file changed: {}", path.display())),
-        Event::NudgeInvoked { intent, .. } if !intent.is_empty() => {
-            Some(format!("past nudge: {intent}"))
-        }
-        Event::FileDeleted { .. } | Event::AnswerReturned { .. } | Event::NudgeInvoked { .. } => {
-            None
-        }
-    }
-}
-
-/// Build a safe FTS5 MATCH expression from free-form query text. Splits on
-/// non-word characters, keeps tokens of length >= 3, and joins them with
-/// `OR`. Returns `None` if no usable token remains — in which case the
-/// episodic stage is silently skipped rather than raising.
-fn fts5_match_expr(text: &str) -> Option<String> {
-    let toks: Vec<String> = text
-        .split(|c: char| !c.is_alphanumeric() && c != '_')
-        .filter(|t| t.len() >= 3)
-        .map(|t| format!("\"{}\"", t.replace('"', "")))
-        .collect();
-    if toks.is_empty() {
-        None
-    } else {
-        Some(toks.join(" OR "))
     }
 }
 
@@ -894,29 +804,5 @@ mod tests {
         let out = filter_scope(cands, &scope);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].symbol.as_deref(), Some("auth::verify_token"));
-    }
-
-    #[test]
-    fn fts5_expr_builds_or_clause_from_tokens() {
-        let m = fts5_match_expr("how does verify_token work").unwrap();
-        assert!(m.contains("\"how\""));
-        assert!(m.contains("\"does\""));
-        assert!(m.contains("\"verify_token\""));
-        assert!(m.contains("\"work\""));
-        assert!(m.contains(" OR "));
-    }
-
-    #[test]
-    fn fts5_expr_is_none_when_all_tokens_too_short() {
-        assert!(fts5_match_expr("a b c ?").is_none());
-        assert!(fts5_match_expr("   ").is_none());
-    }
-
-    #[test]
-    fn fts5_expr_strips_double_quotes() {
-        let m = fts5_match_expr(r#"find "foobarbaz""#).unwrap();
-        // `"foobarbaz"` in the input should become the single quoted token
-        // `"foobarbaz"` in the output — i.e. the inner quotes are stripped.
-        assert!(m.contains("\"foobarbaz\""));
     }
 }

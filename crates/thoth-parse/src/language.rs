@@ -200,11 +200,19 @@ impl Language {
 
     /// Extract the callee's name from a call-site node.
     ///
-    /// The returned string is whatever the grammar exposes as the "thing
-    /// being called": for `foo()` it's `"foo"`; for `obj.bar()` it's
-    /// `"bar"` (the last segment, since that's what the graph will match
-    /// against `SymbolRow::fqn` simple names); for `a::b::c()` it's `"c"`;
-    /// for `println!(..)` it's `"println"`.
+    /// For `foo()` it's `"foo"`; for `obj.bar()` it's `"bar"` (just the
+    /// method since the receiver type is only known via type inference);
+    /// for `a::b::c()` (Rust) or `a.b.c()` (TS/Py/Go) it's the **last two
+    /// segments** joined by `::` — `"b::c"` — so the indexer can look
+    /// the head ("b") up in the file's alias map and reconstruct the
+    /// full FQN. Stripping to the last segment alone collapses every
+    /// `Foo::new` / `Bar::new` / `Baz::new` into a single `new` node
+    /// and pollutes `memory_impact` across unrelated types; keeping one
+    /// level of receiver context makes resolution tractable without
+    /// dragging in a real type checker.
+    ///
+    /// Macros (`println!(..)`) stay single-segment — there's no
+    /// receiver to preserve.
     pub(crate) fn extract_callee(
         self,
         node: tree_sitter::Node<'_>,
@@ -222,7 +230,11 @@ impl Language {
             }
             #[cfg(feature = "lang-rust")]
             (LanguageKind::Rust, "macro_invocation") => {
-                node.child_by_field_name("macro")?.utf8_text(source).ok()?
+                return node
+                    .child_by_field_name("macro")?
+                    .utf8_text(source)
+                    .ok()
+                    .map(|s| last_name_segment(s));
             }
             #[cfg(feature = "lang-python")]
             (LanguageKind::Python, "call") => node
@@ -241,7 +253,35 @@ impl Language {
                 .ok()?,
             _ => return None,
         };
-        Some(last_name_segment(raw))
+        Some(tail_receiver_and_name(raw))
+    }
+}
+
+/// Return the last 1–2 segments of a `::` / `.` separated callee path.
+/// `ChromaStore::open` → `ChromaStore::open`; `a::b::c::d` → `c::d`;
+/// `self.inner` → `self::inner`; bare `foo` → `foo`. Internal whitespace
+/// and generics (`Foo::<T>::new`) are stripped — we want the textual
+/// shape the symbol table can match against.
+fn tail_receiver_and_name(raw: &str) -> String {
+    // Normalise: drop generics, drop `self.`/`(&self)` noise, collapse
+    // both Rust `::` and dotted paths to a common separator.
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .replace('.', "::");
+    let without_generics = strip_generics(&cleaned).to_string();
+    let segments: Vec<&str> = without_generics
+        .split("::")
+        .filter(|s| !s.is_empty())
+        .collect();
+    match segments.as_slice() {
+        [] => String::new(),
+        [only] => (*only).to_string(),
+        _ => {
+            let n = segments.len();
+            format!("{}::{}", segments[n - 2], segments[n - 1])
+        }
     }
 }
 

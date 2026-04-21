@@ -17,6 +17,22 @@ pub enum ArchiveCmd {
         /// Override the auto-detected topic for all ingested sessions.
         #[arg(long)]
         topic: Option<String>,
+        /// Bypass the "already-ingested" skip and re-ingest every matching
+        /// session. Chunks are upserted; orphan chunks for shifted chunk
+        /// boundaries are cleaned up by an explicit chroma delete before
+        /// the fresh upsert. Hooks (PreCompact / SessionEnd) pass this
+        /// flag so sessions that grew since last ingest actually get
+        /// their new turns.
+        #[arg(long)]
+        refresh: bool,
+        /// Cap ingest at the N most recently modified session files
+        /// (across all projects). Useful for bounded first-run
+        /// backfills on a machine with hundreds of legacy transcripts.
+        /// When the tracker is empty and this flag is not set, an
+        /// implicit cap of [`INITIAL_INGEST_LIMIT`] is applied
+        /// automatically; pass `--limit 0` to opt out.
+        #[arg(long)]
+        limit: Option<usize>,
     },
     /// Show archive summary (session count, turn count, curated count).
     Status,
@@ -41,6 +57,23 @@ pub enum ArchiveCmd {
         #[arg(required = true)]
         text: Vec<String>,
     },
+    /// Remove archived sessions. Either purge by age (`--older-than 30d`)
+    /// or nuke everything (`--all`). Frees up tracker rows; ChromaDB
+    /// chunks for the removed sessions are deleted by best-effort metadata
+    /// query — failures leave orphans but never abort the purge.
+    Purge {
+        /// Retention window. Accepts `Nd` (days), `Nh` (hours), or
+        /// `Nm` (minutes). Sessions ingested before `now - duration`
+        /// are deleted. Mutually exclusive with `--all`.
+        #[arg(long, value_name = "DURATION", conflicts_with = "all")]
+        older_than: Option<String>,
+        /// Delete every archived session.
+        #[arg(long, conflicts_with = "older_than")]
+        all: bool,
+        /// Print what would happen without modifying anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 use anyhow::{Context, Result, bail};
@@ -53,6 +86,15 @@ use thoth_store::{ArchiveTracker, ChromaCol, ChromaStore, StoreRoot};
 const CHUNK_SIZE: usize = 800;
 const MIN_CHUNK_SIZE: usize = 30;
 const BATCH_SIZE: usize = 100;
+
+/// Cap applied to `archive ingest` on first run (tracker DB empty). A
+/// long-lived developer machine can have hundreds of `.jsonl` transcripts
+/// in `~/.claude/projects/`; ingesting them all on the very first hook
+/// fire would stall a session for minutes and bury the more useful
+/// recent transcripts behind retention limits. 30 is enough to give
+/// recall something to work with on day one without overwhelming the
+/// archive. Pass `--limit 0` (or any explicit `--limit`) to opt out.
+const INITIAL_INGEST_LIMIT: usize = 30;
 
 // ---------------------------------------------------------------------------
 // noise stripping
@@ -459,7 +501,14 @@ fn chunk_exchanges(turns: &[Turn]) -> Vec<ExchangeChunk> {
             if content.len() > CHUNK_SIZE {
                 let mut offset = 0;
                 while offset < content.len() {
-                    let end = (offset + CHUNK_SIZE).min(content.len());
+                    // Snap `end` down to the nearest UTF-8 char boundary.
+                    // `(offset + CHUNK_SIZE).min(content.len())` can
+                    // land mid-codepoint (box-drawing glyphs like `─`
+                    // are 3 bytes), and slicing mid-codepoint panics.
+                    let mut end = (offset + CHUNK_SIZE).min(content.len());
+                    while end > offset && !content.is_char_boundary(end) {
+                        end -= 1;
+                    }
                     // Try to break at a paragraph boundary
                     let slice = &content[offset..end];
                     let break_at = if end < content.len() {
@@ -700,6 +749,8 @@ pub async fn cmd_archive_ingest(
     root: &Path,
     project_filter: Option<&str>,
     topic_override: Option<&str>,
+    refresh: bool,
+    limit: Option<usize>,
 ) -> Result<()> {
     let tracker = open_tracker(root).await?;
     let col = open_archive_chroma(root).await?;
@@ -709,9 +760,37 @@ pub async fn cmd_archive_ingest(
         bail!("No Claude sessions found at {}", sessions_root.display());
     }
 
+    // First-run cap: if the tracker is empty and the caller didn't
+    // pass an explicit --limit, fall back to INITIAL_INGEST_LIMIT.
+    // `--limit 0` means "no cap" (explicit opt-out).
+    let effective_limit: Option<usize> = match limit {
+        Some(0) => None,
+        Some(n) => Some(n),
+        None => {
+            let (existing_sessions, _, _) = tracker.status()?;
+            if existing_sessions == 0 {
+                Some(INITIAL_INGEST_LIMIT)
+            } else {
+                None
+            }
+        }
+    };
+
     let mut total_sessions = 0u64;
     let mut total_chunks = 0u64;
     let mut skipped = 0u64;
+
+    // Collect every (project, session_id, path, mtime) tuple across
+    // all project dirs up front, so we can apply a global most-recent
+    // cap when `effective_limit` is set. Without the cross-project
+    // sort, a cap of 30 could be blown entirely on one noisy project
+    // while the current one gets nothing.
+    struct Candidate {
+        project_name: String,
+        session_id: String,
+        path: PathBuf,
+        mtime: std::time::SystemTime,
+    }
 
     let mut project_dirs: Vec<_> = std::fs::read_dir(&sessions_root)
         .context("reading Claude projects dir")?
@@ -720,6 +799,7 @@ pub async fn cmd_archive_ingest(
         .collect();
     project_dirs.sort_by_key(|e| e.file_name());
 
+    let mut candidates: Vec<Candidate> = Vec::new();
     for project_entry in project_dirs {
         let project_name = decode_project_name(&project_entry.file_name().to_string_lossy());
         if let Some(filter) = project_filter
@@ -728,15 +808,22 @@ pub async fn cmd_archive_ingest(
             continue;
         }
 
-        let mut convo_files: Vec<(String, PathBuf)> = Vec::new();
-
         // New layout: JSONL files directly in project dir.
         if let Ok(rd) = std::fs::read_dir(project_entry.path()) {
             for entry in rd.filter_map(|e| e.ok()) {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if name.ends_with(".jsonl") {
-                    let session_id = name.trim_end_matches(".jsonl").to_string();
-                    convo_files.push((session_id, entry.path()));
+                    let path = entry.path();
+                    let mtime = entry
+                        .metadata()
+                        .and_then(|m| m.modified())
+                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                    candidates.push(Candidate {
+                        project_name: project_name.clone(),
+                        session_id: name.trim_end_matches(".jsonl").to_string(),
+                        path,
+                        mtime,
+                    });
                 }
             }
         }
@@ -751,18 +838,67 @@ pub async fn cmd_archive_ingest(
                     let session_id = entry.file_name().to_string_lossy().to_string();
                     let convo_file = entry.path().join("conversation.jsonl");
                     if convo_file.is_file() {
-                        convo_files.push((session_id, convo_file));
+                        let mtime = convo_file
+                            .metadata()
+                            .and_then(|m| m.modified())
+                            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                        candidates.push(Candidate {
+                            project_name: project_name.clone(),
+                            session_id,
+                            path: convo_file,
+                            mtime,
+                        });
                     }
                 }
             }
         }
+    }
 
-        convo_files.sort_by(|a, b| a.0.cmp(&b.0));
+    // Most-recent-first global ordering — mtime descending.
+    candidates.sort_by(|a, b| b.mtime.cmp(&a.mtime));
 
-        for (session_id, convo_file) in convo_files {
-            if tracker.is_ingested(&session_id)? {
+    if let Some(cap) = effective_limit
+        && candidates.len() > cap
+    {
+        let dropped = candidates.len() - cap;
+        candidates.truncate(cap);
+        eprintln!(
+            "  limit: keeping the {cap} most-recent session files (dropped {dropped} older)"
+        );
+    }
+
+    // Iterate in (project, session_id) order so output reads naturally
+    // even though selection used mtime.
+    candidates.sort_by(|a, b| {
+        a.project_name
+            .cmp(&b.project_name)
+            .then_with(|| a.session_id.cmp(&b.session_id))
+    });
+
+    for Candidate {
+        project_name,
+        session_id,
+        path: convo_file,
+        ..
+    } in candidates
+    {
+        {
+            if !refresh && tracker.is_ingested(&session_id)? {
                 skipped += 1;
                 continue;
+            }
+            // In refresh mode, drop any pre-existing chunks for this
+            // session so shifted chunk boundaries don't leave orphans
+            // alongside the freshly upserted rows.
+            if refresh && tracker.is_ingested(&session_id)? {
+                let filter = serde_json::json!({ "session_id": { "$eq": session_id } });
+                if let Err(e) = col.delete_by_filter(filter).await {
+                    tracing::warn!(
+                        session = %session_id,
+                        error = %e,
+                        "refresh: chroma delete failed — chunks will be upserted but orphans may remain",
+                    );
+                }
             }
 
             let turns = match parse_conversation(&convo_file).await {
@@ -856,6 +992,34 @@ pub async fn cmd_archive_ingest(
     println!(
         "\nIngested {total_sessions} sessions ({total_chunks} chunks), skipped {skipped} already-ingested."
     );
+
+    // Retention cap: keep only the most recent MAX_ARCHIVE_SESSIONS.
+    // Oldest rows get dropped from the tracker; their ChromaDB chunks
+    // are cleaned best-effort. If Chroma is unreachable the tracker is
+    // still trimmed — we'd rather orphan chunks than let the DB grow
+    // unbounded, since orphans are invisible without a tracker row.
+    const MAX_ARCHIVE_SESSIONS: i64 = 500;
+    let (sessions, _, _) = tracker.status()?;
+    if sessions > MAX_ARCHIVE_SESSIONS {
+        let excess = sessions - MAX_ARCHIVE_SESSIONS;
+        let to_drop = tracker.oldest_sessions(excess)?;
+        let col_opt = open_archive_chroma(root).await.ok();
+        let mut chroma_cleaned = 0u64;
+        for sid in &to_drop {
+            tracker.delete_session(sid)?;
+            if let Some(col) = col_opt.as_ref() {
+                let filter = serde_json::json!({ "session_id": { "$eq": sid } });
+                if col.delete_by_filter(filter).await.is_ok() {
+                    chroma_cleaned += 1;
+                }
+            }
+        }
+        println!(
+            "Retention: trimmed {} oldest session(s), cleaned {} from ChromaDB (cap = {MAX_ARCHIVE_SESSIONS}).",
+            to_drop.len(),
+            chroma_cleaned,
+        );
+    }
     Ok(())
 }
 
@@ -1034,6 +1198,107 @@ pub async fn cmd_archive_search(
             println!("    {preview}");
             println!();
         }
+    }
+    Ok(())
+}
+
+/// Parse a short duration like `30d`, `12h`, `45m` into seconds.
+fn parse_duration(s: &str) -> Result<i64> {
+    let s = s.trim();
+    let (num, unit) = s
+        .find(|c: char| !c.is_ascii_digit())
+        .map(|i| s.split_at(i))
+        .ok_or_else(|| anyhow::anyhow!("missing unit (expected d/h/m): {s}"))?;
+    let n: i64 = num
+        .parse()
+        .with_context(|| format!("invalid number in duration: {s}"))?;
+    let secs = match unit {
+        "d" => n * 86400,
+        "h" => n * 3600,
+        "m" => n * 60,
+        other => bail!("unknown duration unit {other:?} (expected d/h/m)"),
+    };
+    Ok(secs)
+}
+
+/// Drop archived sessions by age or wipe them all.
+pub async fn cmd_archive_purge(
+    root: &Path,
+    older_than: Option<&str>,
+    all: bool,
+    dry_run: bool,
+    json: bool,
+) -> Result<()> {
+    let tracker = open_tracker(root).await?;
+
+    // Resolve target: either "< cutoff" or "everything".
+    let (label, ids) = if all {
+        let all_ids = if dry_run {
+            tracker.oldest_sessions(i64::MAX).unwrap_or_default()
+        } else {
+            tracker.purge_all()?
+        };
+        ("all".to_string(), all_ids)
+    } else if let Some(spec) = older_than {
+        let secs = parse_duration(spec)?;
+        let cutoff = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64
+            - secs;
+        let ids = if dry_run {
+            tracker.sessions_older_than(cutoff)?
+        } else {
+            tracker.purge_older_than(cutoff)?
+        };
+        (format!("older than {spec} (unix cutoff = {cutoff})"), ids)
+    } else {
+        bail!("specify --older-than <dur> or --all");
+    };
+
+    if dry_run {
+        println!(
+            "dry-run: would purge {} session(s) ({label}). Re-run without --dry-run.",
+            ids.len()
+        );
+        return Ok(());
+    }
+
+    // Best-effort ChromaDB cleanup for the removed sessions.
+    let chroma_removed = match open_archive_chroma(root).await {
+        Ok(col) => {
+            let mut removed = 0u64;
+            for sid in &ids {
+                let filter = serde_json::json!({ "session_id": { "$eq": sid } });
+                if let Err(e) = col.delete_by_filter(filter).await {
+                    tracing::warn!(session = %sid, error = %e, "chroma delete failed");
+                } else {
+                    removed += 1;
+                }
+            }
+            removed
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "chroma unreachable — leaving archive chunks orphaned");
+            0
+        }
+    };
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "removed_sessions": ids.len(),
+                "chroma_sessions_cleaned": chroma_removed,
+                "ids": ids,
+            }))?
+        );
+    } else {
+        println!(
+            "Purged {} session(s) from tracker, {} from ChromaDB.",
+            ids.len(),
+            chroma_removed
+        );
     }
     Ok(())
 }

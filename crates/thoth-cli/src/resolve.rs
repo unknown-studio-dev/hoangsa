@@ -57,18 +57,12 @@ pub fn resolve_root(explicit: Option<&Path>) -> PathBuf {
     {
         let projects = home.join(".hoangsa-memory").join("projects");
         let slug = project_slug(&cwd);
-        let new_path = projects.join(&slug);
-        let global_path = if new_path.is_dir() {
-            new_path
-        } else {
-            let legacy = legacy_project_slug(&cwd);
-            let legacy_path = projects.join(&legacy);
-            if legacy_path.is_dir() {
-                legacy_path
-            } else {
-                new_path
-            }
-        };
+        let global_path = projects.join(&slug);
+        // Readable-slug is the only global layout we accept. Legacy
+        // blake3 hash dirs from the pre-rename era are intentionally NOT
+        // consulted — they'd shadow a fresh install and let the indexer
+        // write to an orphaned location. Users with hash-era data move
+        // it manually; new installs always route to `{slug}/`.
 
         // Warn when we're falling through a stale local `.hoangsa-memory/`
         // to reach a populated global root. Silent if the local doesn't
@@ -115,8 +109,10 @@ pub fn project_slug(path: &Path) -> String {
     sanitize_slug(&parts.join("-"))
 }
 
-/// Legacy 12-char hex slug (blake3 hash). Used for backwards-compatible
-/// resolution of projects created before the readable-slug migration.
+/// Legacy 12-char hex slug (blake3 hash). No longer consulted by
+/// [`resolve_root`] — kept only so the `projects migrate-slugs` command
+/// can still locate pre-rename data directories on disk.
+#[allow(dead_code)]
 pub fn legacy_project_slug(path: &Path) -> String {
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let hash = blake3::hash(canonical.to_string_lossy().as_bytes());

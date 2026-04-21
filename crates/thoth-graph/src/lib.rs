@@ -259,38 +259,70 @@ impl Graph {
             .bfs_depth_tagged(fqn, depth, direction, Some(&kinds))
             .await?;
 
-        // Secondary walk from the bare leaf name. Call sites in Rust
-        // (and TS/JS) that reference a symbol through a path the file
-        // didn't `use` — e.g. `cmd::hook::cmd_enforce(&cwd)` dispatched
-        // from a match arm in `main.rs` — are recorded with the edge's
-        // `to` set to `cmd_enforce` (the last segment) because the
-        // indexer's file-local resolver doesn't know about
-        // `hook::cmd_enforce`. A BFS rooted at the canonical FQN alone
-        // misses those edges entirely, which is the core of the "impact
-        // reports 0 callers for a real cross-file symbol" complaint.
+        // Secondary walks from progressively-less-qualified suffixes.
+        // Call sites whose edges couldn't be resolved through the file's
+        // alias map at index time are stored with a shorter `to` than
+        // the canonical FQN — a BFS rooted only at the full FQN misses
+        // them. We add two fallback passes, each guarded against
+        // polysemy so a noisy leaf can't blend callers of unrelated
+        // same-named symbols.
         //
-        // Walking additionally from the leaf for Up / Both directions
-        // picks those unresolved edges up. The tradeoff: if two symbols
-        // share a leaf (`a::foo` and `b::foo`), `impact(a::foo)` may
-        // report some of `b::foo`'s callers as well. Over-reporting is
-        // the right failure mode for a blast-radius tool — the alternative
-        // is silently missing breakage.
-        if matches!(dir, BlastDir::Up | BlastDir::Both)
-            && let Some(leaf) = fqn.rsplit("::").next()
-            && leaf != fqn
-            && !leaf.is_empty()
-        {
-            let extra = self
-                .bfs_depth_tagged(leaf, depth, direction, Some(&kinds))
-                .await?;
+        // 1. **2-segment suffix** (e.g. `chroma::ChromaStore::open` →
+        //    `ChromaStore::open`). This catches methods on external
+        //    types that the indexer couldn't nest under the type's
+        //    actual module because it lives in another crate — the
+        //    edge target stays `ChromaStore::open` (2 segments) and a
+        //    strict walk from `chroma::ChromaStore::open` would miss it.
+        //
+        // 2. **Bare leaf** (e.g. `cmd::hook::cmd_enforce` →
+        //    `cmd_enforce`). Covers `cmd::hook::cmd_enforce(&cwd)`
+        //    dispatched from a match arm in `main.rs` — the indexer
+        //    couldn't resolve the head, so the edge target collapsed to
+        //    the leaf.
+        //
+        // Polysemy guard: before following a suffix, count nodes in the
+        // graph whose FQN ends with that suffix on a `::` boundary;
+        // skip the walk if more than one distinct owner exists (other
+        // than `fqn` itself), otherwise unrelated types with a same-
+        // named method would pollute the answer.
+        if matches!(dir, BlastDir::Up | BlastDir::Both) {
             let mut seen: std::collections::HashSet<String> =
                 hits.iter().map(|(n, _)| n.fqn.clone()).collect();
-            // Skip any hit whose FQN is the input — we never want to
-            // report `fqn` as its own caller.
+            // Never report `fqn` as its own caller.
             seen.insert(fqn.to_string());
-            for (n, d) in extra {
-                if seen.insert(n.fqn.clone()) {
-                    hits.push((n, d));
+
+            let segments: Vec<&str> = fqn.split("::").filter(|s| !s.is_empty()).collect();
+            let total = segments.len();
+            // Try progressively shorter suffixes; max 2 extra walks
+            // (the 2-segment and the 1-segment leaf).
+            for take in [2usize, 1usize] {
+                if take >= total {
+                    // Same as or longer than the full FQN — strict BFS
+                    // already covered it.
+                    continue;
+                }
+                let suffix = segments[total - take..].join("::");
+                if suffix.is_empty() {
+                    continue;
+                }
+                let defs = self.kv.find_nodes_by_suffix(&suffix).await?;
+                let distinct_owners: std::collections::HashSet<String> = defs
+                    .iter()
+                    .map(|row| row.id.clone())
+                    .filter(|f| f != fqn)
+                    .collect();
+                if !distinct_owners.is_empty() {
+                    // Polysemous — another type owns the same suffix.
+                    // Over-reporting here drowns the real signal.
+                    continue;
+                }
+                let extra = self
+                    .bfs_depth_tagged(&suffix, depth, direction, Some(&kinds))
+                    .await?;
+                for (n, d) in extra {
+                    if seen.insert(n.fqn.clone()) {
+                        hits.push((n, d));
+                    }
                 }
             }
         }
@@ -413,16 +445,32 @@ impl Graph {
                 out.push(n);
             }
         }
-        // Also include edges whose `dst` is the bare leaf of `fqn` —
-        // these are cross-file callers whose call text didn't resolve
-        // through the file-local alias map at index time (see
-        // [`Self::impact`] for the full rationale). Treat them as
-        // callers of `fqn` since they almost always are.
-        if let Some(leaf) = fqn.rsplit("::").next()
-            && leaf != fqn
-            && !leaf.is_empty()
-        {
-            for e in self.incoming(leaf).await? {
+        // Also include edges whose `dst` is a shorter suffix of `fqn` —
+        // 2-segment (`ChromaStore::open`) and then bare leaf
+        // (`cmd_enforce`). These are cross-file callers whose call
+        // text didn't resolve through the file-local alias map at
+        // index time; see [`Self::impact`] for the full rationale and
+        // polysemy guard.
+        let segments: Vec<&str> = fqn.split("::").filter(|s| !s.is_empty()).collect();
+        let total = segments.len();
+        for take in [2usize, 1usize] {
+            if take >= total {
+                continue;
+            }
+            let suffix = segments[total - take..].join("::");
+            if suffix.is_empty() {
+                continue;
+            }
+            let defs = self.kv.find_nodes_by_suffix(&suffix).await?;
+            let distinct_owners: std::collections::HashSet<String> = defs
+                .iter()
+                .map(|row| row.id.clone())
+                .filter(|f| f != fqn)
+                .collect();
+            if !distinct_owners.is_empty() {
+                continue;
+            }
+            for e in self.incoming(&suffix).await? {
                 if e.kind == kind
                     && e.from != fqn
                     && seen.insert(e.from.clone())

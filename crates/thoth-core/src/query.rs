@@ -14,6 +14,11 @@ pub struct Query {
     /// How many chunks to return at most.
     #[serde(default = "default_top_k")]
     pub top_k: usize,
+    /// Minimum fused score a chunk must exceed to be returned. `0.0`
+    /// (the default) disables the floor. Set this to drop noise hits
+    /// when the caller would rather return fewer results than bad ones.
+    #[serde(default)]
+    pub min_score: f32,
 }
 
 fn default_top_k() -> usize {
@@ -45,6 +50,7 @@ impl Query {
             text: s.into(),
             scope: QueryScope::default(),
             top_k: default_top_k(),
+            min_score: 0.0,
         }
     }
 }

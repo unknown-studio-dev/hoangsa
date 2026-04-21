@@ -33,6 +33,8 @@ const hasLocal = args.includes("--local") || args.includes("-l");
 const hasUninstall = args.includes("--uninstall") || args.includes("-u");
 const hasMedia = args.includes("--media");
 const hasJoke = args.includes("--joke");
+const hasInstallChroma = args.includes("--install-chroma");
+const hasSkipChroma = args.includes("--no-chroma");
 
 /** Resolve global config dir: ~/.claude */
 function getGlobalDir() {
@@ -66,7 +68,7 @@ console.log(banner);
 // Show help if requested
 if (hasHelp) {
   console.log(
-    `  ${yellow}Usage:${reset} npx hoangsa-cc [options]\n\n  ${yellow}Options:${reset}\n    ${cyan}-g, --global${reset}              Install globally (to ~/.claude/)\n    ${cyan}-l, --local${reset}               Install locally (to ./.claude/)\n    ${cyan}    --media${reset}               Include video debugging support (montage/diff)\n    ${cyan}-u, --uninstall${reset}           Uninstall HOANGSA (remove all HOANGSA files)\n    ${cyan}    --joke${reset}                Easter egg 🥚\n    ${cyan}-h, --help${reset}                Show this help message\n\n  ${yellow}Examples:${reset}\n    ${dim}# Interactive install (prompts for location)${reset}\n    npx hoangsa-cc\n\n    ${dim}# Install globally${reset}\n    npx hoangsa-cc --global\n\n    ${dim}# Install with video debugging support${reset}\n    npx hoangsa-cc --global --media\n\n    ${dim}# Install to current project only${reset}\n    npx hoangsa-cc --local\n\n    ${dim}# Uninstall HOANGSA globally${reset}\n    npx hoangsa-cc --global --uninstall\n`,
+    `  ${yellow}Usage:${reset} npx hoangsa-cc [options]\n\n  ${yellow}Options:${reset}\n    ${cyan}-g, --global${reset}              Install globally (to ~/.claude/)\n    ${cyan}-l, --local${reset}               Install locally (to ./.claude/)\n    ${cyan}    --media${reset}               Include video debugging support (montage/diff)\n    ${cyan}    --install-chroma${reset}      Provision sidecar venv + pip install chromadb (standalone)\n    ${cyan}    --no-chroma${reset}           Skip chroma venv provisioning during install\n    ${cyan}-u, --uninstall${reset}           Uninstall HOANGSA (remove all HOANGSA files)\n    ${cyan}    --joke${reset}                Easter egg 🥚\n    ${cyan}-h, --help${reset}                Show this help message\n\n  ${yellow}Examples:${reset}\n    ${dim}# Interactive install (prompts for location)${reset}\n    npx hoangsa-cc\n\n    ${dim}# Install globally${reset}\n    npx hoangsa-cc --global\n\n    ${dim}# Install with video debugging support${reset}\n    npx hoangsa-cc --global --media\n\n    ${dim}# Install to current project only${reset}\n    npx hoangsa-cc --local\n\n    ${dim}# Provision chroma sidecar only (no config changes)${reset}\n    npx hoangsa-cc --install-chroma\n\n    ${dim}# Uninstall HOANGSA globally${reset}\n    npx hoangsa-cc --global --uninstall\n`,
   );
   process.exit(0);
 }
@@ -252,6 +254,109 @@ function installMemoryGlobal() {
 function tildify(p) {
   const home = os.homedir();
   return p.startsWith(home) ? "~" + p.slice(home.length) : p;
+}
+
+/** Path where the chroma sidecar python venv lives.
+ *  Matches `find_python()` in crates/thoth-store/src/chroma.rs so the
+ *  indexer picks it up automatically without HOANGSA_MEMORY_PYTHON. */
+function sidecarVenvPython() {
+  const venv = path.join(os.homedir(), ".hoangsa-memory", "sidecar-venv");
+  return {
+    dir: venv,
+    python:
+      process.platform === "win32"
+        ? path.join(venv, "Scripts", "python.exe")
+        : path.join(venv, "bin", "python3"),
+  };
+}
+
+/** Provision `~/.hoangsa-memory/sidecar-venv/` + `pip install chromadb`.
+ *  Idempotent: skips venv creation if python already exists and can
+ *  `import chromadb`. Returns `true` on success, `false` on failure
+ *  (install continues — chroma is optional). */
+function installChromaVenv() {
+  const { dir, python } = sidecarVenvPython();
+
+  // Fast path: venv already provisioned and chromadb importable.
+  if (fs.existsSync(python)) {
+    try {
+      execSync(`"${python}" -c "import chromadb"`, { stdio: "pipe" });
+      console.log(
+        `  ${green}✓${reset} chroma sidecar venv already provisioned at ${tildify(dir)}`,
+      );
+      return true;
+    } catch (_) {
+      // venv exists but chromadb missing — fall through to pip install.
+    }
+  }
+
+  // Find a system python3 capable of creating a venv.
+  let systemPython = null;
+  for (const candidate of ["python3", "python"]) {
+    try {
+      execSync(`${candidate} -c "import venv"`, { stdio: "pipe" });
+      systemPython = candidate;
+      break;
+    } catch (_) {
+      // Try next.
+    }
+  }
+  if (!systemPython) {
+    console.log(
+      `  ${yellow}⚠${reset} No system python3 with venv module found — skipping chroma venv setup.`,
+    );
+    console.log(
+      `    ${dim}Install Python 3.10+ and rerun with --install-chroma, or set HOANGSA_MEMORY_PYTHON to a python with chromadb installed.${reset}`,
+    );
+    return false;
+  }
+
+  // Create venv if missing.
+  if (!fs.existsSync(python)) {
+    console.log(
+      `  ${dim}Creating chroma sidecar venv at ${tildify(dir)} …${reset}`,
+    );
+    try {
+      fs.mkdirSync(path.dirname(dir), { recursive: true });
+      execSync(`${systemPython} -m venv "${dir}"`, { stdio: "inherit" });
+    } catch (e) {
+      console.log(
+        `  ${yellow}⚠${reset} Failed to create venv: ${e.message} — skipping chroma setup.`,
+      );
+      return false;
+    }
+  }
+
+  // pip install chromadb into the venv.
+  console.log(`  ${dim}Installing chromadb into sidecar venv …${reset}`);
+  try {
+    execSync(`"${python}" -m pip install --upgrade pip`, { stdio: "pipe" });
+    execSync(`"${python}" -m pip install chromadb`, { stdio: "inherit" });
+  } catch (e) {
+    console.log(
+      `  ${yellow}⚠${reset} pip install chromadb failed: ${e.message}`,
+    );
+    console.log(
+      `    ${dim}Rerun with --install-chroma after resolving, or install manually:${reset}`,
+    );
+    console.log(`    ${dim}  "${python}" -m pip install chromadb${reset}`);
+    return false;
+  }
+
+  // Verify the install took.
+  try {
+    execSync(`"${python}" -c "import chromadb"`, { stdio: "pipe" });
+  } catch (_) {
+    console.log(
+      `  ${yellow}⚠${reset} chromadb not importable after install — check the pip log above.`,
+    );
+    return false;
+  }
+
+  console.log(
+    `  ${green}✓${reset} chroma sidecar venv ready at ${tildify(dir)}`,
+  );
+  return true;
 }
 
 /** Register hoangsa-memory MCP server in cwd/.mcp.json, pointing at the
@@ -882,6 +987,46 @@ function ensureHoangsaHooks(settings, targetDir) {
     `  ${green}✓${reset} Installed enforce hook (pattern rules + stateful checks)`,
   );
 
+  // --- PreCompact hook (archive session before context gets compressed) ---
+  // Stop was the wrong trigger — fires every turn, but is_ingested() skips
+  // all but the first fire of a session. PreCompact fires at most a few
+  // times per long session, and SessionEnd closes the loop on /clear or
+  // abrupt exit. Together they capture the full transcript with minimal
+  // fork+exec cost.
+  if (!settings.hooks.PreCompact) settings.hooks.PreCompact = [];
+  settings.hooks.PreCompact.push({
+    _hoangsa_managed: true,
+    hooks: [
+      {
+        type: "command",
+        command: `${cli} hook session-archive`,
+        timeout: 5,
+      },
+    ],
+  });
+  console.log(
+    `  ${green}✓${reset} Installed session-archive hook on PreCompact`,
+  );
+
+  // --- SessionEnd hook (archive on /clear or session close) ---
+  if (!settings.hooks.SessionEnd) settings.hooks.SessionEnd = [];
+  settings.hooks.SessionEnd = settings.hooks.SessionEnd.filter(
+    (entry) => !entry._hoangsa_managed,
+  );
+  settings.hooks.SessionEnd.push({
+    _hoangsa_managed: true,
+    hooks: [
+      {
+        type: "command",
+        command: `${cli} hook session-archive`,
+        timeout: 5,
+      },
+    ],
+  });
+  console.log(
+    `  ${green}✓${reset} Installed session-archive hook on SessionEnd`,
+  );
+
   return true;
 }
 
@@ -1131,6 +1276,11 @@ function jokePrompt(callback) {
 // Main logic — skip when running in test mode
 if (!process.env.HOANGSA_TEST_MODE) {
   jokePrompt(() => {
+    if (hasInstallChroma) {
+      // Standalone chroma provisioning — no other install steps.
+      const ok = installChromaVenv();
+      process.exit(ok ? 0 : 1);
+    }
     if (hasGlobal && hasLocal) {
       console.error(
         `  ${yellow}Cannot specify both --global and --local${reset}`,

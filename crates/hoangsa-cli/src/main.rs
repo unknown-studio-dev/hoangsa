@@ -132,6 +132,9 @@ fn main() {
         ("hook", "post-enforce") => {
             cmd::hook::cmd_post_enforce(&cwd);
         }
+        ("hook", "session-archive") => {
+            cmd::hook::cmd_session_archive();
+        }
         ("hook", "state-record") => {
             cmd::hook::cmd_state_record(&cwd);
         }

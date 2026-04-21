@@ -351,6 +351,18 @@ impl Server {
             /// Whether to persist this recall as a `QueryIssued` event.
             #[serde(default)]
             log_event: Option<bool>,
+            /// Absolute fused-score floor. Chunks below this are dropped.
+            /// Defaults to `0.0` — i.e. only the internal noise floor
+            /// (see `retriever::NOISE_FLOOR`) applies.
+            #[serde(default)]
+            min_score: Option<f32>,
+            /// Return full chunk bodies. Default `false` — recall gives
+            /// coordinates (path, line span, preview, callers/callees) so
+            /// the caller can `Read path:L-L` for full content. Set to
+            /// `true` when you genuinely need the body in one round trip
+            /// (agent self-prompt, batch analysis, tests).
+            #[serde(default)]
+            detail: Option<bool>,
         }
         let Args {
             query,
@@ -358,13 +370,17 @@ impl Server {
             scope,
             tags,
             log_event,
+            min_score,
+            detail,
         } = serde_json::from_value(args)?;
+        let want_body = detail.unwrap_or(false);
         let sanitized = crate::sanitize::sanitize_query(&query);
         let clean_query = sanitized.clean_query;
         let scope_str = scope.as_deref().unwrap_or("curated");
         let mut q = Query {
             text: clean_query.clone(),
             top_k: top_k.unwrap_or(8).max(1),
+            min_score: min_score.unwrap_or(0.0).max(0.0),
             ..Query::text("")
         };
         if let Some(t) = tags {
@@ -457,6 +473,26 @@ impl Server {
             }
         }
 
+        // Strip bodies by default — recall's job is coordinates, not
+        // content. Agents looking at a hit can `Read path:start-end` if
+        // they need the full body; keeping it here would flood context
+        // on every query. When a chunk has no preview yet (symbol-lookup
+        // path), derive one from the first lines of the body so the
+        // stripped response is still useful.
+        if !want_body {
+            for c in out.chunks.iter_mut() {
+                if c.preview.is_empty() && !c.body.is_empty() {
+                    c.preview = c
+                        .body
+                        .lines()
+                        .take(3)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                }
+                c.body.clear();
+            }
+        }
+
         let text = render_retrieval(&out, &self.inner.root).await;
         // Serialize the full `Retrieval` so CLI `--json` sees the same
         // shape as the direct-store path. Fall back to an empty object on
@@ -473,7 +509,23 @@ impl Server {
         }
         let Args { path } = serde_json::from_value(args).unwrap_or_default();
         let src = PathBuf::from(path.unwrap_or_else(|| ".".to_string()));
-        let stats = self.inner.indexer.index_path(&src).await?;
+        // Wire the code-chunk ChromaDB collection if available, so this
+        // run actually embeds chunks. The stored `self.inner.indexer` is
+        // kept chroma-less so server startup doesn't pay the sidecar
+        // init cost up front; we upgrade per-index here on demand.
+        let stats = if let Some(col) = self.open_code_chroma().await {
+            let retrieve_cfg =
+                thoth_retrieve::IndexConfig::load_or_default(&self.inner.root).await;
+            let mut idx = thoth_retrieve::Indexer::new(
+                self.inner.store.clone(),
+                thoth_parse::LanguageRegistry::new(),
+            )
+            .with_config(&retrieve_cfg);
+            idx = idx.with_chroma(std::sync::Arc::new(col));
+            idx.index_path(&src).await?
+        } else {
+            self.inner.indexer.index_path(&src).await?
+        };
         let reparsed = stats.files.saturating_sub(stats.files_skipped);
         // Counts are deltas for this run. `files_skipped` = content-hash
         // cache hit (no reparse needed). Callers that want lifetime totals
@@ -1944,6 +1996,24 @@ impl Server {
         Ok(col)
     }
 
+    /// Code-chunk collection used by the indexer to embed source chunks.
+    /// Mirrors the CLI's `open_chroma` helper so MCP-driven indexing
+    /// produces embeddings instead of silently skipping the vector stage.
+    async fn open_code_chroma(&self) -> Option<ChromaCol> {
+        let cs = self.get_chroma().await?;
+        match cs.ensure_collection("thoth_code").await {
+            Ok((col, _info)) => Some(col),
+            Err(e) => {
+                // Sidecar came up but the collection handshake failed — this
+                // means embeddings will be skipped for this index run. Emit
+                // a warning so operators can debug instead of staring at a
+                // stats line that shows `embedded: 0` with no explanation.
+                tracing::warn!(error = %e, "chroma: ensure_collection(thoth_code) failed — embeddings disabled for this run");
+                None
+            }
+        }
+    }
+
     async fn open_archive_chroma(&self) -> anyhow::Result<ChromaCol> {
         let cs = self
             .get_chroma()
@@ -2053,8 +2123,11 @@ fn tools_catalog() -> Vec<Tool> {
         Tool {
             name: "memory_recall".to_string(),
             description: "Hybrid recall (symbol + BM25 + graph + markdown + semantic) over the \
-                          code memory. Returns ranked chunks with path, line span, and preview. \
-                          Use `scope` to include archived conversations."
+                          code memory. Returns ranked chunks with path, line span, preview, and \
+                          graph context (callers/callees/imports). Bodies are stripped by default \
+                          — agents should `Read path:L-L` on a hit if they need the full body. \
+                          Pass `detail: true` to get bodies inline. Use `scope` to include archived \
+                          conversations."
                 .to_string(),
             input_schema: json!({
                 "type": "object",
@@ -2073,6 +2146,22 @@ fn tools_catalog() -> Vec<Tool> {
                         "type": "array",
                         "items": { "type": "string" },
                         "description": "Filter facts to those with any of these tags (wing/scope filter)."
+                    },
+                    "min_score": {
+                        "type": "number",
+                        "minimum": 0.0,
+                        "default": 0.0,
+                        "description": "Absolute fused-score floor. Chunks below this are dropped. \
+                                        An internal noise floor (~0.05) also always applies — set this \
+                                        higher only to demand stronger hits."
+                    },
+                    "detail": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Return full chunk bodies inline. Default `false` — recall \
+                                        returns coordinates (path + line span + preview); caller \
+                                        should `Read path:L-L` for full content. Set `true` when \
+                                        you need bodies in one round trip."
                     },
                     "log_event": {
                         "type": "boolean",

@@ -199,6 +199,139 @@ fn module_path_from(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// Chunk a non-code text file into BM25-indexable slices.
+///
+/// No tree-sitter involvement: files like markdown, shell scripts, TOML,
+/// plain notes can't produce symbols or call edges, but their body text
+/// is still worth having in the BM25 stage. Returns an empty vec on read
+/// failure rather than erroring — a bad text file shouldn't abort an
+/// indexing run.
+///
+/// Chunking strategy: split on blank-line paragraphs, then flush whenever
+/// the running chunk hits either `MAX_LINES_PER_CHUNK` or
+/// `MAX_BYTES_PER_CHUNK`. The byte cap matters for minified/one-line
+/// files (JSON blobs, rolled-up CSS) where the line cap alone could let
+/// a single "line" grow to megabytes.
+///
+/// The `language` label on the returned chunks is the filename extension
+/// (or `"text"` if none), which shows up in rendered recall output.
+pub async fn parse_text_file(path: impl AsRef<Path>) -> Result<Vec<SourceChunk>> {
+    const MAX_LINES_PER_CHUNK: usize = 120;
+    const MAX_BYTES_PER_CHUNK: usize = 64 * 1024;
+    let path = path.as_ref().to_path_buf();
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::debug!(?path, error = %e, "skip text: read failed");
+            return Ok(Vec::new());
+        }
+    };
+    // Treat invalid UTF-8 leniently — replacement chars are still indexable.
+    let body = String::from_utf8_lossy(&bytes).into_owned();
+
+    // Leak the extension string so `language: &'static str` has a home.
+    // Text ingest is one-shot per file so the leak is bounded by the set
+    // of extensions in a project (tens, not millions).
+    let lang: &'static str = {
+        let ext = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_ascii_lowercase())
+            .unwrap_or_else(|| "text".to_string());
+        Box::leak(ext.into_boxed_str())
+    };
+
+    let mut chunks = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    let mut current_bytes: usize = 0;
+    let mut current_start: usize = 1; // 1-based
+    let mut line_no: usize = 0;
+
+    let flush = |current: &mut Vec<&str>,
+                 current_bytes: &mut usize,
+                 start: usize,
+                 line_no: usize,
+                 chunks: &mut Vec<SourceChunk>| {
+        if current.is_empty() {
+            return;
+        }
+        let text = current.join("\n");
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            let hash = blake3::hash(text.as_bytes());
+            chunks.push(SourceChunk {
+                path: path.clone(),
+                language: lang,
+                start_line: start as u32,
+                end_line: line_no as u32,
+                symbol: None,
+                kind: None,
+                body: text,
+                content_hash: *hash.as_bytes(),
+            });
+        }
+        current.clear();
+        *current_bytes = 0;
+    };
+
+    for line in body.lines() {
+        line_no += 1;
+        // Blank line → paragraph boundary; flush what we have.
+        if line.trim().is_empty() {
+            flush(
+                &mut current,
+                &mut current_bytes,
+                current_start,
+                line_no.saturating_sub(1),
+                &mut chunks,
+            );
+            current_start = line_no + 1;
+            continue;
+        }
+        // Line or byte cap hit BEFORE adding this line → flush, then start
+        // a new chunk rooted at the current line.
+        let would_exceed_bytes = current_bytes + line.len() + 1 > MAX_BYTES_PER_CHUNK;
+        if current.len() >= MAX_LINES_PER_CHUNK || (would_exceed_bytes && !current.is_empty()) {
+            flush(
+                &mut current,
+                &mut current_bytes,
+                current_start,
+                line_no.saturating_sub(1),
+                &mut chunks,
+            );
+            current_start = line_no;
+        }
+        current.push(line);
+        current_bytes += line.len() + 1; // +1 for the joining newline
+    }
+    flush(
+        &mut current,
+        &mut current_bytes,
+        current_start,
+        line_no.max(1),
+        &mut chunks,
+    );
+
+    // If the file had no non-blank content (e.g. whitespace-only), emit
+    // nothing. Otherwise fall back to a single whole-file chunk so callers
+    // querying an exact filename still get a hit.
+    if chunks.is_empty() && !body.trim().is_empty() {
+        let end_line = body.lines().count().max(1) as u32;
+        let hash = blake3::hash(body.as_bytes());
+        chunks.push(SourceChunk {
+            path: path.clone(),
+            language: lang,
+            start_line: 1,
+            end_line,
+            symbol: None,
+            kind: None,
+            body,
+            content_hash: *hash.as_bytes(),
+        });
+    }
+    Ok(chunks)
+}
+
 /// True when `node` is the `name` field of its parent AST node —
 /// i.e. it IS the declared identifier of the enclosing definition
 /// rather than a type *use*. Used to filter `struct Foo { … }` from
@@ -277,7 +410,24 @@ fn walk_ast(
         let name = lang
             .extract_name(node, source)
             .unwrap_or_else(|| "<anon>".to_string());
-        let fqn = format!("{module}::{name}");
+        // Nest FQN under the closest enclosing *type-like* container so
+        // `impl ChromaStore { fn open() }` emits `chroma::ChromaStore::open`
+        // instead of `chroma::open`. Without this, every `open` / `new` /
+        // `len` across impl blocks collapses into a single FQN and makes
+        // `memory_impact` return cross-file false positives.
+        //
+        // Only `Type` containers qualify as nesting receivers — nesting
+        // under an enclosing *function* would turn closures / local fns
+        // into `mod::outer_fn::inner` which breaks callers that look up
+        // `mod::inner`. Functions still get module-level FQNs even when
+        // defined inside another function body.
+        let receiver = stack
+            .iter()
+            .rev()
+            .find(|(_, k)| *k == SymbolKind::Type)
+            .map(|(parent_fqn, _)| parent_fqn.as_str())
+            .unwrap_or(module);
+        let fqn = format!("{receiver}::{name}");
         let start_row = node.start_position().row as u32 + 1;
         let end_row = node.end_position().row as u32 + 1;
 

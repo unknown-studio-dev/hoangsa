@@ -12,9 +12,9 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use tantivy::collector::TopDocs;
-use tantivy::query::QueryParser;
+use tantivy::query::{BooleanQuery, FuzzyTermQuery, Occur, Query, QueryParser};
 use tantivy::schema::{FAST, Field, STORED, STRING, Schema, TEXT, Value};
-use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, doc};
+use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, Term, doc};
 use thoth_core::{Error, Result};
 
 const WRITER_HEAP_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
@@ -247,10 +247,20 @@ impl FtsIndex {
             let searcher = reader.searcher();
             let qp = QueryParser::for_index(&index, vec![fields.body, fields.symbol]);
             let parsed = qp.parse_query(&q).map_err(store)?;
-            // In tantivy 0.26 `TopDocs` itself is a builder; you need to call
-            // one of its `order_by_*` methods to get an actual `Collector`.
             let collector = TopDocs::with_limit(k).order_by_score();
-            let top = searcher.search(&parsed, &collector).map_err(store)?;
+            let mut top = searcher.search(&parsed, &collector).map_err(store)?;
+
+            // Fuzzy fallback: when the strict BM25 pass yields nothing the
+            // user almost certainly has a typo (e.g. "chromda sidcar") that
+            // both tokeniser and embedder miss. Rebuild the query with
+            // Damerau-Levenshtein distance 1–2 over body+symbol and try
+            // once more before giving up. Runs in the same blocking task
+            // so hot-path (non-empty result) pays nothing.
+            if top.is_empty() {
+                if let Some(fz) = build_fuzzy_query(&q, &fields) {
+                    top = searcher.search(&fz, &collector).map_err(store)?;
+                }
+            }
 
             let mut out = Vec::with_capacity(top.len());
             for (score, addr) in top {
@@ -262,6 +272,38 @@ impl FtsIndex {
         .await
         .map_err(|e| Error::Store(format!("join: {e}")))?
     }
+}
+
+/// Build a lenient OR-query that tolerates typos. Returns `None` when the
+/// input has no usable tokens (empty / only stopwords / only 1–2 char
+/// tokens, where fuzzy at distance 1 would match basically everything).
+fn build_fuzzy_query(raw: &str, fields: &Fields) -> Option<Box<dyn Query>> {
+    let tokens: Vec<String> = raw
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter_map(|t| {
+            let t = t.trim().to_lowercase();
+            // Skip short tokens — fuzzy(distance=1) on "an"/"is" matches
+            // far too aggressively and drowns out the signal from longer
+            // mis-typed words that actually carry meaning.
+            if t.len() >= 4 { Some(t) } else { None }
+        })
+        .collect();
+    if tokens.is_empty() {
+        return None;
+    }
+
+    let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
+    for tok in &tokens {
+        // Longer tokens tolerate more edits — 2 for ≥8 chars, else 1.
+        let distance: u8 = if tok.len() >= 8 { 2 } else { 1 };
+        for field in [fields.body, fields.symbol] {
+            let term = Term::from_field_text(field, tok);
+            let q: Box<dyn Query> =
+                Box::new(FuzzyTermQuery::new(term, distance, true));
+            clauses.push((Occur::Should, q));
+        }
+    }
+    Some(Box::new(BooleanQuery::new(clauses)))
 }
 
 fn build_schema() -> Schema {

@@ -13,6 +13,12 @@ use std::path::Path;
 ///   - No session or no state.json → approve
 ///   - status="cooking" + plan.json has pending/running tasks → block
 ///   - Everything else → approve
+///
+/// Archival NOT triggered here — Stop fires every turn and the
+/// `is_ingested` short-circuit would skip all but the first fire,
+/// leaving most of the session unarchived. Archival lives on PreCompact
+/// and SessionEnd (see `cmd_session_archive`) where each fire does real
+/// work.
 pub fn cmd_stop_check(sessions_dir: Option<&str>, cwd: &str) {
     let dir = sessions_dir.map(|s| s.to_string()).unwrap_or_else(|| {
         Path::new(cwd)
@@ -299,7 +305,52 @@ fn find_bin_in_path(stem: &str) -> Option<String> {
 }
 
 fn find_thoth_bin() -> Option<String> {
-    find_bin_in_path("hoangsa-memory")
+    // PATH first so a user-installed override wins; otherwise fall back
+    // to the canonical global install location. `bin/install` places
+    // `hoangsa-memory` there unconditionally but does NOT add it to
+    // PATH, so a PATH-only lookup silently fails and the archive hook
+    // is a no-op — exactly what happened before this fallback landed.
+    if let Some(p) = find_bin_in_path("hoangsa-memory") {
+        return Some(p);
+    }
+    let home = std::env::var("HOME").ok()?;
+    let suffix = if cfg!(windows) { ".exe" } else { "" };
+    let candidate = Path::new(&home)
+        .join(".hoangsa-memory")
+        .join("bin")
+        .join(format!("hoangsa-memory{suffix}"));
+    if candidate.exists() {
+        return Some(candidate.to_string_lossy().to_string());
+    }
+    None
+}
+
+/// Fire-and-forget `hoangsa-memory archive ingest --refresh` so the
+/// current transcript (including any growth since last ingest) lands in
+/// the archive. Runs fully detached — stdio goes to /dev/null and the
+/// handle is dropped immediately — so the caller (PreCompact /
+/// SessionEnd hook) never stalls the user's session. Retention trimming
+/// runs inside the subprocess.
+fn spawn_archive_ingest() {
+    use std::process::{Command, Stdio};
+    let Some(bin) = find_thoth_bin() else { return };
+    let _ = Command::new(bin)
+        .args(["archive", "ingest", "--refresh"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+}
+
+/// `hook session-archive`
+///
+/// Trigger for the PreCompact and SessionEnd hooks. Spawns a detached
+/// `hoangsa-memory archive ingest --refresh`, emits an `approve`
+/// decision, and returns. Claude Code's hook interface expects a
+/// decision on stdout even when the hook is purely a side-effect.
+pub fn cmd_session_archive() {
+    spawn_archive_ingest();
+    out(&json!({"decision": "approve"}));
 }
 
 /// Count tasks with status other than "completed", "done", "skipped".

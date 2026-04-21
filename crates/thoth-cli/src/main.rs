@@ -197,8 +197,20 @@ async fn main() -> anyhow::Result<()> {
             daemon_cmd::cmd_changes(&root, from.as_deref(), depth, cli.json).await?
         }
         Cmd::Archive { cmd } => match cmd {
-            archive_cmd::ArchiveCmd::Ingest { project, topic } => {
-                archive_cmd::cmd_archive_ingest(&root, project.as_deref(), topic.as_deref()).await?
+            archive_cmd::ArchiveCmd::Ingest {
+                project,
+                topic,
+                refresh,
+                limit,
+            } => {
+                archive_cmd::cmd_archive_ingest(
+                    &root,
+                    project.as_deref(),
+                    topic.as_deref(),
+                    refresh,
+                    limit,
+                )
+                .await?
             }
             archive_cmd::ArchiveCmd::Status => {
                 archive_cmd::cmd_archive_status(&root, cli.json).await?
@@ -218,6 +230,20 @@ async fn main() -> anyhow::Result<()> {
                     top_k,
                     project.as_deref(),
                     topic.as_deref(),
+                    cli.json,
+                )
+                .await?
+            }
+            archive_cmd::ArchiveCmd::Purge {
+                older_than,
+                all,
+                dry_run,
+            } => {
+                archive_cmd::cmd_archive_purge(
+                    &root,
+                    older_than.as_deref(),
+                    all,
+                    dry_run,
                     cli.json,
                 )
                 .await?
@@ -259,7 +285,27 @@ pub(crate) async fn open_chroma(store: &StoreRoot) -> Option<Arc<thoth_store::Ch
             .to_string_lossy()
             .to_string()
     });
-    let chroma = ChromaStore::open(&path).await.ok()?;
-    let (col, _info) = chroma.ensure_collection("thoth_code").await.ok()?;
-    Some(Arc::new(col))
+    // enabled=true → user wants embeddings, so a failure here is *not* a
+    // silent "feature off" — it's a missing dependency or misconfiguration
+    // the operator needs to fix. Surface the underlying error on stderr
+    // instead of dropping `Err` on the floor with `.ok()?`.
+    let chroma = match ChromaStore::open(&path).await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!(
+                "hoangsa-memory: chroma enabled in config but failed to start — embeddings disabled for this run.\n  cause: {e}\n  hint:  `pip install chromadb` into the python at $HOANGSA_MEMORY_PYTHON \
+                 or ~/.hoangsa-memory/sidecar-venv/bin/python3, or set `[chroma] enabled = false` to silence this warning."
+            );
+            return None;
+        }
+    };
+    match chroma.ensure_collection("thoth_code").await {
+        Ok((col, _info)) => Some(Arc::new(col)),
+        Err(e) => {
+            eprintln!(
+                "hoangsa-memory: chroma sidecar started but `ensure_collection(thoth_code)` failed: {e}"
+            );
+            None
+        }
+    }
 }
