@@ -15,10 +15,16 @@ const EXE = process.platform === "win32" ? ".exe" : "";
 const BIN = `hoangsa-cli${EXE}`;
 
 function resolveCli() {
-  // 1. Global install location (from curl|sh or prior --global run).
-  const globalBin = path.join(os.homedir(), ".hoangsa-memory", "bin", BIN);
-  if (fs.existsSync(globalBin)) return globalBin;
-  // 2. Platform-specific npm package (published as optionalDependencies).
+  // 0. Test escape hatch — honor explicit override first.
+  const override = process.env.HOANGSA_CLI_OVERRIDE;
+  if (override && fs.existsSync(override)) return override;
+  // 1. Canonical CLI install dir (scripts/install.sh → $HOME/.hoangsa/bin).
+  const cliBin = path.join(os.homedir(), ".hoangsa", "bin", BIN);
+  if (fs.existsSync(cliBin)) return cliBin;
+  // 2. Legacy/override location where someone aimed HOANGSA_INSTALL_DIR at the memory dir.
+  const memBin = path.join(os.homedir(), ".hoangsa-memory", "bin", BIN);
+  if (fs.existsSync(memBin)) return memBin;
+  // 3. Platform-specific npm package (published as optionalDependencies).
   if (process.arch === "x64" || process.arch === "arm64") {
     const plat = process.platform === "win32" ? "windows" : process.platform;
     try {
@@ -27,7 +33,7 @@ function resolveCli() {
       if (fs.existsSync(p)) return p;
     } catch {}
   }
-  // 3. Local dev build at workspace root.
+  // 4. Local dev build at workspace root.
   const dev = path.join(__dirname, "..", "target", "release", BIN);
   if (fs.existsSync(dev)) return dev;
   return null;
