@@ -134,13 +134,11 @@ jobs:
         if: matrix.use_cross
         run: cargo install cross --git https://github.com/cross-rs/cross
 
-      - name: Build (cross)
-        if: matrix.use_cross
-        run: cross build --release --locked --target ${{ matrix.target }} -p thoth-cli -p thoth-mcp
-
-      - name: Build (cargo)
-        if: ${{ !matrix.use_cross }}
-        run: cargo build --release --locked --target ${{ matrix.target }} -p thoth-cli -p thoth-mcp
+      - name: Build memory crates
+        shell: bash
+        run: |
+          builder=$([ "${{ matrix.use_cross }}" = "true" ] && echo cross || echo cargo)
+          $builder build --release --locked --target ${{ matrix.target }} -p thoth-cli -p thoth-mcp
 
       - name: Stage memory binaries
         shell: bash
