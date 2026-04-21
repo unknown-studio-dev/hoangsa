@@ -360,12 +360,12 @@ fn chroma_err(e: impl std::fmt::Display) -> Error {
 }
 
 fn find_python() -> String {
-    if let Ok(p) = std::env::var("THOTH_PYTHON") {
+    if let Ok(p) = std::env::var("HOANGSA_MEMORY_PYTHON") {
         return p;
     }
     if let Some(home) = std::env::var_os("HOME") {
         let venv = std::path::PathBuf::from(home)
-            .join(".thoth")
+            .join(".hoangsa-memory")
             .join("sidecar-venv")
             .join("bin")
             .join("python3");

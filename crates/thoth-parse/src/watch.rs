@@ -7,10 +7,10 @@
 //! orchestrator is responsible for batching changes into index deltas.
 //!
 //! Events inside ignored paths are silently dropped. The ignore rules
-//! are: `.gitignore` + `.thothignore` + a small hardcoded set of dirs
-//! that Thoth itself writes to (`.thoth/`, `.git/`). This prevents the
-//! infinite-loop scenario where reindexing writes to `.thoth/`, which
-//! re-triggers the watcher.
+//! are: `.gitignore` + `.hoangsa-memoryignore` + a small hardcoded set of
+//! dirs that hoangsa-memory itself writes to (`.hoangsa-memory/`, `.git/`).
+//! This prevents the infinite-loop scenario where reindexing writes to
+//! `.hoangsa-memory/`, which re-triggers the watcher.
 
 use std::path::Path;
 
@@ -21,15 +21,15 @@ use time::OffsetDateTime;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-use crate::walk::THOTH_IGNORE_FILE;
+use crate::walk::HOANGSA_MEMORY_IGNORE_FILE;
 
 /// Directories that the watcher always ignores, regardless of
-/// `.gitignore` / `.thothignore` content. These are paths that Thoth
-/// (or its host) writes to during indexing — without this hardcoded
-/// list, the watcher would infinite-loop on its own output.
-const ALWAYS_IGNORED_DIRS: &[&str] = &[".thoth", ".git"];
+/// `.gitignore` / `.hoangsa-memoryignore` content. These are paths that
+/// hoangsa-memory (or its host) writes to during indexing — without this
+/// hardcoded list, the watcher would infinite-loop on its own output.
+const ALWAYS_IGNORED_DIRS: &[&str] = &[".hoangsa-memory", ".git"];
 
-/// Build a combined ignore matcher from `.gitignore` + `.thothignore`
+/// Build a combined ignore matcher from `.gitignore` + `.hoangsa-memoryignore`
 /// rooted at `root`. Returns `None` if neither file exists or both are
 /// empty. The matcher is used in the `notify` callback to drop events
 /// before they hit the channel.
@@ -47,11 +47,11 @@ fn build_ignore(root: &Path) -> Option<Gitignore> {
         }
     }
 
-    // `.thothignore`
-    let thothignore = root.join(THOTH_IGNORE_FILE);
+    // `.hoangsa-memoryignore`
+    let thothignore = root.join(HOANGSA_MEMORY_IGNORE_FILE);
     if thothignore.is_file() {
         if let Some(e) = gb.add(&thothignore) {
-            warn!(error = %e, "watcher: failed to parse .thothignore");
+            warn!(error = %e, "watcher: failed to parse .hoangsa-memoryignore");
         } else {
             added = true;
         }
@@ -97,8 +97,8 @@ impl Watcher {
     /// `buffer` is the size of the internal mpsc channel; bursty workloads
     /// may want something generous (e.g. 1024).
     ///
-    /// Events matching `.gitignore`, `.thothignore`, or the hardcoded
-    /// always-ignored dirs (`.thoth/`, `.git/`) are silently dropped.
+    /// Events matching `.gitignore`, `.hoangsa-memoryignore`, or the hardcoded
+    /// always-ignored dirs (`.hoangsa-memory/`, `.git/`) are silently dropped.
     pub fn watch(root: impl AsRef<Path>, buffer: usize) -> Result<Self> {
         // Canonicalize the root so that ignore-rule matching doesn't
         // panic when `notify` returns absolute/canonical paths (macOS
@@ -124,7 +124,7 @@ impl Watcher {
                     if in_always_ignored(&path) {
                         continue;
                     }
-                    // .gitignore + .thothignore rules. The `ignore` crate
+                    // .gitignore + .hoangsa-memoryignore rules. The `ignore` crate
                     // panics if the path isn't under the gitignore root, so
                     // we guard with `strip_prefix` first.
                     if let Some(gi) = ignore.as_ref()

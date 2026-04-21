@@ -106,7 +106,7 @@ pub fn cmd_lesson_guard(cwd: &str) {
     }
 
     // Find thoth binary
-    let thoth_root = Path::new(cwd).join(".thoth");
+    let thoth_root = Path::new(cwd).join(".hoangsa-memory");
     if !thoth_root.exists() {
         out(&json!({"decision": "approve"}));
         return;
@@ -299,7 +299,7 @@ fn find_bin_in_path(stem: &str) -> Option<String> {
 }
 
 fn find_thoth_bin() -> Option<String> {
-    find_bin_in_path("thoth")
+    find_bin_in_path("hoangsa-memory")
 }
 
 /// Count tasks with status other than "completed", "done", "skipped".
@@ -1008,7 +1008,7 @@ fn resolve_symbol_to_file(cwd: &str, symbol: &str) -> Option<String> {
 
     // Preferred: Thoth index lookup.
     if let Some(thoth_bin) = find_thoth_bin() {
-        let thoth_root = Path::new(cwd).join(".thoth");
+        let thoth_root = Path::new(cwd).join(".hoangsa-memory");
         if thoth_root.exists() {
             if let Ok(out) = Command::new(&thoth_bin)
                 .args(["--root", &thoth_root.to_string_lossy()])
@@ -1058,7 +1058,7 @@ fn find_symbol_in_tree(
     }
     const SKIP_DIRS: &[&str] = &[
         ".git", "node_modules", "target", "dist", "build", ".hoangsa",
-        ".thoth", ".claude", "__pycache__", ".venv", "venv", ".next",
+        ".hoangsa-memory", ".claude", "__pycache__", ".venv", "venv", ".next",
     ];
     const SOURCE_EXTS: &[&str] = &[
         "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "c", "cpp",

@@ -1,4 +1,4 @@
-//! The `thoth` command-line interface.
+//! The `hoangsa-memory` command-line interface.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,10 +21,11 @@ mod watch_cmd;
 // ------------------------------------------------------------------ CLI spec
 
 #[derive(Parser, Debug)]
-#[command(name = "thoth", version, about = "Long-term memory for coding agents.")]
+#[command(name = "hoangsa-memory", version, about = "Long-term memory for coding agents.")]
 struct Cli {
-    /// Path to the `.thoth/` data directory. Resolved via:
-    /// `--root` > `$THOTH_ROOT` > `./.thoth/` > `~/.thoth/projects/{slug}/`.
+    /// Path to the `.hoangsa-memory/` data directory. Resolved via:
+    /// `--root` > `$HOANGSA_MEMORY_ROOT` > `./.hoangsa-memory/` >
+    /// `~/.hoangsa-memory/projects/{slug}/`.
     #[arg(long, global = true)]
     root: Option<PathBuf>,
 

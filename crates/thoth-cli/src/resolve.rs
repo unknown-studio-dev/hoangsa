@@ -25,28 +25,27 @@ pub enum ProjectsCmd {
     },
 }
 
-/// Resolve the `.thoth/` data root via a 4-step chain:
+/// Resolve the `.hoangsa-memory/` data root via a 4-step chain:
 ///
 /// 1. Explicit `--root` flag (highest priority)
-/// 2. `$THOTH_ROOT` env var
-/// 3. Project-local `./.thoth/` (backwards compat) — BUT only when it
-///    actually has a populated graph. An empty `.thoth/` created by a
-///    `thoth index .` run that lost the `--root` flag used to silently
-///    pre-empt the real global root; we now detect that case and fall
-///    through to the global path, printing a one-line warning so the
-///    user knows why.
-/// 4. Global `~/.thoth/projects/{slug}/`
+/// 2. `$HOANGSA_MEMORY_ROOT` env var
+/// 3. Project-local `./.hoangsa-memory/` — BUT only when it actually has
+///    a populated graph. An empty `.hoangsa-memory/` created by an
+///    `index .` run that lost the `--root` flag used to silently pre-empt
+///    the real global root; we now detect that case and fall through to
+///    the global path, printing a one-line warning so the user knows why.
+/// 4. Global `~/.hoangsa-memory/projects/{slug}/`
 pub fn resolve_root(explicit: Option<&Path>) -> PathBuf {
     if let Some(root) = explicit {
         return root.to_path_buf();
     }
-    if let Ok(env) = std::env::var("THOTH_ROOT") {
+    if let Ok(env) = std::env::var("HOANGSA_MEMORY_ROOT") {
         let p = PathBuf::from(env);
         if !p.as_os_str().is_empty() {
             return p;
         }
     }
-    let local = PathBuf::from(".thoth");
+    let local = PathBuf::from(".hoangsa-memory");
     let local_populated = local.is_dir() && is_populated_root(&local);
 
     if local_populated {
@@ -56,7 +55,7 @@ pub fn resolve_root(explicit: Option<&Path>) -> PathBuf {
     if let Some(home) = home_dir()
         && let Ok(cwd) = std::env::current_dir()
     {
-        let projects = home.join(".thoth").join("projects");
+        let projects = home.join(".hoangsa-memory").join("projects");
         let slug = project_slug(&cwd);
         let new_path = projects.join(&slug);
         let global_path = if new_path.is_dir() {
@@ -71,14 +70,14 @@ pub fn resolve_root(explicit: Option<&Path>) -> PathBuf {
             }
         };
 
-        // Warn when we're falling through a stale local `.thoth/` to
-        // reach a populated global root. Silent if the local doesn't
+        // Warn when we're falling through a stale local `.hoangsa-memory/`
+        // to reach a populated global root. Silent if the local doesn't
         // exist at all (common, expected) or the global path is equally
         // empty (we can't tell which is "right", so don't guess).
         if local.is_dir() && is_populated_root(&global_path) {
             eprintln!(
-                "thoth: ignoring stale local .thoth/ (no graph.redb); using {} instead. \
-                 Remove ./.thoth or run `thoth index --root ./.thoth .` to repopulate it.",
+                "hoangsa-memory: ignoring stale local .hoangsa-memory/ (no graph.redb); using {} instead. \
+                 Remove ./.hoangsa-memory or run `hoangsa-memory index --root ./.hoangsa-memory .` to repopulate it.",
                 global_path.display()
             );
         }

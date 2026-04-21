@@ -141,10 +141,10 @@ async fn walk_respects_gitignore_and_extensions() {
     );
 }
 
-/// `.thothignore` uses gitignore syntax and is honoured even when the dir
+/// `.hoangsa-memoryignore` uses gitignore syntax and is honoured even when the dir
 /// isn't under git and has no `.gitignore`.
 #[tokio::test]
-async fn walk_respects_thothignore() {
+async fn walk_respects_hoangsa_memoryignore() {
     let dir = tempdir().unwrap();
     tokio::fs::write(dir.path().join("keep.rs"), "fn main() {}")
         .await
@@ -158,7 +158,7 @@ async fn walk_respects_thothignore() {
     tokio::fs::write(dir.path().join("generated").join("out.rs"), "fn g() {}")
         .await
         .unwrap();
-    tokio::fs::write(dir.path().join(".thothignore"), "skip.rs\ngenerated/\n")
+    tokio::fs::write(dir.path().join(".hoangsa-memoryignore"), "skip.rs\ngenerated/\n")
         .await
         .unwrap();
 
@@ -174,11 +174,11 @@ async fn walk_respects_thothignore() {
     );
     assert!(
         !names.contains(&"skip.rs".to_string()),
-        ".thothignore file rule not honoured: {names:?}",
+        ".hoangsa-memoryignore file rule not honoured: {names:?}",
     );
     assert!(
         !names.contains(&"out.rs".to_string()),
-        ".thothignore dir rule not honoured: {names:?}",
+        ".hoangsa-memoryignore dir rule not honoured: {names:?}",
     );
 }
 

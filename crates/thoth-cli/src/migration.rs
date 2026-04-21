@@ -116,7 +116,7 @@ pub async fn run(root: &Path) -> anyhow::Result<MigrationReport> {
         // Newer on-disk schema than this binary knows about. Refuse to
         // downgrade rather than silently mangle the file.
         anyhow::bail!(
-            "`.thoth/version` is {from}; this binary only understands up to {CURRENT_VERSION}. Upgrade the `thoth` binary."
+            "`.hoangsa-memory/version` is {from}; this binary only understands up to {CURRENT_VERSION}. Upgrade the `hoangsa-memory` binary."
         );
     }
 

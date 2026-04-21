@@ -504,11 +504,11 @@ pub mod layer_merge {
                 trigger: LessonTrigger {
                     tool: None, // matched at the gate against Edit|Write
                     path_glob: Some(glob.to_string()),
-                    natural: format!("Edits to `{glob}` are blocked by .thoth/ignore"),
+                    natural: format!("Edits to `{glob}` are blocked by .hoangsa-memory/ignore"),
                     ..Default::default()
                 },
                 message: Some(format!(
-                    "Path `{glob}` is in .thoth/ignore — editing it is blocked."
+                    "Path `{glob}` is in .hoangsa-memory/ignore — editing it is blocked."
                 )),
                 source: RuleSource::Ignore(glob.to_string()),
             })

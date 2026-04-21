@@ -1,6 +1,7 @@
-//! `thoth-mcp` — an MCP (Model Context Protocol) stdio server exposing
-//! Thoth's recall/remember/index capabilities to any MCP-aware client
-//! (Claude Agent SDK, Claude Code, Cowork, Cursor, Zed, ...).
+//! `hoangsa-memory-mcp` — an MCP (Model Context Protocol) stdio server
+//! exposing hoangsa-memory's recall/remember/index capabilities to any
+//! MCP-aware client (Claude Agent SDK, Claude Code, Cowork, Cursor, Zed,
+//! ...).
 //!
 //! See the [crate-level docs](thoth_mcp) for the wire protocol details and
 //! the tool catalog.
@@ -8,8 +9,8 @@
 //! # Usage
 //!
 //! ```text
-//! thoth-mcp                   # serve on stdio; log to stderr
-//! THOTH_ROOT=/path/.thoth thoth-mcp
+//! hoangsa-memory-mcp                               # serve on stdio; log to stderr
+//! HOANGSA_MEMORY_ROOT=/path/.hoangsa-memory hoangsa-memory-mcp
 //! ```
 
 use std::path::PathBuf;
@@ -29,11 +30,12 @@ async fn main() -> anyhow::Result<()> {
 
     let root = resolve_root();
 
-    tracing::info!(root = %root.display(), "thoth-mcp starting");
+    tracing::info!(root = %root.display(), "hoangsa-memory-mcp starting");
 
     let server = Server::open(&root).await?;
 
-    // The project root is either cwd (global mode) or the parent of .thoth/ (local mode).
+    // The project root is either cwd (global mode) or the parent of
+    // .hoangsa-memory/ (local mode).
     let project_root = std::env::current_dir().unwrap_or_else(|_| {
         root.parent()
             .map(|p| p.to_path_buf())
@@ -59,19 +61,20 @@ async fn main() -> anyhow::Result<()> {
     // Clean up the socket file on normal exit.
     let _ = std::fs::remove_file(&sock);
 
-    tracing::info!("thoth-mcp exiting");
+    tracing::info!("hoangsa-memory-mcp exiting");
     Ok(())
 }
 
-/// Resolve root: `$THOTH_ROOT` > `./.thoth/` > `~/.thoth/projects/{slug}/`.
+/// Resolve root: `$HOANGSA_MEMORY_ROOT` > `./.hoangsa-memory/` >
+/// `~/.hoangsa-memory/projects/{slug}/`.
 fn resolve_root() -> PathBuf {
-    if let Ok(env) = std::env::var("THOTH_ROOT") {
+    if let Ok(env) = std::env::var("HOANGSA_MEMORY_ROOT") {
         let p = PathBuf::from(env);
         if !p.as_os_str().is_empty() {
             return p;
         }
     }
-    let local = PathBuf::from(".thoth");
+    let local = PathBuf::from(".hoangsa-memory");
     if local.is_dir() {
         return local;
     }
@@ -82,7 +85,7 @@ fn resolve_root() -> PathBuf {
         let hash = blake3::hash(canonical.to_string_lossy().as_bytes());
         let slug = &hash.to_hex()[..12];
         return PathBuf::from(home)
-            .join(".thoth")
+            .join(".hoangsa-memory")
             .join("projects")
             .join(slug);
     }

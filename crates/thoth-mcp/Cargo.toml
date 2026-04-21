@@ -6,10 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "MCP (Model Context Protocol) stdio server for Thoth — plug-and-play for Claude Agent SDK / Claude Code / Cowork."
+description = "MCP (Model Context Protocol) stdio server for hoangsa-memory — plug-and-play for Claude Agent SDK / Claude Code / Cowork."
 
 [[bin]]
-name = "thoth-mcp"
+name = "hoangsa-memory-mcp"
 path = "src/main.rs"
 
 [lib]

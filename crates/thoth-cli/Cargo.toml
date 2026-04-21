@@ -6,10 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "The `thoth` command-line interface."
+description = "The `hoangsa-memory` command-line interface (memory + code-intelligence for hoangsa-cc)."
 
 [[bin]]
-name = "thoth"
+name = "hoangsa-memory"
 path = "src/main.rs"
 
 [features]

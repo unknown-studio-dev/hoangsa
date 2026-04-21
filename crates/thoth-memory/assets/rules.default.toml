@@ -1,6 +1,6 @@
-# Default danger rules shipped with Thoth.
+# Default danger rules shipped with hoangsa-memory.
 # All rules ship at `Block` tier. Users may disable or downgrade them in
-# `~/.thoth/rules.user.toml` or `.thoth/rules.project.toml`.
+# `~/.hoangsa-memory/rules.user.toml` or `.hoangsa-memory/rules.project.toml`.
 #
 # Layer precedence (later overrides earlier by rule ID):
 #   rules.default.toml  →  rules.user.toml  →  rules.project.toml

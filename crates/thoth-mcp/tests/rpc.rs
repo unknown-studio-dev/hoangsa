@@ -31,7 +31,7 @@ async fn initialize_advertises_server_info_and_capabilities() {
     let result = resp.result.expect("ok");
 
     assert_eq!(result["protocolVersion"], "2024-11-05");
-    assert_eq!(result["serverInfo"]["name"], "thoth-mcp");
+    assert_eq!(result["serverInfo"]["name"], "hoangsa-memory-mcp");
     assert!(result["capabilities"]["tools"].is_object());
     assert!(result["capabilities"]["resources"].is_object());
 }

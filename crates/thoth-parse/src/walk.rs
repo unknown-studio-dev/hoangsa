@@ -1,13 +1,13 @@
 //! File discovery.
 //!
-//! Walks a source tree and yields the paths Thoth should index. The walker
-//! honours, in priority order:
+//! Walks a source tree and yields the paths hoangsa-memory should index.
+//! The walker honours, in priority order:
 //!
 //! 1. `.gitignore`, `.git/info/exclude`, global git excludes, and `.ignore`
 //!    files — the same set the `ignore` crate (ripgrep's walker) honours.
-//! 2. `.thothignore` — a project-local ignore file using gitignore syntax.
-//!    Useful when the user wants to exclude paths from Thoth's index but
-//!    keep them in git (e.g. generated fixtures, vendored docs).
+//! 2. `.hoangsa-memoryignore` — a project-local ignore file using gitignore
+//!    syntax. Useful when the user wants to exclude paths from the memory
+//!    index but keep them in git (e.g. generated fixtures, vendored docs).
 //! 3. `WalkOptions::extra_ignore_patterns` — inline patterns passed from
 //!    the caller (e.g. loaded from `config.toml`'s `[index] ignore = [...]`
 //!    or the CLI). Same gitignore syntax as the files above.
@@ -23,9 +23,9 @@ use tracing::{debug, warn};
 
 use crate::LanguageRegistry;
 
-/// The filename scanned at every directory level for Thoth-specific ignore
-/// rules. Uses the same syntax as `.gitignore`.
-pub const THOTH_IGNORE_FILE: &str = ".thothignore";
+/// The filename scanned at every directory level for hoangsa-memory-specific
+/// ignore rules. Uses the same syntax as `.gitignore`.
+pub const HOANGSA_MEMORY_IGNORE_FILE: &str = ".hoangsa-memoryignore";
 
 /// Options controlling [`walk_sources`].
 #[derive(Debug, Clone)]
@@ -37,7 +37,7 @@ pub struct WalkOptions {
     /// Whether to descend into hidden directories (e.g. `.github`).
     pub include_hidden: bool,
     /// Extra ignore patterns, in gitignore syntax. Applied on top of
-    /// `.gitignore` / `.ignore` / `.thothignore`. Typical sources:
+    /// `.gitignore` / `.ignore` / `.hoangsa-memoryignore`. Typical sources:
     /// `config.toml`'s `[index] ignore = [...]` or a CLI `--ignore` flag.
     ///
     /// Examples:
@@ -82,10 +82,10 @@ pub fn walk_sources(
         // every file listed in its `.gitignore`.
         .require_git(false)
         .parents(true)
-        // Any `.thothignore` found in an ancestor or descendant directory
+        // Any `.hoangsa-memoryignore` found in an ancestor or descendant directory
         // is treated just like `.gitignore` — same syntax, same precedence
         // rules (deeper files override shallower ones).
-        .add_custom_ignore_filename(THOTH_IGNORE_FILE);
+        .add_custom_ignore_filename(HOANGSA_MEMORY_IGNORE_FILE);
 
     // Build a synthetic Gitignore matcher from the inline patterns. The
     // `ignore` crate's `WalkBuilder` doesn't expose a way to hand it a

@@ -195,7 +195,7 @@ impl Server {
                 prompts: Some(json!({})),
             },
             server_info: ServerInfo {
-                name: "thoth-mcp".to_string(),
+                name: "hoangsa-memory-mcp".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
         };
@@ -399,7 +399,7 @@ impl Server {
                         .unwrap_or("memory");
                     out.chunks.push(thoth_core::Chunk {
                         id: h.id,
-                        path: PathBuf::from(format!(".thoth/{kind}")),
+                        path: PathBuf::from(format!(".hoangsa-memory/{kind}")),
                         line: 0,
                         span: (0, 0),
                         symbol: None,
@@ -428,7 +428,7 @@ impl Server {
                         .unwrap_or("conversation");
                     out.chunks.push(thoth_core::Chunk {
                         id: h.id,
-                        path: PathBuf::from(".thoth/archive"),
+                        path: PathBuf::from(".hoangsa-memory/archive"),
                         line: 0,
                         span: (0, 0),
                         symbol: Some(format!("[{topic}]")),
@@ -807,7 +807,7 @@ impl Server {
         #[derive(Deserialize)]
         struct Args {
             /// Slug for the proposed skill directory under
-            /// `.thoth/skills/<slug>.draft/`.
+            /// `.hoangsa-memory/skills/<slug>.draft/`.
             slug: String,
             /// The SKILL.md body the agent drafted. Must start with the
             /// `---\nname: ...` frontmatter.
@@ -2161,7 +2161,7 @@ fn tools_catalog() -> Vec<Tool> {
         },
         Tool {
             name: "thoth_skills_list".to_string(),
-            description: "List every installed skill under .thoth/skills/.".to_string(),
+            description: "List every installed skill under .hoangsa-memory/skills/.".to_string(),
             input_schema: json!({ "type": "object", "properties": {} }),
         },
         Tool {
@@ -2287,7 +2287,7 @@ fn tools_catalog() -> Vec<Tool> {
         },
         Tool {
             name: "thoth_skill_propose".to_string(),
-            description: "Draft a new SKILL.md under .thoth/skills/<slug>.draft/ — used when \
+            description: "Draft a new SKILL.md under .hoangsa-memory/skills/<slug>.draft/ — used when \
                           you've noticed ≥5 related lessons and want to consolidate them into \
                           a reusable skill. The user promotes via `thoth skills install`."
                 .to_string(),

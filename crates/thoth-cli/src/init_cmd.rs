@@ -1,11 +1,11 @@
-//! `thoth init` — create `.thoth/` + seed markdown + scaffold config.toml.
+//! `hoangsa-memory init` — create `.hoangsa-memory/` + seed markdown + scaffold config.toml.
 
 use std::path::Path;
 
 use thoth_store::StoreRoot;
 
-/// Create `.thoth/` at `root`, seed `MEMORY.md` / `LESSONS.md`, and write a
-/// documented `config.toml` on first run. Existing files are preserved.
+/// Create `.hoangsa-memory/` at `root`, seed `MEMORY.md` / `LESSONS.md`, and
+/// write a documented `config.toml` on first run. Existing files are preserved.
 pub async fn cmd_init(root: &Path) -> anyhow::Result<()> {
     let existed = root.exists();
     let store = StoreRoot::open(root).await?;
@@ -30,16 +30,16 @@ pub async fn cmd_init(root: &Path) -> anyhow::Result<()> {
     if !seeded.is_empty() {
         println!("  seeded: {}", seeded.join(", "));
     }
-    println!("  next:   thoth index .");
+    println!("  next:   hoangsa-memory index .");
     Ok(())
 }
 
-const DEFAULT_CONFIG_TOML: &str = r#"# Thoth config. All fields are optional; defaults shown.
+const DEFAULT_CONFIG_TOML: &str = r#"# hoangsa-memory config. All fields are optional; defaults shown.
 # Uncomment the ones you want to change.
 
 [index]
 # Gitignore-syntax patterns. Applied on top of `.gitignore`, `.ignore`, and
-# any `.thothignore` found in the project. Supports re-including with `!`.
+# any `.hoangsa-memoryignore` found in the project. Supports re-including with `!`.
 #
 # ignore = [
 #     "target/",
