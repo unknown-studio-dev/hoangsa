@@ -175,4 +175,25 @@ mod tests {
         assert_eq!(slug.len(), 12);
         assert!(slug.chars().all(|c| c.is_ascii_hexdigit()));
     }
+
+    /// Bug 5 — a `./.thoth/` with no `graph.redb` (or a stub one) must
+    /// not shadow the populated global root. This is the explicit
+    /// detection gate `resolve_root` uses to decide whether to accept
+    /// the local or fall through to `~/.thoth/projects/{slug}/`.
+    #[test]
+    fn is_populated_root_rejects_empty_and_stub_graph() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+
+        // No graph.redb at all — definitely not populated.
+        assert!(!is_populated_root(root));
+
+        // Stub graph.redb under the 4 KiB threshold — still not populated.
+        std::fs::write(root.join("graph.redb"), vec![0u8; 1024]).expect("write stub");
+        assert!(!is_populated_root(root));
+
+        // Cross the threshold — considered populated.
+        std::fs::write(root.join("graph.redb"), vec![0u8; 8 * 1024]).expect("write big");
+        assert!(is_populated_root(root));
+    }
 }

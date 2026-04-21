@@ -503,3 +503,139 @@ async fn mcp_remember_fact_returns_structured_cap_error() {
         "preview should enumerate existing entries so the agent can pick one: {parsed}"
     );
 }
+
+/// Bug 1 — detect_changes must match hunks that fall inside a symbol's
+/// BODY, not just the declaration line.
+#[tokio::test]
+async fn detect_changes_matches_body_hunk_inside_struct() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let srv = open(&tmp).await;
+
+    let src = r#"
+pub struct Rule {
+    pub id: String,
+    pub name: String,
+}
+pub fn use_rule(r: &Rule) -> String { r.id.clone() }
+"#;
+    let src_dir = index_rust_fixture(&srv, src).await;
+    let path_str = src_dir.path().join("m.rs").to_string_lossy().into_owned();
+
+    // Hunk touches line 3 — INSIDE the struct body, not the decl line.
+    let diff = format!(
+        "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -3,1 +3,1 @@\n    pub id: String,\n",
+        path = path_str,
+    );
+
+    let resp = srv
+        .handle(req(
+            200,
+            "thoth.call",
+            json!({
+                "name": "thoth_detect_changes",
+                "arguments": { "diff": diff, "depth": 2 }
+            }),
+        ))
+        .await
+        .expect("response");
+    let data = resp.result.expect("ok")["data"].clone();
+    let touched: Vec<String> = data["touched"]
+        .as_array()
+        .expect("touched array")
+        .iter()
+        .map(|n| n["fqn"].as_str().expect("fqn").to_string())
+        .collect();
+    assert!(
+        touched.iter().any(|f| f == "m::Rule"),
+        "body-line hunk must touch the enclosing struct; got {touched:?}"
+    );
+}
+
+/// Bug 6 — a call site inside a `match` arm must be captured as a
+/// `Calls` edge from the enclosing fn. Common in CLI dispatch patterns.
+#[tokio::test]
+async fn impact_captures_call_from_match_arm() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let srv = open(&tmp).await;
+
+    let src = r#"
+pub fn target() -> i32 { 42 }
+
+pub fn dispatch(a: &str, b: &str) -> i32 {
+    match (a, b) {
+        ("x", "y") => target(),
+        _ => 0,
+    }
+}
+"#;
+    let _src_dir = index_rust_fixture(&srv, src).await;
+
+    let resp = srv
+        .handle(req(
+            201,
+            "thoth.call",
+            json!({
+                "name": "thoth_impact",
+                "arguments": { "fqn": "m::target", "direction": "up", "depth": 2 }
+            }),
+        ))
+        .await
+        .expect("response");
+    let data = resp.result.expect("ok")["data"].clone();
+    let by_depth = data["by_depth"].as_array().expect("by_depth");
+    let mut callers: Vec<String> = Vec::new();
+    for level in by_depth {
+        for n in level["nodes"].as_array().expect("nodes") {
+            callers.push(n["fqn"].as_str().expect("fqn").to_string());
+        }
+    }
+    assert!(
+        callers.iter().any(|f| f == "m::dispatch"),
+        "match-arm call must be captured; got {callers:?}"
+    );
+}
+
+/// Bug 2 strengthening — type refs in generics, trait bounds, vec,
+/// and return-type positions must flow into `References` edges.
+#[tokio::test]
+async fn impact_captures_type_usage_in_generics_and_bounds() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let srv = open(&tmp).await;
+
+    let src = r#"
+pub struct Config { pub name: String }
+
+pub fn direct(c: Config) {}
+pub fn in_ref(c: &Config) {}
+pub fn in_vec(items: Vec<Config>) {}
+pub fn returns() -> Config { Config { name: String::new() } }
+pub fn generic<T: Into<Config>>(t: T) {}
+"#;
+    let _src_dir = index_rust_fixture(&srv, src).await;
+
+    let resp = srv
+        .handle(req(
+            202,
+            "thoth.call",
+            json!({
+                "name": "thoth_impact",
+                "arguments": { "fqn": "m::Config", "direction": "up", "depth": 2 }
+            }),
+        ))
+        .await
+        .expect("response");
+    let data = resp.result.expect("ok")["data"].clone();
+    let by_depth = data["by_depth"].as_array().expect("by_depth");
+    let mut callers: Vec<String> = Vec::new();
+    for level in by_depth {
+        for n in level["nodes"].as_array().expect("nodes") {
+            callers.push(n["fqn"].as_str().expect("fqn").to_string());
+        }
+    }
+    for expected in ["m::direct", "m::in_ref", "m::in_vec", "m::returns", "m::generic"] {
+        assert!(
+            callers.iter().any(|f| f == expected),
+            "missing {expected} in impact(Config, up): {callers:?}"
+        );
+    }
+}
