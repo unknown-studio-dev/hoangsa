@@ -61,6 +61,25 @@ fn exit_code(out: &Output) -> i32 {
     out.status.code().expect("process terminated by signal")
 }
 
+/// Two hermetic tempdirs (HOME + cwd). Used by every test.
+fn tmp_home_cwd() -> (tempfile::TempDir, tempfile::TempDir) {
+    (
+        tempfile::tempdir().expect("home tempdir"),
+        tempfile::tempdir().expect("cwd tempdir"),
+    )
+}
+
+/// Assert success + return parsed stdout JSON. Keeps the failure signal
+/// (stderr) visible on assertion failure.
+fn expect_success_json(out: &Output, ctx: &str) -> Value {
+    assert!(
+        out.status.success(),
+        "{ctx} must exit 0; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    parse_stdout(out)
+}
+
 /// Seed a minimal templates directory under `root/templates/` so that
 /// `HOANGSA_TEMPLATES_DIR=<root>/templates` gives the installer real
 /// files to walk. One file is enough — the pipeline is recursive-safe.
@@ -90,17 +109,10 @@ fn collect_action_paths(actions: &[Value]) -> Vec<PathBuf> {
 
 #[test]
 fn dry_run_global_emits_mode_global() {
-    let home = tempfile::tempdir().expect("home tempdir");
-    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let (home, cwd) = tmp_home_cwd();
 
-    let out = run(install_cmd(home.path(), cwd.path())
-        .args(["--global", "--dry-run"]));
-    assert!(
-        out.status.success(),
-        "dry-run global must exit 0; stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let v = parse_stdout(&out);
+    let out = run(install_cmd(home.path(), cwd.path()).args(["--global", "--dry-run"]));
+    let v = expect_success_json(&out, "dry-run global");
     assert_eq!(v["mode"], "global", "expected mode=global; got: {v}");
     assert!(v["actions"].is_array(), "actions must be an array; got: {v}");
 }
@@ -109,17 +121,10 @@ fn dry_run_global_emits_mode_global() {
 
 #[test]
 fn dry_run_local_emits_mode_local() {
-    let home = tempfile::tempdir().expect("home tempdir");
-    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let (home, cwd) = tmp_home_cwd();
 
-    let out = run(install_cmd(home.path(), cwd.path())
-        .args(["--local", "--dry-run"]));
-    assert!(
-        out.status.success(),
-        "dry-run local must exit 0; stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let v = parse_stdout(&out);
+    let out = run(install_cmd(home.path(), cwd.path()).args(["--local", "--dry-run"]));
+    let v = expect_success_json(&out, "dry-run local");
     assert_eq!(v["mode"], "local", "expected mode=local; got: {v}");
 }
 
@@ -127,17 +132,11 @@ fn dry_run_local_emits_mode_local() {
 
 #[test]
 fn dry_run_uninstall_with_global_emits_mode_uninstall() {
-    let home = tempfile::tempdir().expect("home tempdir");
-    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let (home, cwd) = tmp_home_cwd();
 
     let out = run(install_cmd(home.path(), cwd.path())
         .args(["--uninstall", "--global", "--dry-run"]));
-    assert!(
-        out.status.success(),
-        "dry-run uninstall must exit 0; stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let v = parse_stdout(&out);
+    let v = expect_success_json(&out, "dry-run uninstall");
     assert_eq!(
         v["mode"], "uninstall",
         "--uninstall + --global must yield mode=uninstall; got: {v}"
@@ -148,11 +147,9 @@ fn dry_run_uninstall_with_global_emits_mode_uninstall() {
 
 #[test]
 fn global_and_local_together_exits_2() {
-    let home = tempfile::tempdir().expect("home tempdir");
-    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let (home, cwd) = tmp_home_cwd();
 
-    let out = run(install_cmd(home.path(), cwd.path())
-        .args(["--global", "--local"]));
+    let out = run(install_cmd(home.path(), cwd.path()).args(["--global", "--local"]));
     assert_eq!(
         exit_code(&out),
         2,
@@ -165,8 +162,7 @@ fn global_and_local_together_exits_2() {
 
 #[test]
 fn uninstall_without_mode_exits_2() {
-    let home = tempfile::tempdir().expect("home tempdir");
-    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let (home, cwd) = tmp_home_cwd();
 
     let out = run(install_cmd(home.path(), cwd.path()).args(["--uninstall"]));
     assert_eq!(
@@ -181,19 +177,15 @@ fn uninstall_without_mode_exits_2() {
 
 #[test]
 fn dry_run_global_no_cwd_writes() {
-    let home = tempfile::tempdir().expect("home tempdir");
-    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let (home, cwd) = tmp_home_cwd();
 
-    let out = run(install_cmd(home.path(), cwd.path())
-        .args(["--global", "--dry-run"]));
-    assert!(out.status.success(), "dry-run global must exit 0");
-    let v = parse_stdout(&out);
+    let out = run(install_cmd(home.path(), cwd.path()).args(["--global", "--dry-run"]));
+    let v = expect_success_json(&out, "dry-run global");
     let actions = v["actions"].as_array().expect("actions array").clone();
 
     // Canonicalize both roots so /var/folders vs /private/var/folders
     // (macOS symlink) doesn't produce false negatives.
-    let cwd_real =
-        fs::canonicalize(cwd.path()).unwrap_or_else(|_| cwd.path().to_path_buf());
+    let cwd_real = fs::canonicalize(cwd.path()).unwrap_or_else(|_| cwd.path().to_path_buf());
     for p in collect_action_paths(&actions) {
         let p_real = fs::canonicalize(&p).unwrap_or_else(|_| p.clone());
         assert!(
@@ -209,17 +201,13 @@ fn dry_run_global_no_cwd_writes() {
 
 #[test]
 fn dry_run_local_references_cwd_paths() {
-    let home = tempfile::tempdir().expect("home tempdir");
-    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let (home, cwd) = tmp_home_cwd();
 
-    let out = run(install_cmd(home.path(), cwd.path())
-        .args(["--local", "--dry-run"]));
-    assert!(out.status.success(), "dry-run local must exit 0");
-    let v = parse_stdout(&out);
+    let out = run(install_cmd(home.path(), cwd.path()).args(["--local", "--dry-run"]));
+    let v = expect_success_json(&out, "dry-run local");
     let actions = v["actions"].as_array().expect("actions array").clone();
 
-    let cwd_real =
-        fs::canonicalize(cwd.path()).unwrap_or_else(|_| cwd.path().to_path_buf());
+    let cwd_real = fs::canonicalize(cwd.path()).unwrap_or_else(|_| cwd.path().to_path_buf());
     let any_under_cwd = collect_action_paths(&actions).into_iter().any(|p| {
         let p_real = fs::canonicalize(&p).unwrap_or_else(|_| p.clone());
         p_real.starts_with(&cwd_real)
@@ -235,8 +223,7 @@ fn dry_run_local_references_cwd_paths() {
 
 #[test]
 fn mcp_merge_preserves_existing_global() {
-    let home = tempfile::tempdir().expect("home tempdir");
-    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let (home, cwd) = tmp_home_cwd();
     let staging = tempfile::tempdir().expect("staging tempdir");
     let templates = seed_templates(staging.path());
 
@@ -286,8 +273,7 @@ fn mcp_merge_preserves_existing_global() {
 
 #[test]
 fn mcp_local_missing_bin_exits_3() {
-    let home = tempfile::tempdir().expect("home tempdir");
-    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let (home, cwd) = tmp_home_cwd();
     let staging = tempfile::tempdir().expect("staging tempdir");
     let templates = seed_templates(staging.path());
 
@@ -314,8 +300,7 @@ fn mcp_local_missing_bin_exits_3() {
 
 #[test]
 fn manifest_backup_on_user_modification() {
-    let home = tempfile::tempdir().expect("home tempdir");
-    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let (home, cwd) = tmp_home_cwd();
     let staging = tempfile::tempdir().expect("staging tempdir");
     let templates = seed_templates(staging.path());
 
@@ -393,41 +378,31 @@ fn manifest_backup_on_user_modification() {
 
 #[test]
 fn task_manager_flag_accepted_space_and_equals() {
-    let home = tempfile::tempdir().expect("home tempdir");
-    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let (home, cwd) = tmp_home_cwd();
 
-    // Space form: --task-manager clickup
-    let out_space = run(install_cmd(home.path(), cwd.path()).args([
-        "--global",
-        "--dry-run",
-        "--task-manager",
-        "clickup",
-    ]));
-    assert_ne!(
-        exit_code(&out_space),
-        2,
-        "space form must not exit 2; stderr: {}",
-        String::from_utf8_lossy(&out_space.stderr)
+    // Run a --task-manager invocation, assert it didn't get rejected as a
+    // usage error (exit 2), and return the parsed dry-run preview.
+    let assert_accepted = |form: &str, args: &[&str]| -> Value {
+        let out = run(install_cmd(home.path(), cwd.path()).args(args));
+        assert_ne!(
+            exit_code(&out),
+            2,
+            "{form} form must not exit 2; stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        parse_stdout(&out)
+    };
+
+    let v_space = assert_accepted(
+        "space",
+        &["--global", "--dry-run", "--task-manager", "clickup"],
     );
-    let v_space = parse_stdout(&out_space);
     assert_eq!(
         v_space["flags"]["task_manager"], "clickup",
         "space form must record clickup; got: {v_space}"
     );
 
-    // Equals form: --task-manager=clickup
-    let out_eq = run(install_cmd(home.path(), cwd.path()).args([
-        "--global",
-        "--dry-run",
-        "--task-manager=clickup",
-    ]));
-    assert_ne!(
-        exit_code(&out_eq),
-        2,
-        "equals form must not exit 2; stderr: {}",
-        String::from_utf8_lossy(&out_eq.stderr)
-    );
-    let v_eq = parse_stdout(&out_eq);
+    let v_eq = assert_accepted("equals", &["--global", "--dry-run", "--task-manager=clickup"]);
     assert_eq!(
         v_eq["flags"]["task_manager"], "clickup",
         "equals form must record clickup; got: {v_eq}"
@@ -438,8 +413,7 @@ fn task_manager_flag_accepted_space_and_equals() {
 
 #[test]
 fn no_memory_flag_skips_relocate() {
-    let home = tempfile::tempdir().expect("home tempdir");
-    let cwd = tempfile::tempdir().expect("cwd tempdir");
+    let (home, cwd) = tmp_home_cwd();
     let staging = tempfile::tempdir().expect("staging tempdir");
     let templates = seed_templates(staging.path());
 
@@ -454,16 +428,11 @@ fn no_memory_flag_skips_relocate() {
     let out = run(install_cmd(home.path(), cwd.path())
         .env("HOANGSA_TEMPLATES_DIR", &templates)
         .args(["--global", "--dry-run", "--no-memory"]));
-    assert!(
-        out.status.success(),
-        "dry-run must exit 0; stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let v = parse_stdout(&out);
+    let v = expect_success_json(&out, "dry-run --no-memory");
     let actions = v["actions"].as_array().expect("actions array");
-    let has_relocate = actions.iter().any(|a| {
-        a.get("action").and_then(|s| s.as_str()) == Some("relocate_memory_bin")
-    });
+    let has_relocate = actions
+        .iter()
+        .any(|a| a.get("action").and_then(|s| s.as_str()) == Some("relocate_memory_bin"));
     assert!(
         !has_relocate,
         "--no-memory must suppress relocate_memory_bin actions; got: {v}"
