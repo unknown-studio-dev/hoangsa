@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -69,3 +69,75 @@ jobs:
           components: rustfmt
       - name: cargo fmt check
         run: cargo fmt --check
+
+  install-shellcheck:
+    name: Shellcheck install.sh
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends shellcheck
+      - name: Run shellcheck (POSIX sh)
+        run: shellcheck -s sh scripts/install.sh
+
+  install-smoke:
+    name: Install smoke (${{ matrix.name }})
+    runs-on: ${{ matrix.runs-on }}
+    permissions:
+      contents: read
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: alpine-x64
+            runs-on: ubuntu-latest
+            container: alpine:3.19
+            setup: apk add --no-cache curl tar ca-certificates
+            needs_qemu: false
+          - name: ubuntu-x64
+            runs-on: ubuntu-latest
+            container: ubuntu:22.04
+            setup: apt-get update -q && apt-get install -y --no-install-recommends curl ca-certificates
+            needs_qemu: false
+          - name: ubuntu-arm64
+            runs-on: ubuntu-latest
+            container: arm64v8/ubuntu:22.04
+            setup: apt-get update -q && apt-get install -y --no-install-recommends curl ca-certificates
+            needs_qemu: true
+          - name: macos
+            runs-on: macos-latest
+            container: ~
+            setup: "true"
+            needs_qemu: false
+    steps:
+      - name: Set up QEMU (arm64 emulation)
+        if: matrix.needs_qemu
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install prerequisites
+        shell: sh
+        run: ${{ matrix.setup }}
+
+      - name: Smoke 1 — POSIX syntax check
+        shell: sh
+        run: sh -n scripts/install.sh
+
+      - name: Smoke 2 — --help exits 0 and prints usage
+        shell: sh
+        run: |
+          out=$(sh scripts/install.sh --help)
+          echo "$out"
+          echo "$out" | grep -i -E 'usage|options' >/dev/null
+
+      - name: Smoke 3 — platform detection trace
+        shell: sh
+        run: sh -x scripts/install.sh --help 2>&1 | grep -i 'platform' || true
