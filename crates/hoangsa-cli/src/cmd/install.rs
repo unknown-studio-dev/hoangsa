@@ -1314,22 +1314,17 @@ pnpm-lock.yaml
         })
     }
 
-    /// Register the `hoangsa-memory` MCP server in an explicit
-    /// `claude.json` target (test-friendly variant of
-    /// [`register_mcp_global`]). Preserves all other top-level keys and
-    /// every other entry in `mcpServers`.
-    ///
-    /// `memory_bin` is the absolute path recorded in `command`. The
-    /// caller is responsible for existence-checking it and emitting any
-    /// warning — `register_mcp_global_to` deliberately does not fail
-    /// on a missing bin (Decision: warn, still write, so the config
-    /// lands even if the user has the bin on `PATH` via some other
-    /// mechanism).
-    pub fn register_mcp_global_to(claude_json: &Path, memory_bin: &Path) -> io::Result<()> {
-        let mut data = load_json_object(claude_json);
-        let obj = data.as_object_mut().ok_or_else(|| {
-            io::Error::other("claude.json root is not an object after normalization")
-        })?;
+    /// Merge the `hoangsa-memory` MCP entry into the JSON object at
+    /// `json_path`, preserving all other top-level keys and every other
+    /// entry in `mcpServers`. Used by both the global (`~/.claude.json`)
+    /// and local (`<cwd>/.mcp.json`) registration paths, which only
+    /// differ in where they look for prerequisites and how they
+    /// surface errors.
+    fn merge_mcp_entry(json_path: &Path, memory_bin: &Path) -> io::Result<()> {
+        let mut data = load_json_object(json_path);
+        let obj = data
+            .as_object_mut()
+            .ok_or_else(|| io::Error::other("MCP config root is not an object"))?;
 
         let servers_val = obj
             .entry("mcpServers".to_string())
@@ -1347,7 +1342,22 @@ pnpm-lock.yaml
             build_mcp_entry(memory_bin, existing.as_ref()),
         );
 
-        save_json_object(claude_json, &data)
+        save_json_object(json_path, &data)
+    }
+
+    /// Register the `hoangsa-memory` MCP server in an explicit
+    /// `claude.json` target (test-friendly variant of
+    /// [`register_mcp_global`]). Preserves all other top-level keys and
+    /// every other entry in `mcpServers`.
+    ///
+    /// `memory_bin` is the absolute path recorded in `command`. The
+    /// caller is responsible for existence-checking it and emitting any
+    /// warning — `register_mcp_global_to` deliberately does not fail
+    /// on a missing bin (Decision: warn, still write, so the config
+    /// lands even if the user has the bin on `PATH` via some other
+    /// mechanism).
+    pub fn register_mcp_global_to(claude_json: &Path, memory_bin: &Path) -> io::Result<()> {
+        merge_mcp_entry(claude_json, memory_bin)
     }
 
     /// Register the `hoangsa-memory` MCP server in `~/.claude.json`
@@ -1399,29 +1409,7 @@ pnpm-lock.yaml
                 ),
             });
         }
-        let mut data = load_json_object(mcp_json);
-        let obj = data.as_object_mut().ok_or_else(|| InstallError {
-            exit_code: 1,
-            message: ".mcp.json root is not an object".into(),
-        })?;
-
-        let servers_val = obj
-            .entry("mcpServers".to_string())
-            .or_insert_with(|| Value::Object(serde_json::Map::new()));
-        if !servers_val.is_object() {
-            *servers_val = Value::Object(serde_json::Map::new());
-        }
-        let servers = servers_val
-            .as_object_mut()
-            .expect("mcpServers normalized to object");
-
-        let existing = servers.get("hoangsa-memory").cloned();
-        servers.insert(
-            "hoangsa-memory".into(),
-            build_mcp_entry(memory_bin, existing.as_ref()),
-        );
-
-        save_json_object(mcp_json, &data).map_err(|e| InstallError {
+        merge_mcp_entry(mcp_json, memory_bin).map_err(|e| InstallError {
             exit_code: 1,
             message: format!("write {}: {}", mcp_json.display(), e),
         })
