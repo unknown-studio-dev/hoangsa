@@ -3,10 +3,8 @@
 > A context engineering system for Claude Code
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
-![npm version](https://img.shields.io/npm/v/hoangsa-cc.svg)
 ![Claude Code](https://img.shields.io/badge/Claude_Code-compatible-blueviolet.svg)
 ![Built with Rust](https://img.shields.io/badge/Built_with-Rust-orange.svg)
-![Node.js](https://img.shields.io/badge/Node.js-14.18+-green.svg)
 
 ---
 
@@ -20,18 +18,23 @@ HOANGSA is a context engineering system for [Claude Code](https://docs.anthropic
 curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh | sh
 ```
 
-This installs `hoangsa-cli` to `~/.hoangsa/bin/` and `hoangsa-memory` + `hoangsa-memory-mcp` to `~/.hoangsa-memory/bin/`.
+The installer ships pre-built native binaries — no Node, no `npm`, no `cargo` required.
 
-Alternative for Node users: `npx hoangsa-cc --global` (requires Node ≥14).
+- `hoangsa-cli` → `~/.hoangsa/bin/`
+- `hoangsa-memory`, `hoangsa-memory-mcp` → `~/.hoangsa-memory/bin/`
+
+Supported platforms: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `linux-x64-musl`.
+
+Flags (forwarded to `hoangsa-cli install`): `--global` (default), `--local`, `--uninstall`, `--install-chroma`, `--dry-run`.
 
 ---
 
 ## Quick Start
 
-Prerequisites: **Node.js 14.18+** and the **[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)**
+Prerequisites: the **[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)**.
 
 ```bash
-npx hoangsa-cc       # Install HOANGSA (global: --global, local: --local, remove: --uninstall)
+curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh | sh
 /hoangsa:init        # Initialize project — detect codebase, set preferences
 /hoangsa:menu        # Design your first task → DESIGN-SPEC + TEST-SPEC
 ```
@@ -76,10 +79,10 @@ After `/hoangsa:menu`, run `/hoangsa:prepare` to plan, then `/hoangsa:cook` to e
 
 HOANGSA ships with **hoangsa-memory**, a local MCP server that gives Claude persistent memory (facts, lessons, preferences) and code-graph awareness (impact analysis, symbol context, change detection) across sessions.
 
-- **Auto-installed** by `npx hoangsa-cc`: binaries land in `~/.hoangsa-memory/bin/` and the MCP server is registered in your project's `.mcp.json`.
+- **Auto-installed** by the installer: binaries land in `~/.hoangsa-memory/bin/` and the MCP server is registered in your project's `.mcp.json`.
 - **State** per project lives under `~/.hoangsa-memory/projects/<slug>/` (MEMORY.md, LESSONS.md, USER.md + index).
 - **Hooks** installed into Claude Code settings: pre-edit rule enforcement, pre-edit lesson recall, post-tool event logging, and PreCompact / SessionEnd archive ingest for conversation recall.
-- **Archive search** (full conversation history) needs a chroma sidecar — optional, provision with `npx hoangsa-cc --install-chroma`.
+- **Archive search** (full conversation history) needs a chroma sidecar — optional, provision with `hoangsa-cli install --install-chroma`.
 
 Manual reindex: `/hoangsa:index` or `~/.hoangsa-memory/bin/hoangsa-memory --json index .`
 

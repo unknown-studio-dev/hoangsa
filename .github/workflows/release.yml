@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    name: Build (${{ matrix.target }})
+    name: Build (${{ matrix.triple }})
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -15,41 +15,30 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
+          - triple: linux-x64
+            target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
             use_cross: true
-            npm_pkg: cli-linux-x64
-            binary: hoangsa-cli
 
-          - target: aarch64-unknown-linux-gnu
+          - triple: linux-arm64
+            target: aarch64-unknown-linux-gnu
             os: ubuntu-22.04
             use_cross: true
-            npm_pkg: cli-linux-arm64
-            binary: hoangsa-cli
 
-          - target: x86_64-unknown-linux-musl
+          - triple: linux-x64-musl
+            target: x86_64-unknown-linux-musl
             os: ubuntu-22.04
             use_cross: true
-            npm_pkg: cli-linux-x64-musl
-            binary: hoangsa-cli
 
-          - target: x86_64-apple-darwin
+          - triple: darwin-x64
+            target: x86_64-apple-darwin
             os: macos-14
             use_cross: false
-            npm_pkg: cli-darwin-x64
-            binary: hoangsa-cli
 
-          - target: aarch64-apple-darwin
+          - triple: darwin-arm64
+            target: aarch64-apple-darwin
             os: macos-14
             use_cross: false
-            npm_pkg: cli-darwin-arm64
-            binary: hoangsa-cli
-
-          - target: x86_64-pc-windows-msvc
-            os: windows-2022
-            use_cross: false
-            npm_pkg: cli-windows-x64
-            binary: hoangsa-cli.exe
 
     steps:
       - name: Checkout code
@@ -64,99 +53,33 @@ jobs:
         if: matrix.use_cross
         run: cargo install cross --git https://github.com/cross-rs/cross
 
-      - name: Build (cross)
-        if: matrix.use_cross
-        working-directory: cli
-        run: cross build --release --locked --target ${{ matrix.target }}
-
-      - name: Build (cargo)
-        if: ${{ !matrix.use_cross }}
-        working-directory: cli
-        run: cargo build --release --locked --target ${{ matrix.target }}
-
-      - name: Prepare platform package
-        shell: bash
-        run: |
-          mkdir -p npm/${{ matrix.npm_pkg }}/bin
-          cp cli/target/${{ matrix.target }}/release/${{ matrix.binary }} npm/${{ matrix.npm_pkg }}/bin/
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.npm_pkg }}
-          path: npm/${{ matrix.npm_pkg }}/bin/
-          retention-days: 1
-
-  build-memory:
-    name: Build memory (${{ matrix.triple }})
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-22.04
-            use_cross: true
-            triple: linux-x64
-
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-22.04
-            use_cross: true
-            triple: linux-arm64
-
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-22.04
-            use_cross: true
-            triple: linux-x64-musl
-
-          - target: x86_64-apple-darwin
-            os: macos-14
-            use_cross: false
-            triple: darwin-x64
-
-          - target: aarch64-apple-darwin
-            os: macos-14
-            use_cross: false
-            triple: darwin-arm64
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Install cross
-        if: matrix.use_cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
-      - name: Build memory crates
+      - name: Build binaries
         shell: bash
         run: |
           builder=$([ "${{ matrix.use_cross }}" = "true" ] && echo cross || echo cargo)
-          $builder build --release --locked --target ${{ matrix.target }} -p thoth-cli -p thoth-mcp
+          $builder build --release --locked --target ${{ matrix.target }} \
+            -p hoangsa-cli -p thoth-cli -p thoth-mcp
 
-      - name: Stage memory binaries
+      - name: Stage binaries
         shell: bash
         run: |
-          mkdir -p memory-bins/${{ matrix.triple }}
-          cp target/${{ matrix.target }}/release/hoangsa-memory memory-bins/${{ matrix.triple }}/
-          cp target/${{ matrix.target }}/release/hoangsa-memory-mcp memory-bins/${{ matrix.triple }}/
+          set -euo pipefail
+          mkdir -p stage/bin
+          cp target/${{ matrix.target }}/release/hoangsa-cli         stage/bin/
+          cp target/${{ matrix.target }}/release/hoangsa-memory      stage/bin/
+          cp target/${{ matrix.target }}/release/hoangsa-memory-mcp  stage/bin/
+          chmod +x stage/bin/*
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: memory-bins-${{ matrix.triple }}
-          path: memory-bins/${{ matrix.triple }}/
+          name: hoangsa-${{ matrix.triple }}
+          path: stage/bin/
           retention-days: 1
 
   assemble-release:
     name: Assemble release tarballs
-    needs: [build, build-memory]
+    needs: [build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -181,9 +104,9 @@ jobs:
             stage="stage/$triple"
             mkdir -p "$stage/bin"
 
-            cp "artifacts/cli-$triple/hoangsa-cli" "$stage/bin/hoangsa-cli"
-            cp "artifacts/memory-bins-$triple/hoangsa-memory" "$stage/bin/hoangsa-memory"
-            cp "artifacts/memory-bins-$triple/hoangsa-memory-mcp" "$stage/bin/hoangsa-memory-mcp"
+            cp "artifacts/hoangsa-$triple/hoangsa-cli"         "$stage/bin/hoangsa-cli"
+            cp "artifacts/hoangsa-$triple/hoangsa-memory"      "$stage/bin/hoangsa-memory"
+            cp "artifacts/hoangsa-$triple/hoangsa-memory-mcp"  "$stage/bin/hoangsa-memory-mcp"
             chmod +x "$stage"/bin/*
 
             cp -r templates "$stage/templates"
@@ -214,50 +137,3 @@ jobs:
             dist/install.sh \
             dist/SHA256SUMS \
             --clobber
-
-  publish:
-    name: Publish to npm
-    needs: build
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: read
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20.x"
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: "cli-*"
-          path: npm/
-          merge-multiple: false
-
-      - name: Place binaries in bin/
-        run: |
-          for pkg in npm/cli-*/; do
-            mkdir -p "$pkg/bin"
-            find "$pkg" -maxdepth 1 -name "hoangsa-cli*" -exec mv {} "$pkg/bin/" \;
-          done
-
-      - name: Make binaries executable
-        run: chmod +x npm/cli-linux-*/bin/hoangsa-cli npm/cli-darwin-*/bin/hoangsa-cli
-
-      - name: Publish platform packages
-        run: |
-          for pkg in cli-linux-x64 cli-linux-arm64 cli-linux-x64-musl cli-darwin-x64 cli-darwin-arm64 cli-windows-x64; do
-            (cd npm/$pkg && npm publish --access public)
-          done
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish hoangsa-cc (base package)
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

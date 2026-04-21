@@ -2,7 +2,7 @@
 
 You are the update agent. Mission: check for HOANGSA updates, show changelog, obtain user confirmation, and execute clean installation.
 
-**Principles:** Always show what changed before updating. Never update without confirmation. Detect install type (local vs global) automatically.
+**Principles:** Always show what changed before updating. Never update without confirmation. Detect install type (local vs global) automatically. Installation is driven by the native `curl | sh` installer — **no Node, no npm, no cargo**.
 
 ---
 
@@ -66,17 +66,26 @@ Proceed to install step (treat as version 0.0.0 for comparison).
 
 ## Step 2: Check latest version
 
-Check npm for latest version:
+Resolve the latest GitHub release tag via the public API (no auth required for public repos, subject to the anonymous rate limit):
 
 ```bash
-npm view hoangsa-cc version 2>/dev/null
+HOANGSA_REPO="${HOANGSA_REPO:-unknown-studio-dev/hoangsa}"
+LATEST_TAG=$(curl -fsSL --retry 3 --retry-delay 2 \
+  "https://api.github.com/repos/$HOANGSA_REPO/releases/latest" \
+  | grep -E '"tag_name"[[:space:]]*:' \
+  | head -n 1 \
+  | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+# Strip leading "v" for comparison with VERSION file contents.
+LATEST_VERSION="${LATEST_TAG#v}"
+printf '%s\n' "$LATEST_VERSION"
 ```
 
-**If npm check fails:**
+**If the check fails** (network down, rate limited, empty response):
 ```
-Couldn't check for updates (offline or npm unavailable).
+Couldn't check for updates (offline or GitHub API unavailable).
 
-To update manually: `npx hoangsa-cc --global`
+To update manually:
+  curl -fsSL https://github.com/unknown-studio-dev/hoangsa/releases/latest/download/install.sh | sh
 ```
 
 Exit.
@@ -170,16 +179,18 @@ Use AskUserQuestion:
 
 ## Step 5: Run update
 
-Run the update using the install type detected in Step 1:
+Re-run the native installer pinned to the resolved tag. The installer forwards mode flags (`--global` / `--local`) straight into `hoangsa-cli install`, so the same script covers both install types:
 
 **If LOCAL install:**
 ```bash
-npx -y hoangsa-cc@latest --local
+curl -fsSL "https://github.com/$HOANGSA_REPO/releases/download/$LATEST_TAG/install.sh" \
+  | HOANGSA_VERSION="$LATEST_TAG" sh -s -- --local
 ```
 
 **If GLOBAL install (or unknown):**
 ```bash
-npx -y hoangsa-cc@latest --global
+curl -fsSL "https://github.com/$HOANGSA_REPO/releases/download/$LATEST_TAG/install.sh" \
+  | HOANGSA_VERSION="$LATEST_TAG" sh -s -- --global
 ```
 
 Capture output. If install fails, show error and exit.
@@ -206,7 +217,7 @@ Format completion message (changelog was already shown in confirmation step):
 
 ⚠️  Restart Claude Code to pick up the new commands.
 
-[View full changelog](https://github.com/glittercowboy/hoangsa/blob/main/CHANGELOG.md)
+[View full changelog](https://github.com/unknown-studio-dev/hoangsa/blob/main/CHANGELOG.md)
 ```
 
 ---
@@ -239,3 +250,4 @@ Please review these patches manually and reapply any needed changes to the new v
 | **Detect install type** | Auto-detect local vs global, never ask user |
 | **Clear cache after update** | Remove update-check cache to reset statusline |
 | **Report local patches** | Warn user if modified files were backed up |
+| **Native installer only** | Update path is always the `curl | sh` installer — never invoke `npm` or `npx` |

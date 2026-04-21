@@ -5,10 +5,8 @@
 > Hệ thống context engineering cho Claude Code
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
-![npm version](https://img.shields.io/npm/v/hoangsa-cc.svg)
 ![Claude Code](https://img.shields.io/badge/Claude_Code-compatible-blueviolet.svg)
 ![Built with Rust](https://img.shields.io/badge/Built_with-Rust-orange.svg)
-![Node.js](https://img.shields.io/badge/Node.js-14.18+-green.svg)
 
 ---
 
@@ -22,18 +20,23 @@ HOANGSA là hệ thống context engineering cho [Claude Code](https://docs.anth
 curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh | sh
 ```
 
-Lệnh này cài `hoangsa-cli` vào `~/.hoangsa/bin/` và `hoangsa-memory` + `hoangsa-memory-mcp` vào `~/.hoangsa-memory/bin/`.
+Installer tải sẵn binary native — **không cần Node, không cần `npm`, không cần `cargo`**.
 
-Phương án khác dành cho người dùng Node: `npx hoangsa-cc --global` (cần Node ≥14).
+- `hoangsa-cli` → `~/.hoangsa/bin/`
+- `hoangsa-memory`, `hoangsa-memory-mcp` → `~/.hoangsa-memory/bin/`
+
+Nền tảng hỗ trợ: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `linux-x64-musl`.
+
+Flags (chuyển tiếp sang `hoangsa-cli install`): `--global` (mặc định), `--local`, `--uninstall`, `--install-chroma`, `--dry-run`.
 
 ---
 
 ## Bắt đầu nhanh
 
-Yêu cầu: **Node.js 14.18+** và **[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)**
+Yêu cầu: **[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)**.
 
 ```bash
-npx hoangsa-cc       # Cài HOANGSA (global: --global, local: --local, gỡ: --uninstall)
+curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh | sh
 /hoangsa:init        # Khởi tạo project — phát hiện codebase, cài đặt preferences
 /hoangsa:menu        # Thiết kế task đầu tiên → DESIGN-SPEC + TEST-SPEC
 ```
@@ -78,10 +81,10 @@ Sau `/hoangsa:menu`, chạy `/hoangsa:prepare` để lập kế hoạch, rồi `
 
 HOANGSA đi kèm **hoangsa-memory** — MCP server chạy local, cung cấp cho Claude bộ nhớ lâu dài (facts, lessons, preferences) và hiểu biết về code graph (impact analysis, symbol context, change detection) qua nhiều session.
 
-- **Tự động cài** bởi `npx hoangsa-cc`: binary đặt tại `~/.hoangsa-memory/bin/`, MCP server được đăng ký trong `.mcp.json` của project.
+- **Tự động cài** bởi installer: binary đặt tại `~/.hoangsa-memory/bin/`, MCP server được đăng ký trong `.mcp.json` của project.
 - **State** theo từng project nằm trong `~/.hoangsa-memory/projects/<slug>/` (MEMORY.md, LESSONS.md, USER.md + index).
 - **Hooks** cài vào settings Claude Code: pre-edit rule enforcement, pre-edit lesson recall, post-tool event logging, và PreCompact / SessionEnd archive ingest để recall nội dung hội thoại.
-- **Archive search** (lịch sử hội thoại đầy đủ) cần chroma sidecar — tùy chọn, cài bằng `npx hoangsa-cc --install-chroma`.
+- **Archive search** (lịch sử hội thoại đầy đủ) cần chroma sidecar — tùy chọn, cài bằng `hoangsa-cli install --install-chroma`.
 
 Reindex thủ công: `/hoangsa:index` hoặc `~/.hoangsa-memory/bin/hoangsa-memory --json index .`
 
