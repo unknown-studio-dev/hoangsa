@@ -154,6 +154,77 @@ jobs:
           path: memory-bins/${{ matrix.triple }}/
           retention-days: 1
 
+  assemble-release:
+    name: Assemble release tarballs
+    needs: [build, build-memory]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Assemble per-triple tarballs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp scripts/install.sh dist/install.sh
+          chmod +x dist/install.sh
+
+          # Mapping: release triple -> cli artifact name
+          declare -A CLI_ARTIFACT=(
+            [darwin-arm64]=cli-darwin-arm64
+            [darwin-x64]=cli-darwin-x64
+            [linux-x64]=cli-linux-x64
+            [linux-arm64]=cli-linux-arm64
+            [linux-x64-musl]=cli-linux-x64-musl
+          )
+
+          for triple in darwin-arm64 darwin-x64 linux-x64 linux-arm64 linux-x64-musl; do
+            cli_art="${CLI_ARTIFACT[$triple]}"
+            stage="stage/$triple"
+            mkdir -p "$stage/bin"
+
+            cp "artifacts/$cli_art/hoangsa-cli" "$stage/bin/hoangsa-cli"
+            cp "artifacts/memory-bins-$triple/hoangsa-memory" "$stage/bin/hoangsa-memory"
+            cp "artifacts/memory-bins-$triple/hoangsa-memory-mcp" "$stage/bin/hoangsa-memory-mcp"
+            chmod +x "$stage"/bin/*
+
+            cp -r templates "$stage/templates"
+            cp LICENSE "$stage/LICENSE" 2>/dev/null || true
+            cp VERSION "$stage/VERSION" 2>/dev/null || true
+
+            tar -C "$stage" -czf "dist/hoangsa-$triple.tar.gz" .
+          done
+
+      - name: Compute SHA256SUMS
+        shell: bash
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          sha256sum hoangsa-*.tar.gz install.sh > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag || true
+          gh release upload "${GITHUB_REF_NAME}" \
+            dist/hoangsa-*.tar.gz \
+            dist/install.sh \
+            dist/SHA256SUMS \
+            --clobber
+
   publish:
     name: Publish to npm
     needs: build
