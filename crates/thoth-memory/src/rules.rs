@@ -263,10 +263,7 @@ pub mod layer_merge {
     use thoth_core::memory::{Enforcement, Lesson, LessonTrigger};
 
     /// Shipped default TOML bytes baked into the binary at compile time.
-    ///
-    /// Points at `crates/thoth-cli/assets/rules.default.toml` so there is
-    /// exactly one source of truth for the default danger rules.
-    pub const DEFAULT_RULES_TOML: &str = include_str!("../../thoth-cli/assets/rules.default.toml");
+    pub const DEFAULT_RULES_TOML: &str = include_str!("../assets/rules.default.toml");
 
     /// Errors surfaced by the TOML loader.
     #[derive(Debug, thiserror::Error)]

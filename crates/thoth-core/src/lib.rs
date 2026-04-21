@@ -5,12 +5,8 @@
 //!
 //! This crate is intentionally small: it defines the stable surface every
 //! other crate in the workspace depends on (types, traits, errors) and
-//! nothing more. The top-level [`CodeMemory`] façade lives in the
-//! [`thoth`](https://docs.rs/thoth) umbrella crate, which wires the
-//! individual stores + the retriever + the memory manager behind a single
-//! entry point.
-//!
-//! See [`../../DESIGN.md`](../../../DESIGN.md) for the architecture document.
+//! nothing more. Downstream crates (`thoth-store`, `thoth-retrieve`,
+//! `thoth-memory`, …) compose these types directly.
 
 #![deny(rust_2018_idioms)]
 #![warn(missing_docs)]

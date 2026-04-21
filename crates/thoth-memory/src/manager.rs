@@ -1,6 +1,6 @@
-//! Top-level memory manager: forget pass, nudge pass, and episodic eviction.
+//! Top-level memory manager: forget pass + episodic eviction.
 
-use thoth_core::{Event, Result, Synthesizer};
+use thoth_core::Result;
 use thoth_store::StoreRoot;
 use thoth_store::episodes::EpisodeLog;
 use thoth_store::markdown::MarkdownStore;
@@ -24,17 +24,6 @@ pub struct ForgetReport {
     /// How many lessons were moved to `LESSONS.quarantined.md` because
     /// their failure ratio exceeded the configured threshold.
     pub lessons_quarantined: u64,
-}
-
-/// Stats produced by a nudge pass.
-#[derive(Debug, Clone, Default)]
-pub struct NudgeReport {
-    /// Facts proposed by the LLM and accepted.
-    pub facts_added: u64,
-    /// Lessons proposed by the LLM and accepted.
-    pub lessons_added: u64,
-    /// Skills proposed by the LLM and accepted.
-    pub skills_added: u64,
 }
 
 /// Top-level memory manager.
@@ -231,175 +220,6 @@ impl MemoryManager {
         }
         Ok(dropped)
     }
-
-    /// Run the Mode::Full nudge (invokes `Synthesizer::critique` +
-    /// `Synthesizer::propose_session_memory`).
-    ///
-    /// Two passes against the synthesizer:
-    ///
-    /// 1. **Per-outcome critique** — every recent `OutcomeObserved` event
-    ///    is handed to `critique`, which may return a [`Lesson`].
-    /// 2. **Session-level proposal** — the full recent event window is
-    ///    handed to `propose_session_memory`, which may return a bundle of
-    ///    [`Fact`]s, [`Lesson`]s, and [`Skill`]s.
-    ///
-    /// Results from both passes are de-duplicated against what's already
-    /// on disk (facts by normalized text, lessons by trigger, skills by
-    /// slug) so the nudge is idempotent across sessions.
-    ///
-    /// `window` bounds how many recent episodes are scanned. `0` means
-    /// "use the default of 64".
-    pub async fn nudge(&self, synth: &dyn Synthesizer, window: usize) -> Result<NudgeReport> {
-        if !self.config.enable_nudge {
-            return Ok(NudgeReport::default());
-        }
-        let window = if window == 0 { 64 } else { window };
-
-        let recent = self.episodes.recent(window).await?;
-        let events: Vec<Event> = recent.iter().map(|h| h.event.clone()).collect();
-        let outcomes: Vec<_> = events
-            .iter()
-            .filter_map(|e| match e {
-                Event::OutcomeObserved { outcome, .. } => Some(outcome.clone()),
-                _ => None,
-            })
-            .collect();
-
-        let mut report = NudgeReport::default();
-
-        // -- pass 1: per-outcome critique -----------------------------------
-        let mut existing_triggers: std::collections::HashSet<String> = self
-            .md
-            .read_lessons()
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|l| l.trigger.trim().to_ascii_lowercase())
-            .collect();
-
-        for o in &outcomes {
-            match synth.critique(o).await {
-                Ok(Some(lesson)) => {
-                    let key = lesson.trigger.trim().to_ascii_lowercase();
-                    if key.is_empty() || existing_triggers.contains(&key) {
-                        continue;
-                    }
-                    if let Err(e) = self.md.append_lesson(&lesson).await {
-                        tracing::warn!(error = %e, "nudge: failed to append lesson");
-                        continue;
-                    }
-                    existing_triggers.insert(key);
-                    report.lessons_added += 1;
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    tracing::warn!(error = %e, "nudge: critique failed for an outcome");
-                }
-            }
-        }
-
-        // -- pass 2: session-level proposal ---------------------------------
-        if !events.is_empty() {
-            match synth.propose_session_memory(&events).await {
-                Ok(proposal) => {
-                    // Facts — dedup by case-insensitive first-line title.
-                    let mut existing_facts: std::collections::HashSet<String> = self
-                        .md
-                        .read_facts()
-                        .await
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|f| fact_key(&f.text))
-                        .collect();
-                    for fact in proposal.facts {
-                        let key = fact_key(&fact.text);
-                        if key.is_empty() || existing_facts.contains(&key) {
-                            continue;
-                        }
-                        if let Err(e) = self.md.append_fact(&fact).await {
-                            tracing::warn!(error = %e, "nudge: failed to append fact");
-                            continue;
-                        }
-                        existing_facts.insert(key);
-                        report.facts_added += 1;
-                    }
-
-                    // Lessons from the session view (same dedup set as pass 1).
-                    for lesson in proposal.lessons {
-                        let key = lesson.trigger.trim().to_ascii_lowercase();
-                        if key.is_empty() || existing_triggers.contains(&key) {
-                            continue;
-                        }
-                        if let Err(e) = self.md.append_lesson(&lesson).await {
-                            tracing::warn!(error = %e, "nudge: failed to append lesson");
-                            continue;
-                        }
-                        existing_triggers.insert(key);
-                        report.lessons_added += 1;
-                    }
-
-                    // Skills — dedup by slug. `path` should point at a
-                    // source directory with a SKILL.md; we copy it in.
-                    let mut existing_slugs: std::collections::HashSet<String> = self
-                        .md
-                        .list_skills()
-                        .await
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|s| s.slug.trim().to_ascii_lowercase())
-                        .collect();
-                    for skill in proposal.skills {
-                        let slug_key = skill.slug.trim().to_ascii_lowercase();
-                        if !slug_key.is_empty() && existing_slugs.contains(&slug_key) {
-                            continue;
-                        }
-                        if skill.path.as_os_str().is_empty() {
-                            tracing::warn!(
-                                slug = %skill.slug,
-                                "nudge: skill proposal has empty path, skipped"
-                            );
-                            continue;
-                        }
-                        match self.md.install_from_directory(&skill.path).await {
-                            Ok(installed) => {
-                                existing_slugs.insert(installed.slug.to_ascii_lowercase());
-                                report.skills_added += 1;
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    error = %e,
-                                    slug = %skill.slug,
-                                    "nudge: failed to install skill"
-                                );
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "nudge: session-level proposal failed");
-                }
-            }
-        }
-
-        tracing::info!(
-            outcomes = outcomes.len(),
-            facts_added = report.facts_added,
-            lessons_added = report.lessons_added,
-            skills_added = report.skills_added,
-            "memory: nudge pass complete"
-        );
-        Ok(report)
-    }
-}
-
-/// Normalize a fact body to its case-folded first line — used as the
-/// dedup key when the synthesizer proposes a fact that's already on disk.
-fn fact_key(text: &str) -> String {
-    text.lines()
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase()
 }
 
 #[cfg(test)]

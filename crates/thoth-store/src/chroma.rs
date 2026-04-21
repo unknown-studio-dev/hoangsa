@@ -64,7 +64,7 @@ pub struct ChromaCol {
     collection: String,
 }
 
-const SIDECAR_SCRIPT: &str = include_str!("../../thoth-cli/assets/chroma_sidecar.py");
+const SIDECAR_SCRIPT: &str = include_str!("../assets/chroma_sidecar.py");
 
 impl ChromaStore {
     /// Spawn the Python sidecar and open a ChromaDB PersistentClient.

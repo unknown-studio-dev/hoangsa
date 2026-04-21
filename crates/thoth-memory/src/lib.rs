@@ -36,7 +36,7 @@ pub use cap::{
 pub use config::{
     ActorPolicyConfig, DisciplineConfig, EnforcementConfig, MemoryConfig, gate_defaults,
 };
-pub use manager::{ForgetReport, MemoryManager, NudgeReport};
+pub use manager::{ForgetReport, MemoryManager};
 pub use working::{WorkingMemory, WorkingNote};
 
 use time::OffsetDateTime;

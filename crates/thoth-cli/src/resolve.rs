@@ -139,64 +139,6 @@ fn sanitize_slug(raw: &str) -> String {
     result.trim_matches('-').to_string()
 }
 
-/// Register a project in `~/.thoth/projects.json` so `thoth projects list`
-/// can map slugs back to paths.
-pub fn register_project(slug: &str, project_path: &Path) -> anyhow::Result<()> {
-    let home = home_dir().ok_or_else(|| anyhow::anyhow!("$HOME not set"))?;
-    let global_root = home.join(".thoth");
-    std::fs::create_dir_all(&global_root)?;
-
-    let registry_path = global_root.join("projects.json");
-    let mut map: serde_json::Map<String, serde_json::Value> = if registry_path.is_file() {
-        let content = std::fs::read_to_string(&registry_path)?;
-        serde_json::from_str(&content).unwrap_or_default()
-    } else {
-        serde_json::Map::new()
-    };
-
-    let canonical = project_path
-        .canonicalize()
-        .unwrap_or_else(|_| project_path.to_path_buf());
-    map.insert(
-        slug.to_string(),
-        serde_json::Value::String(canonical.to_string_lossy().into_owned()),
-    );
-
-    let json = serde_json::to_string_pretty(&serde_json::Value::Object(map))?;
-    std::fs::write(&registry_path, json)?;
-    Ok(())
-}
-
-/// Returns true when the resolved root lives under `~/.thoth/projects/`.
-pub fn is_global_root(root: &Path) -> bool {
-    if let Some(home) = home_dir() {
-        let global_prefix = home.join(".thoth").join("projects");
-        root.starts_with(&global_prefix)
-    } else {
-        false
-    }
-}
-
-/// Compute the global root for the current working directory.
-/// Used by `thoth setup --global`. Returns the readable-slug path,
-/// or the legacy hash path if it already exists (not yet migrated).
-pub fn global_root_for_cwd() -> anyhow::Result<PathBuf> {
-    let home = home_dir().ok_or_else(|| anyhow::anyhow!("$HOME not set"))?;
-    let cwd = std::env::current_dir()?;
-    let projects = home.join(".thoth").join("projects");
-    let slug = project_slug(&cwd);
-    let new_path = projects.join(&slug);
-    if new_path.is_dir() {
-        return Ok(new_path);
-    }
-    let legacy = legacy_project_slug(&cwd);
-    let legacy_path = projects.join(&legacy);
-    if legacy_path.is_dir() {
-        return Ok(legacy_path);
-    }
-    Ok(new_path)
-}
-
 fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }

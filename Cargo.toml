@@ -5,7 +5,6 @@
 resolver = "3"
 members = [
     "crates/hoangsa-cli",
-    "crates/thoth",
     "crates/thoth-core",
     "crates/thoth-parse",
     "crates/thoth-store",
@@ -26,7 +25,6 @@ authors = ["Than The Van"]
 
 [workspace.dependencies]
 # Internal crates
-thoth          = { path = "crates/thoth",          version = "0.0.4" }
 thoth-core     = { path = "crates/thoth-core",     version = "0.0.4" }
 thoth-parse    = { path = "crates/thoth-parse",    version = "0.0.4" }
 thoth-store    = { path = "crates/thoth-store",    version = "0.0.4" }

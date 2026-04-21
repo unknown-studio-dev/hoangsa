@@ -11,12 +11,11 @@ use thoth_store::{ChromaStore, StoreRoot};
 mod archive_cmd;
 mod daemon;
 mod daemon_cmd;
-mod hooks;
 mod index_cmd;
+mod init_cmd;
 mod memory_cmd;
 mod query_cmd;
 mod resolve;
-mod setup;
 mod watch_cmd;
 
 // ------------------------------------------------------------------ CLI spec
@@ -74,20 +73,8 @@ impl ImpactDir {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
-    /// One-shot bootstrap — run this first.
-    Setup {
-        #[arg(long)]
-        status: bool,
-        #[arg(long, alias = "accept-defaults")]
-        yes: bool,
-        #[arg(long, conflicts_with = "local")]
-        global: bool,
-        #[arg(long, conflicts_with = "global")]
-        local: bool,
-    },
-
-    /// Initialize a bare `.thoth/` directory. Prefer `thoth setup`.
-    #[command(hide = true)]
+    /// Initialize a bare `.thoth/` directory — seed MEMORY.md / LESSONS.md /
+    /// config.toml. Idempotent. Hoangsa install handles higher-level setup.
     Init,
 
     /// Parse + index a source tree.
@@ -116,12 +103,6 @@ enum Cmd {
     Memory {
         #[command(subcommand)]
         cmd: memory_cmd::MemoryCmd,
-    },
-
-    /// Manage installed skills.
-    Skills {
-        #[command(subcommand)]
-        cmd: hooks::SkillsCmd,
     },
 
     /// Verbatim conversation archive — ingest, search, manage sessions.
@@ -184,22 +165,7 @@ async fn main() -> anyhow::Result<()> {
     let root = resolve::resolve_root(cli.root.as_deref());
 
     match cli.cmd {
-        Cmd::Init => setup::cmd_init(&root).await?,
-        Cmd::Setup {
-            status,
-            yes,
-            global,
-            local,
-        } => {
-            let setup_root = if local {
-                PathBuf::from(".thoth")
-            } else if global {
-                resolve::global_root_for_cwd()?
-            } else {
-                root.clone()
-            };
-            setup::run(&setup_root, status, yes).await?;
-        }
+        Cmd::Init => init_cmd::cmd_init(&root).await?,
         Cmd::Index { path } => index_cmd::run_index(&root, &path, cli.json).await?,
         Cmd::Query { text, top_k } => {
             query_cmd::run_query(&root, text.join(" "), top_k, cli.json, cli.synth).await?
@@ -217,13 +183,6 @@ async fn main() -> anyhow::Result<()> {
             memory_cmd::MemoryCmd::Lesson { when, advice } => {
                 memory_cmd::run_lesson(&root, when, advice.join(" ")).await?
             }
-        },
-        Cmd::Skills { cmd } => match cmd {
-            hooks::SkillsCmd::List => hooks::cmd_skills_list(&root, cli.json).await?,
-            hooks::SkillsCmd::Install { path, scope } => match path {
-                Some(p) => hooks::promote_skill_draft(scope, &root, &p).await?,
-                None => hooks::skills_install(scope, &root).await?,
-            },
         },
         Cmd::Impact {
             fqn,
