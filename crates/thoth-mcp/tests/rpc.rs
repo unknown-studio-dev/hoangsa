@@ -595,6 +595,91 @@ pub fn dispatch(a: &str, b: &str) -> i32 {
     );
 }
 
+/// Idea #11 — `memory_turn_save` must persist optional commit_sha +
+/// file_paths metadata and surface them back through `memory_turns_search`
+/// so archive queries can link a conversation turn to the code state
+/// that was live at that moment.
+#[tokio::test]
+async fn turn_save_roundtrips_commit_sha_and_file_paths() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let srv = open(&tmp).await;
+
+    let session = "s-xyz";
+    let commit = "abc1234def5678";
+    let paths = vec!["crates/foo/src/lib.rs", "crates/foo/Cargo.toml"];
+
+    let resp = srv
+        .handle(req(
+            300,
+            "tools/call",
+            json!({
+                "name": "memory_turn_save",
+                "arguments": {
+                    "session_id": session,
+                    "role": "assistant",
+                    "content": "We decided to split the foo module into two.",
+                    "commit_sha": commit,
+                    "file_paths": paths,
+                }
+            }),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(resp.result.as_ref().expect("ok")["isError"], false);
+
+    // A second "plain" turn with no metadata proves the new fields
+    // stayed strictly optional.
+    srv.handle(req(
+        301,
+        "tools/call",
+        json!({
+            "name": "memory_turn_save",
+            "arguments": {
+                "session_id": session,
+                "role": "user",
+                "content": "okay, split it",
+            }
+        }),
+    ))
+    .await
+    .expect("response");
+
+    let resp = srv
+        .handle(req(
+            302,
+            "hoangsa-memory.call",
+            json!({
+                "name": "memory_turns_search",
+                "arguments": { "query": "split the foo module" }
+            }),
+        ))
+        .await
+        .expect("response");
+    let result = resp.result.expect("ok");
+    let text = result["text"].as_str().expect("text");
+    assert!(
+        text.contains("abc1234"),
+        "text surface should include short commit sha: {text}"
+    );
+    assert!(
+        text.contains("crates/foo/src/lib.rs"),
+        "text surface should list file_paths: {text}"
+    );
+
+    let turns = result["data"]["turns"].as_array().expect("turns array");
+    let first = turns
+        .iter()
+        .find(|t| t["commit_sha"].as_str() == Some(commit))
+        .expect("saved enriched turn present in search results");
+    let saved_paths: Vec<&str> = first["file_paths"]
+        .as_array()
+        .expect("file_paths array")
+        .iter()
+        .map(|p| p.as_str().expect("str"))
+        .collect();
+    assert_eq!(saved_paths, paths);
+}
+
 /// Bug 2 strengthening — type refs in generics, trait bounds, vec,
 /// and return-type positions must flow into `References` edges.
 #[tokio::test]

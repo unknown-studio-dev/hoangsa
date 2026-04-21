@@ -1685,21 +1685,57 @@ impl Server {
             session_id: String,
             role: String,
             content: String,
+            /// Optional git HEAD sha captured at the moment of this turn.
+            /// Lets future `memory_archive_search` answer "what was the
+            /// code like when we decided X" without grepping `git log`.
+            #[serde(default)]
+            commit_sha: Option<String>,
+            /// Optional list of file paths the caller associates with
+            /// this turn (usually the files touched since the last turn).
+            #[serde(default)]
+            file_paths: Vec<String>,
         }
         let Args {
             session_id,
             role,
             content,
+            commit_sha,
+            file_paths,
         } = serde_json::from_value(args)?;
 
         let id = self
             .inner
             .store
             .episodes
-            .append_turn(session_id.clone(), role.clone(), content)
+            .append_turn(
+                session_id.clone(),
+                role.clone(),
+                content,
+                commit_sha.clone(),
+                file_paths.clone(),
+            )
             .await?;
-        let text = format!("saved turn #{id} ({role}) for session {session_id}");
-        Ok(ToolOutput::new(json!({"id": id, "role": role}), text))
+        let commit_fragment = commit_sha
+            .as_ref()
+            .map(|s| format!(" @ {}", &s[..s.len().min(7)]))
+            .unwrap_or_default();
+        let files_fragment = if file_paths.is_empty() {
+            String::new()
+        } else {
+            format!(" ({} file(s))", file_paths.len())
+        };
+        let text = format!(
+            "saved turn #{id} ({role}) for session {session_id}{commit_fragment}{files_fragment}"
+        );
+        Ok(ToolOutput::new(
+            json!({
+                "id": id,
+                "role": role,
+                "commit_sha": commit_sha,
+                "file_paths": file_paths,
+            }),
+            text,
+        ))
     }
 
     async fn tool_turns_search(&self, args: Value) -> anyhow::Result<ToolOutput> {
@@ -1722,16 +1758,47 @@ impl Server {
             let ts =
                 t.at.format(&time::format_description::well_known::Rfc3339)
                     .unwrap_or_default();
+            // `commit_sha` / `file_paths` stay in `data` unconditionally;
+            // in text we only surface them when present so unenriched
+            // legacy turns don't get a trailing "@ _ (0 file(s))" tag.
+            let commit_tag = t
+                .commit_sha
+                .as_ref()
+                .map(|s| format!(" @ {}", &s[..s.len().min(7)]))
+                .unwrap_or_default();
+            let paths_tag = if t.file_paths.is_empty() {
+                String::new()
+            } else {
+                format!(" files={}", t.file_paths.join(","))
+            };
             text.push_str(&format!(
-                "[{}] {} (turn {}, session {})\n{}\n---\n",
+                "[{}] {} (turn {}, session {}){}{}\n{}\n---\n",
                 ts,
                 t.role,
                 t.turn_number,
                 &t.session_id[..t.session_id.len().min(8)],
+                commit_tag,
+                paths_tag,
                 &t.content[..t.content.len().min(500)],
             ));
         }
-        Ok(ToolOutput::new(json!({"count": hits.len()}), text))
+        let data: Vec<Value> = hits
+            .iter()
+            .map(|t| {
+                json!({
+                    "id": t.id,
+                    "session_id": t.session_id,
+                    "turn_number": t.turn_number,
+                    "role": t.role,
+                    "commit_sha": t.commit_sha,
+                    "file_paths": t.file_paths,
+                })
+            })
+            .collect();
+        Ok(ToolOutput::new(
+            json!({"count": hits.len(), "turns": data}),
+            text,
+        ))
     }
 
     // ---- archive tools ---------------------------------------------------
@@ -2310,14 +2377,25 @@ fn tools_catalog() -> Vec<Tool> {
             name: "memory_turn_save".to_string(),
             description: "Save a verbatim conversation turn (user or assistant) to the \
                           episodic log. Called automatically by hooks or manually by the \
-                          agent to preserve important exchanges."
+                          agent to preserve important exchanges. Optional `commit_sha` + \
+                          `file_paths` let `memory_archive_search` link a turn back to the \
+                          code state / files changed at that moment."
                 .to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "session_id": { "type": "string", "description": "Session identifier." },
-                    "role":       { "type": "string", "enum": ["user", "assistant"] },
-                    "content":    { "type": "string", "description": "Verbatim turn content." }
+                    "session_id":  { "type": "string", "description": "Session identifier." },
+                    "role":        { "type": "string", "enum": ["user", "assistant"] },
+                    "content":     { "type": "string", "description": "Verbatim turn content." },
+                    "commit_sha":  {
+                        "type": "string",
+                        "description": "Optional git HEAD sha at the time of the turn (full or short)."
+                    },
+                    "file_paths":  {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional file paths touched around this turn."
+                    }
                 },
                 "required": ["session_id", "role", "content"]
             }),

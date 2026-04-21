@@ -71,6 +71,14 @@ pub struct Turn {
     pub content: String,
     /// Timestamp.
     pub at: OffsetDateTime,
+    /// Git commit sha that was HEAD at the time of this turn (if the
+    /// caller captured it). Lets `archive_search` surface "what did we
+    /// decide on feat X" alongside the commit that landed it.
+    pub commit_sha: Option<String>,
+    /// File paths the caller associated with this turn (usually the
+    /// files touched between the previous turn and this one). Stored
+    /// as a JSON array of strings.
+    pub file_paths: Vec<String>,
 }
 
 /// Handle to the SQLite-backed episodic log.
@@ -149,7 +157,9 @@ impl EpisodeLog {
                     turn_number  INTEGER NOT NULL,
                     role         TEXT NOT NULL,
                     content      TEXT NOT NULL,
-                    at_unix_ns   INTEGER NOT NULL
+                    at_unix_ns   INTEGER NOT NULL,
+                    commit_sha   TEXT,
+                    file_paths   TEXT  -- JSON array of paths
                 );
                 CREATE INDEX IF NOT EXISTS idx_turns_session
                     ON turns(session_id, turn_number);
@@ -171,6 +181,11 @@ impl EpisodeLog {
                 "#,
             )
             .map_err(store)?;
+
+            // Now that the turns table exists (either freshly created
+            // above or inherited from a pre-idea-#11 store), add the
+            // metadata columns if they're missing.
+            ensure_turns_metadata_columns(&c)?;
 
             // Schema version tracking table.
             c.execute_batch(
@@ -430,16 +445,30 @@ impl EpisodeLog {
     // ---- conversation turns ------------------------------------------------
 
     /// Append a verbatim conversation turn. Returns the row id.
+    ///
+    /// `commit_sha` and `file_paths` are optional metadata that let
+    /// `archive_search` surface the code state / files touched at the
+    /// time of the turn. Pass `None` / empty vec when the caller doesn't
+    /// care to attach either.
     pub async fn append_turn(
         &self,
         session_id: String,
         role: String,
         content: String,
+        commit_sha: Option<String>,
+        file_paths: Vec<String>,
     ) -> Result<i64> {
         let conn = self.conn.clone();
         let at_ns = OffsetDateTime::now_utc()
             .unix_timestamp_nanos()
             .min(i64::MAX as i128) as i64;
+        // Serialise file_paths as JSON — `NULL` when empty keeps the
+        // on-disk footprint small for the common no-metadata case.
+        let paths_json = if file_paths.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&file_paths)?)
+        };
 
         tokio::task::spawn_blocking(move || -> Result<i64> {
             let c = conn.lock();
@@ -452,9 +481,18 @@ impl EpisodeLog {
                 .map_err(store)?;
             let turn_number = max_turn + 1;
             c.execute(
-                "INSERT INTO turns(session_id, turn_number, role, content, at_unix_ns) \
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![session_id, turn_number, role, content, at_ns],
+                "INSERT INTO turns(session_id, turn_number, role, content, at_unix_ns, \
+                                   commit_sha, file_paths) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    session_id,
+                    turn_number,
+                    role,
+                    content,
+                    at_ns,
+                    commit_sha,
+                    paths_json,
+                ],
             )
             .map_err(store)?;
             Ok(c.last_insert_rowid())
@@ -470,7 +508,8 @@ impl EpisodeLog {
             let c = conn.lock();
             let mut stmt = c
                 .prepare(
-                    "SELECT id, session_id, turn_number, role, content, at_unix_ns \
+                    "SELECT id, session_id, turn_number, role, content, at_unix_ns, \
+                            commit_sha, file_paths \
                      FROM turns WHERE session_id = ?1 \
                      ORDER BY turn_number DESC LIMIT ?2",
                 )
@@ -495,7 +534,8 @@ impl EpisodeLog {
             let c = conn.lock();
             let mut stmt = c
                 .prepare(
-                    "SELECT t.id, t.session_id, t.turn_number, t.role, t.content, t.at_unix_ns \
+                    "SELECT t.id, t.session_id, t.turn_number, t.role, t.content, t.at_unix_ns, \
+                            t.commit_sha, t.file_paths \
                      FROM turns_fts f JOIN turns t ON t.id = f.rowid \
                      WHERE turns_fts MATCH ?1 \
                      ORDER BY rank LIMIT ?2",
@@ -552,9 +592,17 @@ fn row_to_turn(r: &rusqlite::Row<'_>) -> Result<Turn> {
     let role: String = r.get(3).map_err(store)?;
     let content: String = r.get(4).map_err(store)?;
     let at_ns: i64 = r.get(5).map_err(store)?;
+    let commit_sha: Option<String> = r.get(6).map_err(store)?;
+    let paths_json: Option<String> = r.get(7).map_err(store)?;
     let turn_number = turn_number_raw;
     let at = OffsetDateTime::from_unix_timestamp_nanos(at_ns as i128)
         .unwrap_or(OffsetDateTime::UNIX_EPOCH);
+    // Tolerate malformed JSON rather than failing the whole query —
+    // file_paths is advisory metadata, not load-bearing.
+    let file_paths = match paths_json.as_deref() {
+        Some(s) => serde_json::from_str::<Vec<String>>(s).unwrap_or_default(),
+        None => Vec::new(),
+    };
     Ok(Turn {
         id,
         session_id,
@@ -562,6 +610,8 @@ fn row_to_turn(r: &rusqlite::Row<'_>) -> Result<Turn> {
         role,
         content,
         at,
+        commit_sha,
+        file_paths,
     })
 }
 
@@ -636,7 +686,7 @@ fn check_schema_version(c: &Connection) -> Result<()> {
 /// on fresh stores, so this only fires on databases that were created
 /// before the columns existed.
 fn ensure_decay_columns(c: &Connection) -> Result<()> {
-    let existing = existing_columns(c)?;
+    let existing = existing_columns(c, "episodes")?;
     if !existing.iter().any(|n| n == "salience") {
         c.execute_batch("ALTER TABLE episodes ADD COLUMN salience REAL NOT NULL DEFAULT 1.0")
             .map_err(store)?;
@@ -654,8 +704,25 @@ fn ensure_decay_columns(c: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn existing_columns(c: &Connection) -> Result<Vec<String>> {
-    let mut stmt = c.prepare("PRAGMA table_info(episodes)").map_err(store)?;
+/// Forward-migrate pre-idea-#11 stores that lack the turn-metadata
+/// columns. Both columns are nullable — old rows end up with `NULL` /
+/// empty paths, which `row_to_turn` maps to `None` / `vec![]`.
+fn ensure_turns_metadata_columns(c: &Connection) -> Result<()> {
+    let existing = existing_columns(c, "turns")?;
+    if !existing.iter().any(|n| n == "commit_sha") {
+        c.execute_batch("ALTER TABLE turns ADD COLUMN commit_sha TEXT")
+            .map_err(store)?;
+    }
+    if !existing.iter().any(|n| n == "file_paths") {
+        c.execute_batch("ALTER TABLE turns ADD COLUMN file_paths TEXT")
+            .map_err(store)?;
+    }
+    Ok(())
+}
+
+fn existing_columns(c: &Connection, table: &str) -> Result<Vec<String>> {
+    let sql = format!("PRAGMA table_info({table})");
+    let mut stmt = c.prepare(&sql).map_err(store)?;
     let mut rows = stmt.query([]).map_err(store)?;
     let mut out = Vec::new();
     while let Some(r) = rows.next().map_err(store)? {
