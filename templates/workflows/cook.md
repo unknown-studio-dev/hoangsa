@@ -153,7 +153,7 @@ If the file `$SESSION_DIR/task-<task.id>.context.json` exists (created by `/hoan
 ### Worker prompt template:
 
 **Agent type selection:** Use typed agent definitions based on task type:
-- Implementation tasks → `$HOANGSA_ROOT/agents/hoangsa-worker-impl.md` (sonnet, 25 turns, full tools + thoth)
+- Implementation tasks → `$HOANGSA_ROOT/agents/hoangsa-worker-impl.md` (sonnet, 25 turns, full tools + hoangsa-memory)
 - Research/analysis tasks → `$HOANGSA_ROOT/agents/hoangsa-worker-readonly.md` (sonnet, 15 turns, read-only)
 - Simplify pass → `$HOANGSA_ROOT/agents/hoangsa-simplify.md` (haiku, 10 turns, edit-only)
 - Quality review → `$HOANGSA_ROOT/agents/hoangsa-reviewer.md` (haiku, 15 turns, read-only + bash)
@@ -183,7 +183,7 @@ You are a HOANGSA worker. Execute this task precisely.
 Task: <task.name>
 ID: <task.id>
 Workspace: <workspace_dir>
-Thoth: <THOTH_STATUS — THOTH_AVAILABLE or THOTH_UNAVAILABLE>
+hoangsa-memory: <THOTH_STATUS — MEMORY_AVAILABLE or THOTH_UNAVAILABLE>
 
 Files to modify:
 <task.files — list>
@@ -206,7 +206,7 @@ Do NOT read skills unless your task specifically requires them.
 ## Instructions
 
 1. Read all context_pointers files first
-2. Before modifying any function/class/method, run memory_impact({target: "symbolName", direction: "upstream"}) to check blast radius (if Thoth is available)
+2. Before modifying any function/class/method, run memory_impact({target: "symbolName", direction: "upstream"}) to check blast radius (if hoangsa-memory is available)
 2b. Before starting, search for past work on this area:
     memory_archive_search({query: "<task.name> <primary module>"})
     Use findings to avoid repeating past mistakes or duplicating solutions.
@@ -291,7 +291,7 @@ Load worker rules using a **middleware composition chain** (inspired by Deep Age
 
    5c. **Pre-invoke gate** (shell command in `pre_invoke_gate`):
    - Run the command. If it exits non-zero, SKIP this addon with a warning.
-   - Example: `thoth.md` uses `hoangsa-cli pref get . thoth_strict | grep -q true` so the whole addon vanishes when Thoth is not in strict mode.
+   - Example: `memory.md` uses `hoangsa-cli pref get . memory_strict | grep -q true` so the whole addon vanishes when hoangsa-memory is not in strict mode.
 
 6. **Enforce allowed_tools** (capability gating):
    - Collect `allowed_tools` arrays from all matching addons
@@ -715,7 +715,7 @@ Before reporting completion in Step 6, output this table. Every row MUST show DO
 ```
 | Step | Status |
 |------|--------|
-| 0. Setup (lang + Thoth) | DONE / SKIPPED |
+| 0. Setup (lang + hoangsa-memory) | DONE / SKIPPED |
 | 1. Load & validate plan | DONE / SKIPPED |
 | 2. Confirm with user | DONE / SKIPPED |
 | 3. Execute all waves | DONE / SKIPPED |

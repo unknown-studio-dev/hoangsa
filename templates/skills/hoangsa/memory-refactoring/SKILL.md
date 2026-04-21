@@ -1,5 +1,5 @@
 ---
-name: thoth-refactoring
+name: memory-refactoring
 description: >
   Use when the user wants to rename, extract, split, move, or
   restructure code safely. Examples: "rename this function", "extract
@@ -9,7 +9,7 @@ metadata:
   version: "0.0.1"
 ---
 
-# Refactoring with Thoth
+# Refactoring with hoangsa-memory
 
 Refactors fail when a caller you didn't know about gets out of sync.
 The graph exposes every caller, reference, and subtype before you
@@ -33,7 +33,7 @@ touch the code — so the edit plan is grounded, not guessed.
 5. Apply edits in order: callees first, then callers
 6. Re-index if needed: memory_index
 7. Verify: repeat memory_impact, confirm 0 stale refs
-8. thoth_lesson_outcome on the triggers you followed
+8. memory_lesson_outcome on the triggers you followed
 ```
 
 ### 1. Pin the FQN
@@ -102,7 +102,7 @@ After the edits, the graph reflects the *old* code. Run:
 memory_index { path: "." }
 ```
 
-(Or `thoth index .` via CLI. If `thoth watch` is running, it already
+(Or `hoangsa-memory index .` via CLI. If `hoangsa-memory watch` is running, it already
 re-indexed on save — skip this step.)
 
 ### 7. Verify zero stale refs
@@ -120,7 +120,7 @@ If a lesson guided the refactor (e.g. "use `RetryPolicy` not reqwest
 middleware"), call:
 
 ```
-thoth_lesson_outcome {
+memory_lesson_outcome {
   signal: "success",
   triggers: ["adding a retry to an HTTP call"]
 }

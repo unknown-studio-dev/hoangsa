@@ -2,7 +2,7 @@
 
 Conduct deep research on a topic — codebase structure, patterns, or external knowledge — and produce a structured RESEARCH.md report.
 
-**Principles:** Ask before assuming. Use Thoth when available, fall back gracefully. Support both auto and confirm modes. Use AskUserQuestion for all user interactions.
+**Principles:** Ask before assuming. Use hoangsa-memory when available, fall back gracefully. Support both auto and confirm modes. Use AskUserQuestion for all user interactions.
 
 ---
 
@@ -111,10 +111,10 @@ Store as `RESEARCH_MODE`.
 
 Skip this step if `RESEARCH_SCOPE` is "external".
 
-First, check Thoth availability:
+First, check hoangsa-memory availability:
 
 ```bash
-command -v thoth &>/dev/null && echo "THOTH_AVAILABLE" || echo "THOTH_NOT_INSTALLED"
+command -v hoangsa-memory &>/dev/null && echo "MEMORY_AVAILABLE" || echo "MEMORY_NOT_INSTALLED"
 ```
 
 Store result as `THOTH_STATUS`.
@@ -136,10 +136,10 @@ Launch 3 parallel research agents:
 Goal: Understand how the codebase is organized relative to the research topic.
 
 ```
-If THOTH_STATUS == "THOTH_AVAILABLE":
+If THOTH_STATUS == "MEMORY_AVAILABLE":
   - Run memory_recall({query: "<RESEARCH_TOPIC>"}) to find relevant execution flows
   - Run memory_symbol_context({name: "<key symbol found>"}) for top symbols
-Else (THOTH_NOT_INSTALLED fallback):
+Else (MEMORY_NOT_INSTALLED fallback):
   - Use Glob to find project entry points (index.*, main.*, app.*, server.*)
   - Use Grep to find files referencing the research topic keywords
   - Map module/package layout from directory structure
@@ -155,10 +155,10 @@ Output:
 Goal: Identify coding patterns and conventions used in the codebase.
 
 ```
-If THOTH_STATUS == "THOTH_AVAILABLE":
+If THOTH_STATUS == "MEMORY_AVAILABLE":
   - Use memory_symbol_context({name: "<relevant function or class>"}) for key symbols
   - Trace callers and callees to understand patterns
-Else (THOTH_NOT_INSTALLED fallback):
+Else (MEMORY_NOT_INSTALLED fallback):
   - Use Grep to find error handling patterns (try/catch, Result, Option, etc.)
   - Use Grep to find async patterns (async/await, Promise, Future, goroutine)
   - Sample 2–3 similar implementations for naming conventions
@@ -348,9 +348,9 @@ Next steps:
 | Rule | Detail |
 |------|--------|
 | **AskUserQuestion for all interactions** | Every user-facing question uses AskUserQuestion — no plain text prompts |
-| **Thoth first, fallback gracefully** | Always try Thoth tools first; use Grep/Glob if index unavailable |
+| **hoangsa-memory first, fallback gracefully** | Always try hoangsa-memory tools first; use Grep/Glob if index unavailable |
 | **WebSearch/WebFetch as fallback** | For external research, MCP first, then WebSearch/WebFetch |
-| **Non-blocking index check** | Thoth warning in Step 0 never halts the workflow |
+| **Non-blocking index check** | hoangsa-memory warning in Step 0 never halts the workflow |
 | **Session-flexible** | Works inside a HOANGSA session or standalone — Step 1 handles both |
 | **auto and confirm modes** | Confirm mode adds Step 5 review loop; auto skips it |
 | **RESEARCH.md always produced** | Output file is always written, regardless of scope or mode |

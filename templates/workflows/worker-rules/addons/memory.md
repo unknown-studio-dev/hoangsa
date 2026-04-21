@@ -1,16 +1,16 @@
 ---
-name: thoth
+name: memory
 frameworks: ["*"]
 test_frameworks: []
 priority: 70
 inject_position: after_base
 allowed_tools: []
-pre_invoke_gate: "hoangsa-cli pref get . thoth_strict | grep -q true"
+pre_invoke_gate: "hoangsa-cli pref get . memory_strict | grep -q true"
 ---
 
-# Thoth — Code Intelligence
+# hoangsa-memory — Code Intelligence
 
-If the orchestrator tells you Thoth is available (`THOTH_AVAILABLE`), use it to understand code before modifying it. Thoth provides a pre-indexed knowledge graph of the codebase — it's faster and more accurate than grepping.
+If the orchestrator tells you hoangsa-memory is available (`MEMORY_AVAILABLE`), use it to understand code before modifying it. hoangsa-memory provides a pre-indexed knowledge graph of the codebase — it's faster and more accurate than grepping.
 
 ### Before editing a symbol (function, class, method):
 
@@ -40,8 +40,8 @@ Returns execution flows ranked by relevance. Better than `Grep` for understandin
 
 - **Impact before edit.** Run `memory_impact` on every symbol you're about to modify. This is not optional — it prevents breaking callers you didn't know about.
 - **HIGH/CRITICAL = report.** If impact analysis returns HIGH or CRITICAL risk, report it to the orchestrator with the affected symbols. Do not proceed without acknowledgment.
-- **Fallback gracefully.** If a Thoth tool call fails (timeout, error), fall back to Grep/Glob. Do not block on it.
-- **Thoth unavailable = skip.** If the orchestrator does not pass `THOTH_AVAILABLE`, use Grep/Glob as usual. Do not attempt Thoth calls.
+- **Fallback gracefully.** If a hoangsa-memory tool call fails (timeout, error), fall back to Grep/Glob. Do not block on it.
+- **hoangsa-memory unavailable = skip.** If the orchestrator does not pass `MEMORY_AVAILABLE`, use Grep/Glob as usual. Do not attempt hoangsa-memory calls.
 
 ---
 

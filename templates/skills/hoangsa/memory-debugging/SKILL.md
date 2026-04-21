@@ -1,5 +1,5 @@
 ---
-name: thoth-debugging
+name: memory-debugging
 description: >
   Use when the user is debugging a bug, tracing an error, or asking
   why something fails. Examples: "why is X failing?", "where does this
@@ -9,7 +9,7 @@ metadata:
   version: "0.0.1"
 ---
 
-# Debugging with Thoth
+# Debugging with hoangsa-memory
 
 Find the origin of a bug by walking the graph backwards from the
 symptom. Recall locates the suspect symbol; `memory_symbol_context`
@@ -31,7 +31,7 @@ walks its callers until you reach the real cause.
 3. memory_symbol_context({fqn: <suspect>})             → callers / callees
 4. memory_impact({fqn, direction: "up"})               → full upstream
 5. Read the suspect + its callers carefully
-6. After the fix: thoth_lesson_outcome + remember_lesson
+6. After the fix: memory_lesson_outcome + remember_lesson
 ```
 
 ### 1. Check LESSONS.md first
@@ -96,7 +96,7 @@ already gave you `path:line` for every hit.
 When the fix lands and tests pass:
 
 ```
-thoth_lesson_outcome {
+memory_lesson_outcome {
   signal: "success",
   triggers: ["<trigger of any lesson you followed>"]
 }

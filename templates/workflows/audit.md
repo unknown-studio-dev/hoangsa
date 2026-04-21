@@ -2,7 +2,7 @@
 
 Perform a comprehensive codebase audit across 8 dimensions, producing a detailed AUDIT-REPORT.md that teams can use as a refactoring roadmap.
 
-**Principles:** Parallel scanning for speed. Evidence-based — every finding must include file paths, line numbers, and concrete examples. Severity-rated so teams can prioritize. Actionable — each finding includes a suggested fix. Use Thoth when available, fall back gracefully.
+**Principles:** Parallel scanning for speed. Evidence-based — every finding must include file paths, line numbers, and concrete examples. Severity-rated so teams can prioritize. Actionable — each finding includes a suggested fix. Use hoangsa-memory when available, fall back gracefully.
 
 ---
 
@@ -193,7 +193,7 @@ done
 node_modules/    dist/          build/         target/
 .next/           .nuxt/         .output/       out/
 vendor/          __pycache__/   .venv/         venv/
-.git/            .thoth/        .hoangsa/
+.git/            .hoangsa-memory/        .hoangsa/
 *.min.js         *.min.css      *.bundle.js
 *.map            *.lock         package-lock.json
 *.generated.*    *.pb.go        *_generated.rs
@@ -263,8 +263,8 @@ Scan for:
    - Trace import graphs: A → B → C → A
    - For JS/TS: follow import/require statements across files
    - For Rust: check mod/use relationships in modules
-   - If Thoth available: use memory_impact({target: "symbol", direction: "down"}) to query dependency cycles, then check for circular refs in the results
-   - If Thoth unavailable: use Grep to trace import/require statements across files, building a dependency graph manually. Start from high-fan-in files and follow import chains.
+   - If hoangsa-memory available: use memory_impact({target: "symbol", direction: "down"}) to query dependency cycles, then check for circular refs in the results
+   - If hoangsa-memory unavailable: use Grep to trace import/require statements across files, building a dependency graph manually. Start from high-fan-in files and follow import chains.
    - Evidence: list the cycle chain with file paths
 
 2. BLOATED FILES / GOD FILES / GOD CLASSES
@@ -326,7 +326,7 @@ Scan for:
      - Rate severity by how confusing it is for a new developer
 
 5. DEAD CODE & ZOMBIE CODE
-   - Exported symbols with zero importers (if Thoth available: use memory_symbol_context({name: "symbol"}) to check references count = 0 for each export; if Thoth unavailable: Grep for `export` declarations, then Grep for each exported name across all files — zero matches = dead export)
+   - Exported symbols with zero importers (if hoangsa-memory available: use memory_symbol_context({name: "symbol"}) to check references count = 0 for each export; if hoangsa-memory unavailable: Grep for `export` declarations, then Grep for each exported name across all files — zero matches = dead export)
    - Files not imported anywhere — entire modules nobody calls
    - Functions defined but never invoked (grep for definition, then grep for usage — 0 hits = dead)
    - Feature flags that are always on/off (grep for the flag, check all branches — if only one branch ever runs, the other is dead)
@@ -463,8 +463,8 @@ Scan for:
 
 5. SHOTGUN SURGERY INDICATORS
    - A single logical change requires touching >5 files
-   - If Thoth available: use memory_impact({target: "symbol", direction: "upstream"}) to check impact for high-fan-out symbols
-   - If Thoth unavailable: use Grep to find a symbol's usages across files; if >5 files reference it, flag as high fan-out
+   - If hoangsa-memory available: use memory_impact({target: "symbol", direction: "upstream"}) to check impact for high-fan-out symbols
+   - If hoangsa-memory unavailable: use Grep to find a symbol's usages across files; if >5 files reference it, flag as high fan-out
    - Evidence: symbol name, list of files that would need changes
 
 6. FEATURE ENVY
@@ -897,7 +897,7 @@ Top simplification opportunities:
 
 ### Memory Health Agent (additional dimension)
 
-Analyze the quality and health of Thoth memory:
+Analyze the quality and health of hoangsa-memory memory:
 
 1. `memory_show()` — read full MEMORY.md and LESSONS.md
 2. Check for:
@@ -1122,7 +1122,7 @@ Next steps:
 | **Actionable fixes** | Every finding must include a specific suggested fix, not just "refactor this" |
 | **Effort estimation** | S=<1hr, M=1-4hr, L=4-8hr, XL=>8hr — estimate for a developer familiar with the codebase |
 | **Parallel scanning** | Run dimension agents in parallel — do not scan sequentially |
-| **Thoth first** | Use Thoth tools when available for more accurate dependency/impact analysis |
+| **hoangsa-memory first** | Use hoangsa-memory tools when available for more accurate dependency/impact analysis |
 | **Redact secrets** | If secrets are found, report their existence but NEVER include actual values |
 | **AskUserQuestion for all interactions** | Every user-facing question uses AskUserQuestion |
 | **Respect scope** | Only scan dimensions the user selected — don't add unrequested dimensions |

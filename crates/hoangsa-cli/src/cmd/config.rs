@@ -25,7 +25,7 @@ fn default_config() -> Value {
             "quality_gate": false,
             "test_runs": 1,
             "context_mode": "selective",
-            "thoth_strict": false,
+            "memory_strict": false,
         },
         "codebase": {
             "monorepo": false,

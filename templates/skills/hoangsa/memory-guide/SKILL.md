@@ -1,18 +1,18 @@
 ---
-name: thoth-guide
+name: memory-guide
 description: >
-  Use when the user asks about Thoth itself — available MCP tools, CLI
+  Use when the user asks about hoangsa-memory itself — available MCP tools, CLI
   commands, resources, prompts, skill catalog, or how to drive the
-  memory/graph workflow. Examples: "what Thoth tools are available?",
-  "how do I use Thoth?", "what skills do I have?".
+  memory/graph workflow. Examples: "what hoangsa-memory tools are available?",
+  "how do I use hoangsa-memory?", "what skills do I have?".
 metadata:
   version: "0.0.1"
 ---
 
-# Thoth Guide
+# hoangsa-memory Guide
 
-Quick reference for every Thoth MCP tool, resource, prompt, and skill.
-Thoth is a local memory + code-graph server exposed over MCP — it pairs
+Quick reference for every hoangsa-memory MCP tool, resource, prompt, and skill.
+hoangsa-memory is a local memory + code-graph server exposed over MCP — it pairs
 a hybrid retriever (symbol + BM25 + vector + graph) with a markdown
 memory layer (`MEMORY.md`, `LESSONS.md`) and a PreToolUse discipline
 gate.
@@ -27,11 +27,11 @@ For any non-trivial coding task:
    recalls do.
 2. Read the chunks. Each has `path:line-span` you can cite.
 3. Match the task to one of the skills below and follow its workflow.
-4. After acting, reflect via `thoth.reflect` → persist fact/lesson if
+4. After acting, reflect via `memory.reflect` → persist fact/lesson if
    durable.
 
 If `memory_recall` returns `(no matches — did you run memory_index?)`,
-stop and run `thoth index .` (CLI) or `memory_index` (MCP) before
+stop and run `hoangsa-memory index .` (CLI) or `memory_index` (MCP) before
 continuing.
 
 ## Skills
@@ -39,12 +39,12 @@ continuing.
 | Skill                      | When to read it                                         |
 | -------------------------- | ------------------------------------------------------- |
 | `memory-discipline`        | Before any Write/Edit/Bash — enforces the recall loop.  |
-| `thoth-reflect`            | End of session / after a bug fix / "what did we learn". |
-| `thoth-exploring`          | "How does X work?" / architecture questions.            |
-| `thoth-debugging`          | "Why does this fail?" / tracing errors.                 |
-| `thoth-impact-analysis`    | "What breaks if I change X?" / pre-commit safety.       |
-| `thoth-refactoring`        | Rename / extract / move / restructure.                  |
-| `thoth-cli`                | Running `thoth setup`, `thoth index`, `thoth eval`, …   |
+| `memory-reflect`            | End of session / after a bug fix / "what did we learn". |
+| `memory-exploring`          | "How does X work?" / architecture questions.            |
+| `memory-debugging`          | "Why does this fail?" / tracing errors.                 |
+| `memory-impact-analysis`    | "What breaks if I change X?" / pre-commit safety.       |
+| `memory-refactoring`        | Rename / extract / move / restructure.                  |
+| `memory-cli`                | Running `hoangsa-memory setup`, `hoangsa-memory index`, `hoangsa-memory eval`, …   |
 
 ## MCP tools
 
@@ -84,7 +84,7 @@ continuing.
   reflective lesson. `trigger` is a situation description ("adding a
   retry to an HTTP call"), not a command. Conflicts with existing
   triggers auto-stage.
-- **`thoth_lesson_outcome { signal, triggers }`** — bump confidence
+- **`memory_lesson_outcome { signal, triggers }`** — bump confidence
   counters. `signal` ∈ `success | failure`, `triggers` is the list of
   lessons that were in play. Call this after the outcome of an action
   guided by lessons.
@@ -92,26 +92,26 @@ continuing.
   whose failure ratio exceeds `quarantine_failure_ratio`.
 - **`memory_promote { kind, index }`** / **`memory_reject
   { kind, index, reason? }`** — resolve pending entries.
-- **`thoth_request_review`** — flag an entry for the user to audit
+- **`memory_request_review`** — flag an entry for the user to audit
   (writes to `memory-history.jsonl`).
-- **`thoth_episode_append { event }`** — raw episodic log entry.
+- **`memory_episode_append { event }`** — raw episodic log entry.
   Normally hook-driven; agents rarely call this directly.
 - **`memory_skill_propose { slug, body, source_triggers? }`** — draft a
   new skill from ≥5 related lessons. Lands in
-  `.thoth/skills/<slug>.draft/` for user review.
+  `.hoangsa-memory/skills/<slug>.draft/` for user review.
 - **`memory_skills_list`** — enumerate installed skills.
 
 ## MCP prompts
 
 Fetch via `prompts/get { name, arguments }`:
 
-- **`thoth.nudge { intent }`** — surfaces LESSONS.md entries whose
+- **`memory.nudge { intent }`** — surfaces LESSONS.md entries whose
   trigger plausibly applies, and forces you to restate the plan naming
   each lesson you're honouring. Expand before Write/Edit when
   `gate_require_nudge = true`.
-- **`thoth.reflect { summary, outcome? }`** — end-of-step reflection.
+- **`memory.reflect { summary, outcome? }`** — end-of-step reflection.
   Drives the fact/lesson decision.
-- **`thoth.grounding_check { claim }`** — verify a factual claim
+- **`memory.grounding_check { claim }`** — verify a factual claim
   against the indexed graph before asserting it.
 
 ## Discipline modes
@@ -134,12 +134,12 @@ Every MCP tool has a CLI equivalent for headless use:
 
 | CLI                                      | MCP tool                 |
 | ---------------------------------------- | ------------------------ |
-| `thoth query <text>`                     | `memory_recall`           |
-| `thoth index [path]`                     | `memory_index`            |
-| `thoth impact <fqn> [--direction]`       | `memory_impact`           |
-| `thoth context <fqn>`                    | `memory_symbol_context`   |
-| `thoth changes [--from <file\|->]`       | `memory_detect_changes`   |
-| `thoth memory show \| log \| forget`     | `memory_*`         |
-| `thoth skills list \| install`           | `memory_skills_list`      |
+| `hoangsa-memory query <text>`                     | `memory_recall`           |
+| `hoangsa-memory index [path]`                     | `memory_index`            |
+| `hoangsa-memory impact <fqn> [--direction]`       | `memory_impact`           |
+| `hoangsa-memory context <fqn>`                    | `memory_symbol_context`   |
+| `hoangsa-memory changes [--from <file\|->]`       | `memory_detect_changes`   |
+| `hoangsa-memory memory show \| log \| forget`     | `memory_*`         |
+| `hoangsa-memory skills list \| install`           | `memory_skills_list`      |
 
-See the `thoth-cli` skill for the full command tree.
+See the `memory-cli` skill for the full command tree.

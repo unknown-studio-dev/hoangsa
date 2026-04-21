@@ -1,5 +1,5 @@
 ---
-name: thoth-exploring
+name: memory-exploring
 description: >
   Use when the user asks how code works, wants to understand
   architecture, trace execution flows, or explore unfamiliar parts of
@@ -9,7 +9,7 @@ metadata:
   version: "0.0.1"
 ---
 
-# Exploring Codebases with Thoth
+# Exploring Codebases with hoangsa-memory
 
 Understand unfamiliar code without reading every file. The hybrid
 retriever (`memory_recall`) finds entry points by intent; the graph
@@ -111,7 +111,7 @@ are the #1 source of drift in exploratory sessions.
 ## When recall returns nothing
 
 If `memory_recall` gives `(no matches — did you run memory_index?)`,
-the graph is empty. Run `thoth index .` (CLI) or `memory_index` (MCP)
+the graph is empty. Run `hoangsa-memory index .` (CLI) or `memory_index` (MCP)
 and retry. If it still returns nothing, the concept genuinely isn't
 indexed — ask the user for a file path to anchor from, or fall back to
 `Grep` for a literal keyword.

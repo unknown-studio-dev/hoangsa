@@ -4,7 +4,7 @@ description: >
   This skill should be used before any non-trivial coding action — editing
   code, writing new files, running migrations, deploying, or answering a
   question that involves factual claims about this codebase. It forces the
-  agent to consult Thoth's persistent memory (USER.md, MEMORY.md,
+  agent to consult hoangsa-memory's persistent memory (USER.md, MEMORY.md,
   LESSONS.md, the indexed code graph) and acknowledge relevant lessons
   before acting. Trigger phrases: "edit", "refactor", "implement",
   "fix the bug in", "add a feature", "deploy", "why does this do",
@@ -15,17 +15,17 @@ metadata:
 
 # Memory Discipline
 
-You are coding inside a repository that has a Thoth memory server attached
+You are coding inside a repository that has a hoangsa-memory memory server attached
 via MCP. That server gives you four things you MUST use before taking any
 load-bearing action:
 
 1. **Indexed code graph** — via `memory_recall` (hybrid BM25 + symbol +
    vector search over the tree).
-2. **User preferences** — `.thoth/USER.md`, first-person style + workflow
+2. **User preferences** — `.hoangsa-memory/USER.md`, first-person style + workflow
    choices that apply across projects.
-3. **Project facts** — `.thoth/MEMORY.md`, durable invariants about this
+3. **Project facts** — `.hoangsa-memory/MEMORY.md`, durable invariants about this
    codebase.
-4. **Reflective lessons** — `.thoth/LESSONS.md`, action-triggered advice.
+4. **Reflective lessons** — `.hoangsa-memory/LESSONS.md`, action-triggered advice.
 
 USER.md + MEMORY.md + LESSONS.md are injected verbatim at SessionStart, so
 you already have them in context. The `memory_recall` hit extends that with
@@ -81,7 +81,7 @@ Be conservative — only save memory that is specific, durable, and
 non-obvious.
 
 If the outcome was a success that validates a lesson you followed, call
-`thoth_lesson_outcome { signal: "success", triggers: [...] }` with the
+`memory_lesson_outcome { signal: "success", triggers: [...] }` with the
 triggers of the lessons you honoured. On failure, call it with
 `signal: "failure"`. This bumps confidence counters so stale advice
 eventually dies.
@@ -118,7 +118,7 @@ new memory. Instead:
 4. Retry the original `remember_*` call.
 
 For bulk cleanup of a legacy MEMORY.md / LESSONS.md that accumulated
-pre-cap entries, run `thoth memory migrate --llm` from the shell —
+pre-cap entries, run `hoangsa-memory memory migrate --llm` from the shell —
 classifier triages every entry as keep / move-to-USER.md / drop, then
 applies via the same replace/remove verbs.
 
@@ -128,7 +128,7 @@ applies via the same replace/remove verbs.
   If `memory_recall` returns nothing relevant, say so explicitly: "I can't
   find that in the indexed code — can you point me at it?"
 - **Quote chunk ids.** Citations look like `[chunk-id]` in your answer;
-  the Thoth server uses them to validate that you grounded the response.
+  the hoangsa-memory server uses them to validate that you grounded the response.
 - **Bail on deny.** If a LESSONS.md trigger applies and the advice is
   "don't do X", and your plan is X, stop and ask the user.
 
@@ -166,10 +166,10 @@ The enforcement level comes from `<root>/config.toml` under
   (session-handoff prose, bare SHAs, date-only entries) are rejected at
   the `remember_*` entry point instead of just warning.
 
-If the project has no `.thoth/` directory and `global_fallback = true`
-(the default), fall back to `~/.thoth/` memory. If neither exists, the
+If the project has no `.hoangsa-memory/` directory and `global_fallback = true`
+(the default), fall back to `~/.hoangsa-memory/` memory. If neither exists, the
 gate falls open (approves) with a warning and asks you to run
-`thoth index .` — it never bricks the editor.
+`hoangsa-memory index .` — it never bricks the editor.
 
 ## Memory modes: `auto` vs `review`
 
@@ -179,7 +179,7 @@ When you call `memory_remember_*`, the server honours `memory_mode`:
   Fastest. Relies on the forget pass + confidence counters to prune bad
   memory later. Good for solo use.
 - **`review`** — the entry is appended to a `*.pending.md` sibling. The
-  user must run `thoth memory promote <kind> <index>` (or call
+  user must run `hoangsa-memory memory promote <kind> <index>` (or call
   `memory_promote`) to accept. Rejected entries are archived with
   a reason in `memory-history.jsonl`. Good for teams.
 
@@ -187,15 +187,15 @@ Even in `auto` mode, the server refuses to silently **overwrite** an
 existing lesson — if a `trigger` already exists, the new lesson is
 staged and flagged with `"conflict": {...}` in the tool output. When you
 see a conflict, do NOT try to auto-promote: flag it to the user via
-`thoth_request_review` and let them decide.
+`memory_request_review` and let them decide.
 
 ## Audit log
 
-Every memory mutation lands in `.thoth/memory-history.jsonl` (one JSON
+Every memory mutation lands in `.hoangsa-memory/memory-history.jsonl` (one JSON
 per line) with `op`, `kind`, `title`, `actor`, `reason`, and a timestamp.
 Ops include: `append`, `replace`, `remove`, `stage`, `promote`, `reject`,
 `quarantine`, `propose`, `request_review`. Inspect with
-`thoth memory log --limit 50`. This log is size-capped and
+`hoangsa-memory memory log --limit 50`. This log is size-capped and
 self-truncates — old entries past the session window are intentionally
 shed since reflection debt counts from `.session-start` anyway.
 
@@ -208,9 +208,9 @@ reusable skill via `memory_skill_propose`:
 - `body`: full SKILL.md text starting with `---\nname: ...` frontmatter.
 - `source_triggers`: the triggers of the lessons being consolidated.
 
-The draft lands at `.thoth/skills/<slug>.draft/SKILL.md` and an entry is
-written to the history log. The user promotes the draft via `thoth
-skills install .thoth/skills/<slug>.draft` once they've reviewed it.
+The draft lands at `.hoangsa-memory/skills/<slug>.draft/SKILL.md` and an entry is
+written to the history log. The user promotes the draft via `hoangsa-memory
+skills install .hoangsa-memory/skills/<slug>.draft` once they've reviewed it.
 
 Drafts are NOT auto-installed — a human must review before a proposed
 skill starts shaping future sessions. This is the main guardrail against
@@ -221,14 +221,14 @@ runaway self-modification.
 Prompts alone are bypassable — a self-confident agent can talk itself
 into skipping the recall step. Strict mode trips a **ground-truth** check
 against `<root>/episodes.db`: every `memory_recall` call writes a
-`query_issued` event, and the `thoth-gate` binary (a small Rust executable
-shipped alongside `thoth-mcp`) queries SQLite directly. If no recent event
+`query_issued` event, and the `hoangsa-cli enforce` binary (a small Rust executable
+shipped alongside `hoangsa-memory-mcp`) queries SQLite directly. If no recent event
 exists, the tool call is blocked at the hook level — the agent never gets
 to rationalise its way past it. You see:
 
 ```json
 {"decision": "block",
- "reason": "Thoth discipline: no `memory_recall` has been logged ..."}
+ "reason": "hoangsa-memory discipline: no `memory_recall` has been logged ..."}
 ```
 
 Treat that as non-negotiable: call `memory_recall`, read the chunks, then

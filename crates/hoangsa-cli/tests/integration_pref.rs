@@ -47,7 +47,7 @@ fn init_config(dir: &Path) -> PathBuf {
             "quality_gate": false,
             "test_runs": 1,
             "context_mode": "selective",
-            "thoth_strict": false
+            "memory_strict": false
         },
         "task_manager": {
             "provider": null,
@@ -142,7 +142,7 @@ fn test_profile_roundtrip_balanced() {
         ("test_runs", serde_json::json!(1)),
         ("research_mode", Value::String("inline".into())),
         ("context_mode", Value::String("selective".into())),
-        ("thoth_strict", Value::Bool(false)),
+        ("memory_strict", Value::Bool(false)),
     ];
 
     for (key, expected_value) in expected {
@@ -178,7 +178,7 @@ fn test_profile_roundtrip_full() {
         ("test_runs", serde_json::json!(3)),
         ("research_mode", Value::String("full".into())),
         ("context_mode", Value::String("full".into())),
-        ("thoth_strict", Value::Bool(true)),
+        ("memory_strict", Value::Bool(true)),
     ];
 
     for (key, expected_value) in expected {
@@ -227,7 +227,7 @@ fn test_individual_override_after_balanced_profile() {
         ("test_runs", serde_json::json!(1)),
         ("research_mode", Value::String("inline".into())),
         ("context_mode", Value::String("selective".into())),
-        ("thoth_strict", Value::Bool(false)),
+        ("memory_strict", Value::Bool(false)),
     ];
 
     for (key, expected_value) in unchanged {

@@ -1066,7 +1066,7 @@ Use AskUserQuestion:
   question: "Cấu hình quality & optimization cho workflow?"
   header: "Quality"
   options:
-    - label: "Recommended", description: "quality_gate=on, simplify=on, test_runs=1, research=inline, context=selective, thoth_strict=off"
+    - label: "Recommended", description: "quality_gate=on, simplify=on, test_runs=1, research=inline, context=selective, memory_strict=off"
     - label: "Strict", description: "Tất cả on/full, test_runs=2 — chất lượng cao nhất, tốn token"
     - label: "Minimal", description: "Tất cả off/inline/selective — nhanh, tiết kiệm token"
     - label: "Tuỳ chỉnh", description: "Chọn on/off cho từng setting"
@@ -1080,7 +1080,7 @@ If "Recommended":
 "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . test_runs 1
 "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . research_mode inline
 "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . context_mode selective
-"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . thoth_strict false
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . memory_strict false
 ```
 
 If "Strict":
@@ -1091,7 +1091,7 @@ If "Strict":
 "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . test_runs 2
 "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . research_mode full
 "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . context_mode full
-"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . thoth_strict true
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . memory_strict true
 ```
 
 If "Minimal":
@@ -1102,7 +1102,7 @@ If "Minimal":
 "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . test_runs 1
 "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . research_mode inline
 "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . context_mode selective
-"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . thoth_strict false
+"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . memory_strict false
 ```
 
 If "Tuỳ chỉnh" → ask each setting individually.
@@ -1140,10 +1140,10 @@ Use AskUserQuestion:
      options:
        - label: "selective (recommended)", description: "Chỉ load context liên quan đến task — tiết kiệm token"
        - label: "full", description: "Load toàn bộ context pack — đầy đủ nhất, tốn token"
-  2. question: "Thoth strict — bắt buộc impact analysis trước mỗi edit?"
-     header: "Thoth"
+  2. question: "hoangsa-memory strict — bắt buộc impact analysis trước mỗi edit?"
+     header: "hoangsa-memory"
      options:
-       - label: "Off (recommended)", description: "Thoth là khuyến khích, worker có thể skip để tiết kiệm token"
+       - label: "Off (recommended)", description: "hoangsa-memory là khuyến khích, worker có thể skip để tiết kiệm token"
        - label: "On", description: "Bắt buộc memory_impact/memory_recall trước mỗi edit — an toàn hơn, tốn token"
 
 Save each setting via `"$HOANGSA_ROOT/bin/hoangsa-cli" pref set .` accordingly.
@@ -1169,16 +1169,16 @@ Use AskUserQuestion:
 
 ---
 
-## Step 7: Thoth index
+## Step 7: hoangsa-memory index
 
 If project has code (Flow A or A-lite):
 
 ```
-Indexing codebase with Thoth...
+Indexing codebase with hoangsa-memory...
 ```
 
 ```bash
-timeout 120 thoth --json index . && rm -f .thoth/.outdated && echo "THOTH_OK" || echo "THOTH_FAIL"
+timeout 120 hoangsa-memory --json index . && rm -f .hoangsa-memory/.outdated && echo "THOTH_OK" || echo "THOTH_FAIL"
 ```
 
 After successful indexing, warm up the memory and show skills:
@@ -1188,9 +1188,9 @@ memory_wakeup()
 memory_skills_list()
 ```
 
-Display installed Thoth skills in the Step 8 report.
+Display installed hoangsa-memory skills in the Step 8 report.
 
-If `thoth index` fails or times out (>120s), warn user: "Thoth indexing failed. You can retry later with `/hoangsa:index`." Continue with remaining steps — indexing is non-blocking.
+If `hoangsa-memory index` fails or times out (>120s), warn user: "hoangsa-memory indexing failed. You can retry later with `/hoangsa:index`." Continue with remaining steps — indexing is non-blocking.
 
 If project is empty (Flow B):
 
@@ -1215,9 +1215,9 @@ memory_show()
    Stacks:       [TypeScript, Python]
    Packages:     3
    Worker rules: .hoangsa/worker-rules.md (addons: react, typescript, python)
-   Thoth:        ✅ indexed (148 symbols)
+   hoangsa-memory:        ✅ indexed (148 symbols)
    Memory: <N> facts, <N> lessons
-   Skills: <list of installed Thoth skills>
+   Skills: <list of installed hoangsa-memory skills>
 
    Get started:
      /hoangsa:menu     — design a new feature

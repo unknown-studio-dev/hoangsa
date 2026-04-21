@@ -159,14 +159,14 @@ The taste workflow does NOT attempt to fix failures itself — that is the fix w
 
 ---
 
-## Step 3b: Skill proposal check (if Thoth available)
+## Step 3b: Skill proposal check (if hoangsa-memory available)
 
 After tests are run, check if a lesson cluster has reached the skill proposal threshold:
 
-1. Count lessons in `.thoth/LESSONS.md` by topic/domain (e.g., lessons about editing source files, lessons about migration, etc.)
+1. Count lessons in `.hoangsa-memory/LESSONS.md` by topic/domain (e.g., lessons about editing source files, lessons about migration, etc.)
 2. If a cluster has ≥5 lessons with cumulative success signals → call `memory_skill_propose` to draft a consolidated skill
-3. Include `source_triggers` (the trigger text of each consolidated lesson) so Thoth can track provenance
-4. Report the draft to the user: "New skill draft: `.thoth/skills/<slug>.draft/` — run `thoth skills install` to accept"
+3. Include `source_triggers` (the trigger text of each consolidated lesson) so hoangsa-memory can track provenance
+4. Report the draft to the user: "New skill draft: `.hoangsa-memory/skills/<slug>.draft/` — run `hoangsa-memory skills install` to accept"
 
 Skip this check if no lessons are relevant to the tested modules.
 

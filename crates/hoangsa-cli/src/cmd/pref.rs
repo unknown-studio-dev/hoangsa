@@ -32,7 +32,7 @@ fn ensure_config(project_dir: &str) -> Option<Value> {
                 "quality_gate": false,
                 "test_runs": 1,
                 "context_mode": "selective",
-                "thoth_strict": false,
+                "memory_strict": false,
             },
             "task_manager": {
                 "provider": null,
@@ -77,7 +77,7 @@ const KNOWN_KEYS: &[&str] = &[
     "quality_gate",
     "test_runs",
     "context_mode",
-    "thoth_strict",
+    "memory_strict",
     "profile",
 ];
 
@@ -173,7 +173,7 @@ pub fn cmd_set(project_dir: Option<&str>, key: Option<&str>, value: Option<&str>
                 ("test_runs", Value::Number(3.into())),
                 ("research_mode", Value::String("full".to_string())),
                 ("context_mode", Value::String("full".to_string())),
-                ("thoth_strict", Value::Bool(true)),
+                ("memory_strict", Value::Bool(true)),
             ]),
             "balanced" => Some([
                 ("simplify_pass", Value::Bool(false)),
@@ -181,7 +181,7 @@ pub fn cmd_set(project_dir: Option<&str>, key: Option<&str>, value: Option<&str>
                 ("test_runs", Value::Number(1.into())),
                 ("research_mode", Value::String("inline".to_string())),
                 ("context_mode", Value::String("selective".to_string())),
-                ("thoth_strict", Value::Bool(false)),
+                ("memory_strict", Value::Bool(false)),
             ]),
             "minimal" => Some([
                 ("simplify_pass", Value::Bool(false)),
@@ -189,7 +189,7 @@ pub fn cmd_set(project_dir: Option<&str>, key: Option<&str>, value: Option<&str>
                 ("test_runs", Value::Number(0.into())),
                 ("research_mode", Value::String("inline".to_string())),
                 ("context_mode", Value::String("selective".to_string())),
-                ("thoth_strict", Value::Bool(false)),
+                ("memory_strict", Value::Bool(false)),
             ]),
             _ => None,
         };
@@ -292,7 +292,7 @@ mod tests {
                 "quality_gate": false,
                 "test_runs": 1,
                 "context_mode": "selective",
-                "thoth_strict": false,
+                "memory_strict": false,
                 "auto_compact": true,
                 "auto_compact_interval": 500,
                 "auto_compact_cooldown_secs": 86400,
@@ -397,7 +397,7 @@ mod tests {
         assert_eq!(prefs["test_runs"].as_i64(), Some(3), "test_runs");
         assert_eq!(prefs["research_mode"].as_str(), Some("full"), "research_mode");
         assert_eq!(prefs["context_mode"].as_str(), Some("full"), "context_mode");
-        assert_eq!(prefs["thoth_strict"], Value::Bool(true), "thoth_strict");
+        assert_eq!(prefs["memory_strict"], Value::Bool(true), "memory_strict");
     }
 
     #[test]
@@ -415,7 +415,7 @@ mod tests {
         assert_eq!(prefs["test_runs"].as_i64(), Some(1), "test_runs");
         assert_eq!(prefs["research_mode"].as_str(), Some("inline"), "research_mode");
         assert_eq!(prefs["context_mode"].as_str(), Some("selective"), "context_mode");
-        assert_eq!(prefs["thoth_strict"], Value::Bool(false), "thoth_strict");
+        assert_eq!(prefs["memory_strict"], Value::Bool(false), "memory_strict");
     }
 
     #[test]
@@ -431,7 +431,7 @@ mod tests {
         assert_eq!(prefs["test_runs"].as_i64(), Some(0), "test_runs");
         assert_eq!(prefs["research_mode"].as_str(), Some("inline"), "research_mode");
         assert_eq!(prefs["context_mode"].as_str(), Some("selective"), "context_mode");
-        assert_eq!(prefs["thoth_strict"], Value::Bool(false), "thoth_strict");
+        assert_eq!(prefs["memory_strict"], Value::Bool(false), "memory_strict");
         assert_eq!(config["profile"].as_str(), Some("minimal"), "profile key set at root");
     }
 
@@ -456,7 +456,7 @@ mod tests {
 
     #[test]
     fn test_known_keys_include_new_five() {
-        for key in &["simplify_pass", "quality_gate", "test_runs", "context_mode", "thoth_strict"] {
+        for key in &["simplify_pass", "quality_gate", "test_runs", "context_mode", "memory_strict"] {
             assert!(
                 KNOWN_KEYS.contains(key),
                 "expected {} in KNOWN_KEYS",
@@ -475,12 +475,12 @@ mod tests {
     }
 
     #[test]
-    fn test_cmd_set_accepts_thoth_strict() {
+    fn test_cmd_set_accepts_memory_strict() {
         let tmp = setup_project();
         let dir = tmp.path().to_str().expect("valid path");
-        cmd_set(Some(dir), Some("thoth_strict"), Some("true"));
+        cmd_set(Some(dir), Some("memory_strict"), Some("true"));
         let config = read_config(dir);
-        assert_eq!(get_pref(&config, "thoth_strict"), Value::Bool(true));
+        assert_eq!(get_pref(&config, "memory_strict"), Value::Bool(true));
     }
 
     #[test]

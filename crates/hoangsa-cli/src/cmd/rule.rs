@@ -24,7 +24,7 @@ pub struct Rule {
     pub action: RuleAction,
     pub message: String,
     /// Names a stateful check to run instead of pattern conditions.
-    /// Valid values: "require-thoth-impact", "require-detect-changes".
+    /// Valid values: "require-memory-impact", "require-detect-changes".
     /// When set, `conditions` is ignored and the named check in hook.rs fires.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stateful: Option<String>,
@@ -362,14 +362,14 @@ pub fn default_rules() -> Vec<Rule> {
             None,
         ),
         rule(
-            "require-thoth-impact",
+            "require-memory-impact",
             "Require memory_impact before first edit to a source file",
             Enforcement::Hook,
             "Edit|Write",
             vec![],
             RuleAction::Block,
             "Run memory_impact on this file before editing. Softened: subsequent edits to the same file in this session are allowed.",
-            Some("require-thoth-impact"),
+            Some("require-memory-impact"),
         ),
         rule(
             "require-detect-changes",

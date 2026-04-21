@@ -74,7 +74,7 @@ pub fn cmd_stop_check(sessions_dir: Option<&str>, cwd: &str) {
 /// `hook lesson-guard`
 ///
 /// PreToolUse hook for Edit/Write. Reads stdin JSON, extracts file_path,
-/// calls `thoth recall` to find relevant lessons/facts, surfaces them.
+/// calls `hoangsa-memory recall` to find relevant lessons/facts, surfaces them.
 /// If a recalled lesson contains "NEVER" + a path fragment that matches
 /// the file being edited → block. Otherwise → approve with context shown.
 pub fn cmd_lesson_guard(cwd: &str) {
@@ -105,14 +105,14 @@ pub fn cmd_lesson_guard(cwd: &str) {
         return;
     }
 
-    // Find thoth binary
+    // Find hoangsa-memory binary
     let thoth_root = Path::new(cwd).join(".hoangsa-memory");
     if !thoth_root.exists() {
         out(&json!({"decision": "approve"}));
         return;
     }
 
-    // Call thoth CLI to recall lessons relevant to this file path
+    // Call hoangsa-memory CLI to recall lessons relevant to this file path
     let thoth_bin = find_thoth_bin();
     let thoth_bin = match thoth_bin {
         Some(b) => b,
@@ -262,7 +262,7 @@ pub fn cmd_lesson_guard(cwd: &str) {
 }
 
 /// Build a recall query from a file path.
-/// Keeps path structure intact so thoth can match lessons mentioning paths.
+/// Keeps path structure intact so hoangsa-memory can match lessons mentioning paths.
 fn build_recall_query(path: &str) -> String {
     // Strip home dir prefix for cleaner query
     let clean = if let Ok(home) = std::env::var("HOME") {
@@ -458,7 +458,7 @@ fn print_decision(result: &EnforceResult) {
 fn stateful_check(cwd: &str, tool_name: &str, tool_input: &serde_json::Value) -> Option<EnforceResult> {
     match tool_name {
         "Edit" | "Write" => {
-            if stateful_rule_enabled(cwd, "require-thoth-impact") {
+            if stateful_rule_enabled(cwd, "require-memory-impact") {
                 stateful_check_edit(cwd, tool_input)
             } else {
                 None
@@ -549,7 +549,7 @@ pub fn intent_guard_edit(events: &str, file_path: &str) -> IntentOutcome {
                 .map(|f| !f.is_empty() && paths_refer_to_same_file(f, file_path))
                 .unwrap_or(false),
             "override" => {
-                entry.get("rule").and_then(|r| r.as_str()) == Some("require-thoth-impact")
+                entry.get("rule").and_then(|r| r.as_str()) == Some("require-memory-impact")
                     && entry
                         .get("target")
                         .and_then(|t| t.as_str())
@@ -564,11 +564,11 @@ pub fn intent_guard_edit(events: &str, file_path: &str) -> IntentOutcome {
         IntentOutcome::Approve
     } else {
         IntentOutcome::Block(format!(
-            "⛔ STATEFUL: require-thoth-impact\n\n\
+            "⛔ STATEFUL: require-memory-impact\n\n\
              No memory_impact found for '{path}'\n\
              Run memory_impact on this file before editing.\n\n\
              If this is a false positive, use:\n\
-             hoangsa-cli enforce override --rule require-thoth-impact --target {path} --reason \"...\"",
+             hoangsa-cli enforce override --rule require-memory-impact --target {path} --reason \"...\"",
             path = file_path
         ))
     }
@@ -752,7 +752,7 @@ fn is_source_file(path: &str) -> bool {
 
 /// `hook post-enforce`
 ///
-/// PostToolUse hook that records enforcement events after thoth tool calls.
+/// PostToolUse hook that records enforcement events after hoangsa-memory tool calls.
 /// Records: impact (with file resolution), detect_changes (with files), recall (with query).
 /// Always outputs `{"decision":"approve"}` — never blocks.
 pub fn cmd_post_enforce(cwd: &str) {
@@ -773,9 +773,9 @@ pub fn cmd_post_enforce(cwd: &str) {
     let tool_input = parsed.get("tool_input").cloned().unwrap_or(json!({}));
 
     let event = match tool_name {
-        "mcp__thoth__memory_impact" => build_impact_event(cwd, &tool_input),
-        "mcp__thoth__memory_detect_changes" => build_detect_changes_event(&tool_input, &parsed),
-        "mcp__thoth__memory_recall" => build_recall_event(&tool_input),
+        "mcp__hoangsa-memory__memory_impact" => build_impact_event(cwd, &tool_input),
+        "mcp__hoangsa-memory__memory_detect_changes" => build_detect_changes_event(&tool_input, &parsed),
+        "mcp__hoangsa-memory__memory_recall" => build_recall_event(&tool_input),
         "Edit" | "Write" | "MultiEdit" => build_drift_event(cwd, &tool_input),
         _ => None,
     };
@@ -838,7 +838,7 @@ fn build_drift_event(cwd: &str, tool_input: &serde_json::Value) -> Option<serde_
         }
     }
 
-    // If no impact was recorded for this file, require-thoth-impact already
+    // If no impact was recorded for this file, require-memory-impact already
     // surfaced that gap at PreToolUse — don't double-warn here.
     if impacted.is_empty() {
         return None;
@@ -997,7 +997,7 @@ fn build_recall_event(tool_input: &serde_json::Value) -> Option<serde_json::Valu
 
 /// Resolve a symbol (FQN or bare name) to a source file path.
 /// 1. Ask the Thoth CLI for the symbol's canonical location (uses the code graph).
-/// 2. On miss or when thoth is unavailable, fall back to a config-driven grep
+/// 2. On miss or when hoangsa-memory is unavailable, fall back to a config-driven grep
 ///    built from `enforcement.symbol_patterns` (same source as extract_symbols).
 /// Both paths scan from `cwd` — no more hardcoded `cli/src/` / `src/`.
 fn resolve_symbol_to_file(cwd: &str, symbol: &str) -> Option<String> {
@@ -1006,7 +1006,7 @@ fn resolve_symbol_to_file(cwd: &str, symbol: &str) -> Option<String> {
     // Strip module prefix: "rule::cmd_rule_add" → "cmd_rule_add".
     let bare = symbol.rsplit("::").next().unwrap_or(symbol);
 
-    // Preferred: Thoth index lookup.
+    // Preferred: hoangsa-memory index lookup.
     if let Some(thoth_bin) = find_thoth_bin() {
         let thoth_root = Path::new(cwd).join(".hoangsa-memory");
         if thoth_root.exists() {
@@ -1408,7 +1408,7 @@ mod tests {
 
     #[test]
     fn test_intent_guard_edit_override_approves() {
-        let events = r#"{"event":"override","rule":"require-thoth-impact","target":"/abs/path/foo.rs","reason":"test"}
+        let events = r#"{"event":"override","rule":"require-memory-impact","target":"/abs/path/foo.rs","reason":"test"}
 "#;
         let result = intent_guard_edit(events, "/abs/path/foo.rs");
         assert_eq!(result, IntentOutcome::Approve);

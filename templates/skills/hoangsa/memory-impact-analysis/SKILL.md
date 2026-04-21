@@ -1,5 +1,5 @@
 ---
-name: thoth-impact-analysis
+name: memory-impact-analysis
 description: >
   Use when the user wants to know what will break if they change
   something, or needs safety analysis before editing code. Examples:
@@ -10,7 +10,7 @@ metadata:
   version: "0.0.1"
 ---
 
-# Impact Analysis with Thoth
+# Impact Analysis with hoangsa-memory
 
 Answer "what breaks if I change X?" using the code graph. This is the
 one thing the graph does that grep + IDE-nav cannot: it traverses
@@ -99,7 +99,7 @@ returns their upstream callers in one call — cheaper than running
 with `memory_impact` on anything risky.
 
 Compose with `pr-review-toolkit:review-pr` (or `code-reviewer` /
-`silent-failure-hunter`) if installed — Thoth covers the **graph** side
+`silent-failure-hunter`) if installed — hoangsa-memory covers the **graph** side
 of PR review (blast radius, orphan symbols, test coverage gaps on
 touched callers); the toolkit covers style, error handling, and type
 design.
@@ -119,10 +119,10 @@ design.
 
 ## When the graph is wrong
 
-The graph reflects the last `thoth index .` run. If the repo has been
+The graph reflects the last `hoangsa-memory index .` run. If the repo has been
 edited since, callers may be stale. Signs: a caller in the result that
-the user insists doesn't exist any more. Remedy: `thoth index .` or
-`thoth watch .` (which re-indexes on save), then retry.
+the user insists doesn't exist any more. Remedy: `hoangsa-memory index .` or
+`hoangsa-memory watch .` (which re-indexes on save), then retry.
 
 Symbols added in an **unsaved** edit won't be in the graph at all —
 that's why impact analysis is a *pre-edit* tool, not a post-edit one.

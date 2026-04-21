@@ -1,22 +1,22 @@
 ---
-name: thoth-reflect
+name: memory-reflect
 description: >
   This skill should be used at the end of a coding session, after a
   bug fix, a finished feature, a deployment, or whenever the user says
   "we're done", "wrap up", "summarize the session", "what did we learn",
   or "save what you learned". It drives a structured self-reflection
   pass that decides whether to persist new preferences, facts, lessons,
-  or skills to Thoth's long-term memory. Also triggers on phrases like
+  or skills to hoangsa-memory's long-term memory. Also triggers on phrases like
   "reflect", "postmortem", or "retrospective" applied to the current
   session.
 metadata:
   version: "0.1.0"
 ---
 
-# Thoth Reflect
+# hoangsa-memory Reflect
 
 Drive a deliberate reflection pass over the session that just ended.
-The goal is to extract durable memory — not chat noise. Thoth already
+The goal is to extract durable memory — not chat noise. hoangsa-memory already
 captured the raw episodic log; your job is to decide what deserves to
 survive after the TTL sweeps the log clean.
 
@@ -24,7 +24,7 @@ survive after the TTL sweeps the log clean.
 
 ### 1. Pull the timeline
 
-Call the Thoth MCP server:
+Call the hoangsa-memory MCP server:
 
 - `memory_show` — current `USER.md` + `MEMORY.md` + `LESSONS.md`
   contents, so you know what's already there and don't duplicate it.
@@ -152,7 +152,7 @@ positives pollute the store faster than missing entries hurt.
 - **Overly specific code lines.** The code graph already holds that.
   Facts should live at a higher level than symbols.
 - **Duplicate lessons.** Check existing LESSONS.md first; if the trigger
-  already exists, bump its confidence via `thoth_lesson_outcome` instead
+  already exists, bump its confidence via `memory_lesson_outcome` instead
   of appending a near-duplicate.
 - **Lessons for one-off bugs.** A lesson earns its place by being likely
   to recur across sessions.
