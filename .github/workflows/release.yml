@@ -190,7 +190,7 @@ jobs:
             [ -f LICENSE ] && cp LICENSE "$stage/LICENSE"
             [ -f VERSION ] && cp VERSION "$stage/VERSION"
 
-            tar -C "$stage" -czf "dist/hoangsa-$triple.tar.gz" .
+            tar --transform "s,^\./,hoangsa-$triple/," -C "$stage" -czf "dist/hoangsa-$triple.tar.gz" .
           done
 
       - name: Compute SHA256SUMS
@@ -207,7 +207,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag || true
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 \
+            || gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag
           gh release upload "${GITHUB_REF_NAME}" \
             dist/hoangsa-*.tar.gz \
             dist/install.sh \
