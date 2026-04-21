@@ -1,4 +1,4 @@
-//! `thoth archive` subcommands — ingest, status, topics, search, curate.
+//! `hoangsa-memory archive` subcommands — ingest, status, topics, search, curate.
 //!
 //! Conversation mining and exchange-pair chunking used to live here;
 //! the core pipeline now sits in [`hoangsa_memory_retrieve::archive`] so the MCP

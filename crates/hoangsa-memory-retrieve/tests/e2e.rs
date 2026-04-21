@@ -59,8 +59,8 @@ async fn index_and_recall_returns_relevant_chunks() {
         .await
         .unwrap();
 
-    // Open a `.thoth/` alongside.
-    let (_thoth_dir, store) = make_store().await;
+    // Open a `.hoangsa-memory/` alongside.
+    let (_memory_dir, store) = make_store().await;
 
     // Index.
     let idx = make_indexer(store.clone());
@@ -122,7 +122,7 @@ pub fn helper(x: i32) -> i32 {
         .await
         .unwrap();
 
-    let (_thoth_dir, store) = make_store().await;
+    let (_memory_dir, store) = make_store().await;
     make_indexer(store.clone())
         .index_path(src_dir.path())
         .await
@@ -183,7 +183,7 @@ pub fn login() {}
         .await
         .unwrap();
 
-    let (_thoth_dir, store) = make_store().await;
+    let (_memory_dir, store) = make_store().await;
     make_indexer(store.clone())
         .index_path(src_dir.path())
         .await
@@ -204,11 +204,11 @@ pub fn login() {}
 
 #[tokio::test]
 async fn recall_fuses_markdown_memory_hits() {
-    let (thoth_dir, store) = make_store().await;
+    let (memory_dir, store) = make_store().await;
 
     // Seed MEMORY.md directly.
     tokio::fs::write(
-        thoth_dir.path().join("MEMORY.md"),
+        memory_dir.path().join("MEMORY.md"),
         "\n### auth uses JWT with RS256\nSigning keys live in Vault.\ntags: auth, security\n",
     )
     .await
@@ -242,14 +242,14 @@ pub fn migration_runner() -> &'static str {
         .await
         .unwrap();
 
-    let (thoth_dir, store) = make_store().await;
+    let (memory_dir, store) = make_store().await;
     make_indexer(store.clone())
         .index_path(src_dir.path())
         .await
         .unwrap();
 
     tokio::fs::write(
-        thoth_dir.path().join("LESSONS.md"),
+        memory_dir.path().join("LESSONS.md"),
         "# LESSONS.md\n\
          \n\
          ### when editing database migrations\n\
@@ -307,12 +307,12 @@ pub fn migration_runner() -> &'static str {
 #[tokio::test]
 async fn recall_surfaces_lessons_by_trigger() {
     // Reflective memory (LESSONS.md) must be surfaced by recall, not just
-    // MEMORY.md. Without this, `thoth_lesson_outcome` bumps counters in a
+    // MEMORY.md. Without this, `memory_lesson_outcome` bumps counters in a
     // file nobody reads — the learn-from-mistakes loop stays open.
-    let (thoth_dir, store) = make_store().await;
+    let (memory_dir, store) = make_store().await;
 
     tokio::fs::write(
-        thoth_dir.path().join("LESSONS.md"),
+        memory_dir.path().join("LESSONS.md"),
         "# LESSONS.md\n\
          \n\
          ### when editing sqlx migrations\n\
@@ -366,7 +366,7 @@ impl Greet for English {
         .await
         .unwrap();
 
-    let (_thoth_dir, store) = make_store().await;
+    let (_memory_dir, store) = make_store().await;
     make_indexer(store.clone())
         .index_path(src_dir.path())
         .await
@@ -412,7 +412,7 @@ pub fn noop() {}
         .await
         .unwrap();
 
-    let (_thoth_dir, store) = make_store().await;
+    let (_memory_dir, store) = make_store().await;
     make_indexer(store.clone())
         .index_path(src_dir.path())
         .await

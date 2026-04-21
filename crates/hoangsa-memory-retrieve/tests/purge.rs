@@ -50,8 +50,8 @@ async fn reindex_drops_stale_symbols_and_nodes() {
     let file = src_dir.path().join("auth.rs");
     tokio::fs::write(&file, V1).await.unwrap();
 
-    let thoth_dir = tempdir().unwrap();
-    let store = StoreRoot::open(thoth_dir.path()).await.unwrap();
+    let memory_dir = tempdir().unwrap();
+    let store = StoreRoot::open(memory_dir.path()).await.unwrap();
     let idx = Indexer::new(store.clone(), LanguageRegistry::new());
     let g = Graph::new(store.kv.clone());
 
@@ -124,8 +124,8 @@ async fn purge_path_clears_kv_and_graph() {
     let file = src_dir.path().join("auth.rs");
     tokio::fs::write(&file, V1).await.unwrap();
 
-    let thoth_dir = tempdir().unwrap();
-    let store = StoreRoot::open(thoth_dir.path()).await.unwrap();
+    let memory_dir = tempdir().unwrap();
+    let store = StoreRoot::open(memory_dir.path()).await.unwrap();
 
     let idx = Indexer::new(store.clone(), LanguageRegistry::new());
     idx.index_file(&file).await.unwrap();
@@ -177,8 +177,8 @@ async fn reindex_skips_when_content_hash_unchanged() {
     let file = src_dir.path().join("auth.rs");
     tokio::fs::write(&file, V1).await.unwrap();
 
-    let thoth_dir = tempdir().unwrap();
-    let store = StoreRoot::open(thoth_dir.path()).await.unwrap();
+    let memory_dir = tempdir().unwrap();
+    let store = StoreRoot::open(memory_dir.path()).await.unwrap();
     let idx = Indexer::new(store.clone(), LanguageRegistry::new());
 
     // First pass — should populate.

@@ -6,13 +6,13 @@ pub enum ProjectsCmd {
     List,
     /// Show which root the current directory resolves to.
     Which,
-    /// Move `./.thoth/` to `~/.thoth/projects/{slug}/` and update
+    /// Move `./.hoangsa-memory/` to `~/.hoangsa-memory/projects/{slug}/` and update
     /// hooks + MCP to point to the new location.
     Migrate {
         /// Print what would happen without modifying anything.
         #[arg(long)]
         dry_run: bool,
-        /// Delete the local `.thoth/` after a successful copy.
+        /// Delete the local `.hoangsa-memory/` after a successful copy.
         #[arg(long)]
         rm_local: bool,
     },
@@ -97,7 +97,7 @@ fn is_populated_root(root: &Path) -> bool {
 /// Human-readable slug from a project path: last two path components,
 /// lowercased, non-alphanumeric replaced with `-`, collapsed.
 ///
-/// Example: `/Users/nat/Desktop/thoth` → `desktop-thoth`
+/// Example: `/Users/nat/Desktop/my-project` → `desktop-my-project`
 pub fn project_slug(path: &Path) -> String {
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let components: Vec<&str> = canonical
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn sanitize_basic() {
-        assert_eq!(sanitize_slug("Desktop-thoth"), "desktop-thoth");
+        assert_eq!(sanitize_slug("Desktop-my-project"), "desktop-my-project");
         assert_eq!(sanitize_slug("My Project"), "my-project");
         assert_eq!(sanitize_slug("foo///bar"), "foo-bar");
         assert_eq!(sanitize_slug("--leading--"), "leading");
@@ -153,14 +153,14 @@ mod tests {
 
     #[test]
     fn slug_uses_last_two_components() {
-        let p = PathBuf::from("/a/b/c/Desktop/thoth");
+        let p = PathBuf::from("/a/b/c/Desktop/my-project");
         let components: Vec<&str> = p
             .components()
             .filter_map(|c| c.as_os_str().to_str())
             .collect();
         let n = components.len();
         let parts = if n >= 2 { &components[n - 2..] } else { &components[..] };
-        assert_eq!(sanitize_slug(&parts.join("-")), "desktop-thoth");
+        assert_eq!(sanitize_slug(&parts.join("-")), "desktop-my-project");
     }
 
     #[test]
@@ -171,10 +171,10 @@ mod tests {
         assert!(slug.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
-    /// Bug 5 — a `./.thoth/` with no `graph.redb` (or a stub one) must
+    /// Bug 5 — a `./.hoangsa-memory/` with no `graph.redb` (or a stub one) must
     /// not shadow the populated global root. This is the explicit
     /// detection gate `resolve_root` uses to decide whether to accept
-    /// the local or fall through to `~/.thoth/projects/{slug}/`.
+    /// the local or fall through to `~/.hoangsa-memory/projects/{slug}/`.
     #[test]
     fn is_populated_root_rejects_empty_and_stub_graph() {
         let tmp = tempfile::tempdir().expect("tempdir");

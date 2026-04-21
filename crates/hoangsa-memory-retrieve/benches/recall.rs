@@ -4,7 +4,7 @@
 //! (REQ-08). Run with:
 //!
 //! ```text
-//! cargo bench -p thoth-retrieve -- recall
+//! cargo bench -p hoangsa-memory-retrieve -- recall
 //! ```
 //!
 //! Criterion prints a full histogram including p50 and p95 automatically.
@@ -151,7 +151,7 @@ fn recall_benchmark(c: &mut Criterion) {
 
     // --- one-time setup: build a temp store and index the snippets ---
     let src_dir = tempdir().unwrap();
-    let thoth_dir = tempdir().unwrap();
+    let memory_dir = tempdir().unwrap();
 
     rt.block_on(async {
         let files = [
@@ -167,13 +167,13 @@ fn recall_benchmark(c: &mut Criterion) {
                 .unwrap();
         }
 
-        let store = StoreRoot::open(thoth_dir.path()).await.unwrap();
+        let store = StoreRoot::open(memory_dir.path()).await.unwrap();
         let indexer = Indexer::new(store, LanguageRegistry::new());
         indexer.index_path(src_dir.path()).await.unwrap();
     });
 
     // Open the store once; StoreRoot is Arc-backed so clone() is cheap.
-    let store = rt.block_on(StoreRoot::open(thoth_dir.path())).unwrap();
+    let store = rt.block_on(StoreRoot::open(memory_dir.path())).unwrap();
 
     // --- benchmark group ---
     let mut group = c.benchmark_group("recall_latency");
@@ -195,7 +195,7 @@ fn recall_benchmark(c: &mut Criterion) {
 
     // Keep temp dirs alive until after bench completes.
     drop(src_dir);
-    drop(thoth_dir);
+    drop(memory_dir);
 }
 
 criterion_group!(benches, recall_benchmark);

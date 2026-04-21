@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Public API and core types for Thoth — long-term memory for coding agents."
+description = "Public API and core types for hoangsa-memory — long-term memory for coding agents."
 
 [dependencies]
 async-trait  = { workspace = true }

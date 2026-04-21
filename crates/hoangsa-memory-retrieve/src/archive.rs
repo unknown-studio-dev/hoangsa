@@ -1,4 +1,4 @@
-//! Archive ingest core — extracted from `thoth-cli::archive_cmd` so the
+//! Archive ingest core — extracted from `hoangsa-memory::archive_cmd` so the
 //! MCP daemon and the CLI can share it.
 //!
 //! The memory story is the whole point of living here: each CLI

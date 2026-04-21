@@ -1,7 +1,7 @@
 //! Full-text BM25 index backed by [`tantivy`].
 //!
-//! Indexes the chunks produced by `thoth-parse::parse_file` so that
-//! `thoth-retrieve` can do keyword search without needing embeddings.
+//! Indexes the chunks produced by `hoangsa-memory-parse::parse_file` so that
+//! `hoangsa-memory-retrieve` can do keyword search without needing embeddings.
 //!
 //! The index lives on disk under `<root>/fts/`. The schema is intentionally
 //! small — if we need more fields later (e.g. a code-aware tokenizer), we

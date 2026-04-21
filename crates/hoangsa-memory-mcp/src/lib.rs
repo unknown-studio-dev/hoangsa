@@ -1,6 +1,6 @@
-//! # thoth-mcp
+//! # hoangsa-memory-mcp
 //!
-//! MCP (Model Context Protocol) stdio server that exposes Thoth's recall,
+//! MCP (Model Context Protocol) stdio server that exposes hoangsa-memory's recall,
 //! indexing, and memory-curation capabilities to any MCP-aware client
 //! (Claude Agent SDK, Claude Code, Cowork, Cursor, Zed, ...).
 //!
@@ -20,14 +20,14 @@
 //! | `memory_index`              | Walk a source path and populate indexes          |
 //! | `memory_remember_fact`      | Append a fact to `MEMORY.md`                     |
 //! | `memory_remember_lesson`    | Append a lesson to `LESSONS.md`                  |
-//! | `memory_skills_list`        | Enumerate installed skills under `.thoth/skills/`|
+//! | `memory_skills_list`        | Enumerate installed skills under `.hoangsa-memory/skills/`|
 //! | `memory_show`        | Return current `MEMORY.md` + `LESSONS.md`        |
 //!
 //! Two markdown files are also published as MCP resources so clients can
 //! surface them directly: `hoangsa-memory://memory/MEMORY.md` and
 //! `hoangsa-memory://memory/LESSONS.md`.
 //!
-//! The on-disk layout is the same as everywhere else in Thoth — see
+//! The on-disk layout is the same as everywhere else in hoangsa-memory — see
 //! `hoangsa_memory_store::StoreRoot`.
 
 #![deny(rust_2018_idioms)]

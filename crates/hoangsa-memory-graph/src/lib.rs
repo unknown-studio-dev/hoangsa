@@ -1,4 +1,4 @@
-//! # thoth-graph
+//! # hoangsa-memory-graph
 //!
 //! Symbol, call, import, and reference graph built on top of
 //! [`hoangsa_memory_store::KvStore`]. This is the spine of Mode::Zero retrieval: it
@@ -396,7 +396,7 @@ impl Graph {
 
         // File-level imports: the indexer writes these with the file
         // stem as the `from` of an `Imports` edge. The stem has no
-        // corresponding Node (see `thoth-retrieve::indexer::module_fqn`)
+        // corresponding Node (see `hoangsa-memory-retrieve::indexer::module_fqn`)
         // so a node-driven scan alone would miss them.
         if let Some(stem) = path
             .file_stem()
@@ -543,7 +543,7 @@ impl Graph {
     ///
     /// Delegates to [`KvStore::graph_bfs`] so the full walk lives in one
     /// `spawn_blocking` + one redb read transaction (see the N+1 note in
-    /// `thoth-store::kv::graph_bfs`).
+    /// `hoangsa-memory-store::kv::graph_bfs`).
     async fn bfs_depth_tagged(
         &self,
         start: &str,

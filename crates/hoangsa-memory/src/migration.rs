@@ -1,9 +1,9 @@
 //! Version-file upgrade pass (DESIGN-SPEC §REQ-30).
 //!
 //! Where [`crate::migrate`] is a one-shot *triage* (classify / move / drop),
-//! this module handles the *schema* upgrade: existing `.thoth/` directories
+//! this module handles the *schema* upgrade: existing `.hoangsa-memory/` directories
 //! created before the enforcement layer must pick up the new `LESSONS.md`
-//! tier footer without losing data. Upgrade is gated by a `.thoth/version`
+//! tier footer without losing data. Upgrade is gated by a `.hoangsa-memory/version`
 //! file so repeat runs are a cheap no-op.
 //!
 //! ## Design
@@ -21,7 +21,7 @@
 //!
 //! ## Idempotence
 //!
-//! * Empty `.thoth/` → no LESSONS.md read, version bumped to current.
+//! * Empty `.hoangsa-memory/` → no LESSONS.md read, version bumped to current.
 //! * Already-at-current → short-circuit, no file I/O beyond the version
 //!   read.
 //! * Repeated invocation on a legacy repo → first run upgrades + writes
@@ -36,7 +36,7 @@ use hoangsa_memory_store::markdown::MarkdownStore;
 /// or MEMORY.md layout changes in a backwards-incompatible way.
 pub const CURRENT_VERSION: u32 = 1;
 
-/// Filename (relative to the `.thoth/` root) used as the schema stamp.
+/// Filename (relative to the `.hoangsa-memory/` root) used as the schema stamp.
 const VERSION_FILE: &str = "version";
 
 /// Summary of a single invocation of [`run`].
@@ -54,7 +54,7 @@ pub struct MigrationReport {
     pub no_op: bool,
 }
 
-/// Read `.thoth/version`. Missing file → `Ok(0)` (pre-enforcement repo).
+/// Read `.hoangsa-memory/version`. Missing file → `Ok(0)` (pre-enforcement repo).
 /// Any parse or IO error is surfaced so a half-written version file is
 /// visible instead of being silently overwritten.
 pub fn read_version(root: &Path) -> anyhow::Result<u32> {
@@ -72,8 +72,8 @@ pub fn read_version(root: &Path) -> anyhow::Result<u32> {
     }
 }
 
-/// Write `.thoth/version` atomically (temp-file + rename). Creates the
-/// `.thoth/` directory if missing so a fresh repo can be stamped.
+/// Write `.hoangsa-memory/version` atomically (temp-file + rename). Creates the
+/// `.hoangsa-memory/` directory if missing so a fresh repo can be stamped.
 pub fn write_version(root: &Path, version: u32) -> anyhow::Result<()> {
     std::fs::create_dir_all(root)
         .with_context(|| format!("create {}", root.display()))?;
@@ -101,7 +101,7 @@ fn version_path(root: &Path) -> PathBuf {
 ///    [`hoangsa_memory_core::Enforcement::Advise`].
 /// 2. Re-render through [`MarkdownStore::rewrite_lessons`] so every entry
 ///    picks up an explicit footer.
-/// 3. Stamp `.thoth/version` with [`CURRENT_VERSION`].
+/// 3. Stamp `.hoangsa-memory/version` with [`CURRENT_VERSION`].
 pub async fn run(root: &Path) -> anyhow::Result<MigrationReport> {
     let from = read_version(root)?;
     if from == CURRENT_VERSION {
@@ -154,8 +154,8 @@ pub async fn run(root: &Path) -> anyhow::Result<MigrationReport> {
 // Tests
 //
 // Kept as free functions (no `mod tests` wrapper) so the acceptance filter
-// `cargo test -p thoth-cli migration::idempotent` matches the fully
-// qualified test path `thoth::migration::idempotent`.
+// `cargo test -p hoangsa-memory migration::idempotent` matches the fully
+// qualified test path `hoangsa_memory::migration::idempotent`.
 // ===========================================================================
 
 #[cfg(test)]

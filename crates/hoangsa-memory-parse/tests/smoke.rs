@@ -1,6 +1,6 @@
-//! End-to-end smoke tests for `thoth-parse`.
+//! End-to-end smoke tests for `hoangsa-memory-parse`.
 //!
-//! Run with `cargo test -p thoth-parse`.
+//! Run with `cargo test -p hoangsa-memory-parse`.
 
 use std::time::Duration;
 use tempfile::tempdir;

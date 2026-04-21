@@ -1,4 +1,4 @@
-//! Observable events — the input stream to Thoth's perception layer.
+//! Observable events — the input stream to hoangsa-memory's perception layer.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -8,7 +8,7 @@ use uuid::Uuid;
 /// Identifier for a single appended event.
 pub type EventId = Uuid;
 
-/// An observation that Thoth can learn from.
+/// An observation that hoangsa-memory can learn from.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Event {
@@ -57,7 +57,7 @@ pub enum Event {
         /// Timestamp.
         at: OffsetDateTime,
     },
-    /// The agent expanded the `thoth.nudge` prompt. Recorded so the
+    /// The agent expanded the `memory_nudge` prompt. Recorded so the
     /// strict-mode gate can require a real nudge pass (not just a
     /// perfunctory recall) before mutating code.
     NudgeInvoked {

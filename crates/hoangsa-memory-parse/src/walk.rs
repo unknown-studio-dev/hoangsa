@@ -71,7 +71,7 @@ impl Default for WalkOptions {
 ///    skipped — [`walk_sources`] handles those.
 /// 3. Size cap from [`WalkOptions::max_file_size`].
 /// 4. Binary sniff: read up to 8 KiB and reject if a NUL byte is found.
-///    Classic heuristic — cheap, works for the types Thoth cares about
+///    Classic heuristic — cheap, works for the types hoangsa-memory cares about
 ///    (real binaries are excluded, UTF-8 text passes even with non-ASCII).
 pub fn walk_text_sources(
     root: impl AsRef<Path>,

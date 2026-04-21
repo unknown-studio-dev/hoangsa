@@ -291,7 +291,7 @@ impl ToolOutput {
 ///
 /// Prompts are templates (optionally parameterised) that MCP clients can
 /// expand into their own context window. They're the canonical vehicle for
-/// "ask Claude to self-reflect using this preset" — Thoth just assembles
+/// "ask Claude to self-reflect using this preset" — hoangsa-memory just assembles
 /// the text, Claude (on the client side) runs it.
 #[derive(Debug, Clone, Serialize)]
 pub struct Prompt {

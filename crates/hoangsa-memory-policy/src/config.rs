@@ -161,12 +161,12 @@ pub struct EnforcementConfig {
     pub recall_within_turns: u32,
     /// Workflow violations within the rolling 7-day window that cause the
     /// gate to hard-block further mutations (user must run
-    /// `thoth workflow reset`). Default `3`.
+    /// `hoangsa-memory workflow reset`). Default `3`.
     #[serde(default = "default_workflow_threshold")]
     pub workflow_violation_threshold: u32,
     /// Master switch for the auto-promotion engine. When `false` the
     /// harvester still records outcomes but never rewrites lesson tiers —
-    /// operators must promote manually via `thoth lesson promote`.
+    /// operators must promote manually via `hoangsa-memory lesson promote`.
     /// Default `true`.
     #[serde(default = "default_true")]
     pub auto_promote: bool,
@@ -268,13 +268,13 @@ impl EnforcementConfig {
 ///   aborts the tool call until the agent re-plans with lessons in hand.
 ///
 /// `global_fallback = true` (default) lets the plugin fall back to the
-/// user-level `~/.thoth/` memory when no project-local `.thoth/` exists,
+/// user-level `~/.hoangsa-memory/` memory when no project-local `.hoangsa-memory/` exists,
 /// so lessons travel across checkouts of scratch repos.
 // NOTE: `deny_unknown_fields` stays off. All gate-v2 keys
 // (`gate_window_*`, `gate_relevance_threshold`, `gate_telemetry_enabled`,
 // `gate_bash_readonly_prefixes`, `[[discipline.policies]]`) now live on
 // this struct — the previous two-loader-one-file split in 2026-04-17's
-// `thoth-mcp/bin/gate.rs::DisciplineFile` was the hazard that masked
+// `hoangsa-memory-mcp/bin/gate.rs::DisciplineFile` was the hazard that masked
 // `reflect_debt_*` when strictness was briefly enabled. Consolidating
 // here means the gate binary reads exactly what the rest of the world
 // sees; drift between the two is no longer possible.
@@ -284,17 +284,17 @@ pub struct DisciplineConfig {
     /// `"soft"` (warn only) or `"strict"` (deny on violation). Default
     /// `"soft"` — match the principle of "nudge, don't yoke".
     pub mode: String,
-    /// Fall back to `~/.thoth/` memory when the current project has no
-    /// `.thoth/` directory. Default `true`.
+    /// Fall back to `~/.hoangsa-memory/` memory when the current project has no
+    /// `.hoangsa-memory/` directory. Default `true`.
     pub global_fallback: bool,
-    /// Ask for a `thoth.reflect` pass after every tool call (`"every"`) or
+    /// Ask for a `memory_reflect` pass after every tool call (`"every"`) or
     /// only at session end (`"end"`). Default `"end"` — avoid thrash on
     /// trivial edits.
     pub reflect_cadence: String,
-    /// Ask for a `thoth.nudge` pass before destructive actions. Default
+    /// Ask for a `memory_nudge` pass before destructive actions. Default
     /// `true`.
     pub nudge_before_write: bool,
-    /// Ask for a `thoth.grounding_check` on any load-bearing factual claim
+    /// Ask for a `memory_grounding_check` on any load-bearing factual claim
     /// in the assistant's response. Default `false` (opt-in — it's the
     /// slowest of the three).
     pub grounding_check: bool,
@@ -312,7 +312,7 @@ pub struct DisciplineConfig {
     pub memory_mode: String,
     /// In `strict` mode, the gate also requires a `nudge_invoked` event
     /// within [`Self::gate_window_secs`] before a `Write`/`Edit`/`Bash`
-    /// tool call. This forces the agent to actually expand `thoth.nudge`
+    /// tool call. This forces the agent to actually expand `memory_nudge`
     /// (not just run a no-op `memory_recall`). Default `false`.
     pub gate_require_nudge: bool,
     /// Lessons whose `failure_count / (success_count + failure_count)`
@@ -341,14 +341,14 @@ pub struct DisciplineConfig {
     /// Default `10`. Set to `0` to disable the soft reminder.
     pub reflect_debt_nudge: u32,
     /// Reflection debt that triggers a hard gate block on mutations.
-    /// Set `THOTH_DEFER_REFLECT=1` to bypass one session when the user
+    /// Set `HOANGSA_MEMORY_DEFER_REFLECT=1` to bypass one session when the user
     /// genuinely wants to land a batch before reflecting.
     ///
     /// Default `20`. Set to `0` to disable the hard block.
     pub reflect_debt_block: u32,
 
     // ------------------------------------------------------------------
-    // Gate-v2 keys. Consumed by `thoth-mcp/bin/gate.rs` to decide
+    // Gate-v2 keys. Consumed by `hoangsa-memory-mcp/bin/gate.rs` to decide
     // pass / nudge / block on mutation tool calls. Owned here so the
     // project's `config.toml` has a single parser; see the struct-level
     // NOTE above for the hazard consolidation fixes.
@@ -372,11 +372,11 @@ pub struct DisciplineConfig {
     pub gate_telemetry_enabled: bool,
     /// Additional Bash command prefixes that bypass the gate.
     /// Additive to the hard-coded built-ins (`cargo test`, `git status`,
-    /// `thoth curate`, …) — entries here *extend* the whitelist, they
+    /// `hoangsa-memory curate`, …) — entries here *extend* the whitelist, they
     /// don't replace it. Default empty.
     pub gate_bash_readonly_prefixes: Vec<String>,
     /// Actor-specific overrides. First entry whose `actor` glob matches
-    /// the `THOTH_ACTOR` env var wins; the default policy applies when
+    /// the `HOANGSA_MEMORY_ACTOR` env var wins; the default policy applies when
     /// none match. Default empty.
     pub policies: Vec<ActorPolicyConfig>,
 
@@ -387,7 +387,7 @@ pub struct DisciplineConfig {
     // mid-session.
     // ------------------------------------------------------------------
     /// Enable periodic background reviews. When `true`, the PostToolUse
-    /// hook spawns a detached `thoth review` process every
+    /// hook spawns a detached `hoangsa-memory review` process every
     /// [`Self::background_review_interval`] mutations. Default `false`
     /// (opt-in).
     pub background_review: bool,
@@ -415,8 +415,8 @@ pub struct DisciplineConfig {
     /// (often Opus), burning tokens.
     pub background_review_model: String,
 
-    /// How many `MEMORY.md.bak-*` / `LESSONS.md.bak-*` files `thoth
-    /// compact` keeps around after a successful rewrite. Older
+    /// How many `MEMORY.md.bak-*` / `LESSONS.md.bak-*` files
+    /// `hoangsa-memory compact` keeps around after a successful rewrite. Older
     /// backups (by filename timestamp) are deleted. `0` disables
     /// pruning (keep every backup forever). Default `2`.
     pub compact_backup_keep: u32,
@@ -428,7 +428,7 @@ pub struct DisciplineConfig {
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct ActorPolicyConfig {
-    /// Glob matching the `THOTH_ACTOR` env var (e.g. `"hoangsa/*"`,
+    /// Glob matching the `HOANGSA_MEMORY_ACTOR` env var (e.g. `"hoangsa/*"`,
     /// `"ci-*"`, `"*"`). Empty string matches nothing.
     pub actor: String,
     /// Gate mode for this actor. `"off"` / `"nudge"` / `"strict"`. When
@@ -509,7 +509,7 @@ impl DisciplineConfig {
     }
 
     /// Sync twin of [`Self::load_or_default`] for callers that can't
-    /// spin a tokio runtime (the `thoth-gate` hook binary).
+    /// spin a tokio runtime (the `hoangsa-cli enforce` hook binary).
     pub fn load_or_default_sync(root: &Path) -> Self {
         let path = root.join("config.toml");
         let text = match std::fs::read_to_string(&path) {

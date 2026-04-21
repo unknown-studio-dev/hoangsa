@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// What the caller wants Thoth to find.
+/// What the caller wants hoangsa-memory to find.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Query {
     /// The natural-language or keyword text of the query.
@@ -95,7 +95,7 @@ pub struct Chunk {
     pub context: Option<ChunkContext>,
 }
 
-/// Graph-backed context around a chunk. This is what makes Thoth's
+/// Graph-backed context around a chunk. This is what makes hoangsa-memory's
 /// recall output qualitatively different from a plain RAG hit: instead
 /// of just the matched code we also surface who calls it, what it calls,
 /// and its neighbours in the module.
@@ -211,7 +211,7 @@ impl RenderOptions {
 
 impl Retrieval {
     /// Render this retrieval as the human-readable text surface that both
-    /// the CLI (`thoth query`) and MCP (`memory_recall` tool text) display.
+    /// the CLI (`hoangsa-memory query`) and MCP (`memory_recall` tool text) display.
     ///
     /// The format is designed so an agent reading the output can answer
     /// three questions per chunk without opening the file:

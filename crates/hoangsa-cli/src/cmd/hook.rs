@@ -112,15 +112,15 @@ pub fn cmd_lesson_guard(cwd: &str) {
     }
 
     // Find hoangsa-memory binary
-    let thoth_root = Path::new(cwd).join(".hoangsa-memory");
-    if !thoth_root.exists() {
+    let memory_root = Path::new(cwd).join(".hoangsa-memory");
+    if !memory_root.exists() {
         out(&json!({"decision": "approve"}));
         return;
     }
 
     // Call hoangsa-memory CLI to recall lessons relevant to this file path
-    let thoth_bin = find_thoth_bin();
-    let thoth_bin = match thoth_bin {
+    let memory_bin = find_memory_bin();
+    let memory_bin = match memory_bin {
         Some(b) => b,
         None => {
             out(&json!({"decision": "approve"}));
@@ -128,8 +128,8 @@ pub fn cmd_lesson_guard(cwd: &str) {
         }
     };
 
-    let result = Command::new(&thoth_bin)
-        .args(["--root", &thoth_root.to_string_lossy()])
+    let result = Command::new(&memory_bin)
+        .args(["--root", &memory_root.to_string_lossy()])
         .args(["query", &query, "--top-k", "8", "--json"])
         .output();
 
@@ -283,7 +283,7 @@ fn build_recall_query(path: &str) -> String {
 }
 
 /// Find a binary by searching PATH (cross-platform).
-/// `stem` is the binary name without extension (e.g. "thoth").
+/// `stem` is the binary name without extension (e.g. "hoangsa-memory").
 fn find_bin_in_path(stem: &str) -> Option<String> {
     let path_var = std::env::var("PATH").ok()?;
     let sep = if cfg!(windows) { ';' } else { ':' };
@@ -304,7 +304,7 @@ fn find_bin_in_path(stem: &str) -> Option<String> {
     None
 }
 
-fn find_thoth_bin() -> Option<String> {
+fn find_memory_bin() -> Option<String> {
     // PATH first so a user-installed override wins; otherwise fall back
     // to the canonical global install location. `bin/install` places
     // `hoangsa-memory` there unconditionally but does NOT add it to
@@ -351,7 +351,7 @@ fn spawn_archive_ingest() {
         return;
     }
     use std::process::{Command, Stdio};
-    let Some(bin) = find_thoth_bin() else { return };
+    let Some(bin) = find_memory_bin() else { return };
     let _ = Command::new(bin)
         .args(["archive", "ingest", "--refresh"])
         .stdin(Stdio::null())
@@ -424,7 +424,7 @@ fn try_forward_to_daemon() -> bool {
 /// Locate an MCP daemon socket. Tries the local `.hoangsa-memory/` in
 /// the current working directory first, then the global
 /// `~/.hoangsa-memory/projects/<slug>/` layout (mirroring the resolver
-/// in `thoth-mcp::main`).
+/// in `hoangsa-memory-mcp::main`).
 fn candidate_mcp_socket() -> Option<std::path::PathBuf> {
     let cwd = std::env::current_dir().ok()?;
 
@@ -435,7 +435,7 @@ fn candidate_mcp_socket() -> Option<std::path::PathBuf> {
     }
 
     // Global root — readable-slug layout: last two cwd components,
-    // lowercased, non-alnum → '-'. Matches `thoth-mcp::main::project_slug`.
+    // lowercased, non-alnum → '-'. Matches `hoangsa-memory-mcp::main::project_slug`.
     let home = std::env::var_os("HOME")?;
     let slug = project_slug(&cwd);
     let global = std::path::PathBuf::from(home)
@@ -450,7 +450,7 @@ fn candidate_mcp_socket() -> Option<std::path::PathBuf> {
 }
 
 /// Last-two-path-components slug (lowercased, non-alnum → '-'). Kept
-/// in sync with `thoth-mcp::main::project_slug` so the hook finds the
+/// in sync with `hoangsa-memory-mcp::main::project_slug` so the hook finds the
 /// same socket the daemon binds.
 fn project_slug(path: &Path) -> String {
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
@@ -1184,7 +1184,7 @@ fn build_recall_event(tool_input: &serde_json::Value) -> Option<serde_json::Valu
 }
 
 /// Resolve a symbol (FQN or bare name) to a source file path.
-/// 1. Ask the Thoth CLI for the symbol's canonical location (uses the code graph).
+/// 1. Ask the hoangsa-memory CLI for the symbol's canonical location (uses the code graph).
 /// 2. On miss or when hoangsa-memory is unavailable, fall back to a config-driven grep
 ///    built from `enforcement.symbol_patterns` (same source as extract_symbols).
 /// Both paths scan from `cwd` — no more hardcoded `cli/src/` / `src/`.
@@ -1195,11 +1195,11 @@ fn resolve_symbol_to_file(cwd: &str, symbol: &str) -> Option<String> {
     let bare = symbol.rsplit("::").next().unwrap_or(symbol);
 
     // Preferred: hoangsa-memory index lookup.
-    if let Some(thoth_bin) = find_thoth_bin() {
-        let thoth_root = Path::new(cwd).join(".hoangsa-memory");
-        if thoth_root.exists() {
-            if let Ok(out) = Command::new(&thoth_bin)
-                .args(["--root", &thoth_root.to_string_lossy()])
+    if let Some(memory_bin) = find_memory_bin() {
+        let memory_root = Path::new(cwd).join(".hoangsa-memory");
+        if memory_root.exists() {
+            if let Ok(out) = Command::new(&memory_bin)
+                .args(["--root", &memory_root.to_string_lossy()])
                 .args(["context", bare, "--json"])
                 .current_dir(cwd)
                 .output()
@@ -1217,7 +1217,7 @@ fn resolve_symbol_to_file(cwd: &str, symbol: &str) -> Option<String> {
     }
 
     // Fallback: in-process regex walk using the configured symbol patterns.
-    // Portable across platforms (BSD grep lacks PCRE). Only runs when thoth
+    // Portable across platforms (BSD grep lacks PCRE). Only runs when hoangsa-memory
     // can't resolve — bounded by depth + source-extension filter.
     let patterns = read_symbol_patterns(cwd);
     let escaped = regex::escape(bare);

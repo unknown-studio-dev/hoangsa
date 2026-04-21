@@ -74,7 +74,7 @@ impl ImpactDir {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
-    /// Initialize a bare `.thoth/` directory — seed MEMORY.md / LESSONS.md /
+    /// Initialize a bare `.hoangsa-memory/` directory — seed MEMORY.md / LESSONS.md /
     /// config.toml. Idempotent. Hoangsa install handles higher-level setup.
     Init,
 

@@ -1,4 +1,4 @@
-//! `thoth watch` — stay resident, reindex on source-tree changes.
+//! `hoangsa-memory watch` — stay resident, reindex on source-tree changes.
 
 use std::path::Path;
 use std::time::Duration;
@@ -23,12 +23,12 @@ pub async fn run_watch(root: &Path, src: &Path, debounce: Duration) -> Result<()
         let watch_cfg = hoangsa_memory_retrieve::WatchConfig::load_or_default(root).await;
         if watch_cfg.enabled {
             println!(
-                "thoth-mcp daemon is running with auto-watch enabled — \
+                "hoangsa-memory-mcp daemon is running with auto-watch enabled — \
                  showing live file-change log only."
             );
         } else {
             println!(
-                "thoth-mcp daemon is running (auto-watch disabled). \
+                "hoangsa-memory-mcp daemon is running (auto-watch disabled). \
                  Showing live file-change log. Tip: set `[watch] enabled = true` \
                  in config.toml to auto-reindex inside the daemon."
             );
@@ -130,7 +130,7 @@ pub async fn run_watch(root: &Path, src: &Path, debounce: Duration) -> Result<()
     Ok(())
 }
 
-/// Log-only fallback for `thoth watch` when the MCP daemon holds the
+/// Log-only fallback for `hoangsa-memory watch` when the MCP daemon holds the
 /// redb lock. Watches the filesystem and prints changes, but doesn't
 /// index — the daemon handles that.
 pub async fn run_watch_log_only(src: &Path, debounce: Duration) -> Result<()> {

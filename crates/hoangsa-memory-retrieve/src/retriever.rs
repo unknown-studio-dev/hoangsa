@@ -33,7 +33,7 @@ use crate::indexer::{chunk_id, read_span};
 
 /// Reciprocal-Rank-Fusion constant. The classic Cormack/Clarke default is
 /// 60, designed for web-scale result lists (100s of candidates per source).
-/// Thoth's per-source stages typically return < 20 candidates, so K=60
+/// hoangsa-memory's per-source stages typically return < 20 candidates, so K=60
 /// compresses all single-stage hits into a ~0.3% score band (0.0164→0.0154),
 /// making ranking effectively random. K=10 gives a ~9% spread per rank step,
 /// which lets multi-stage hits stand out clearly while still dampening
@@ -669,9 +669,9 @@ fn path_has_prefix(path: &Path, prefix: &Path) -> bool {
     p.contains(pre.as_ref())
 }
 
-/// Map an extension to a language name using the same table `thoth-parse`
-/// uses. Keeping the mapping inline here avoids pulling `thoth-parse` into
-/// `thoth-retrieve`'s dep graph just for a scope filter.
+/// Map an extension to a language name using the same table `hoangsa-memory-parse`
+/// uses. Keeping the mapping inline here avoids pulling `hoangsa-memory-parse` into
+/// `hoangsa-memory-retrieve`'s dep graph just for a scope filter.
 fn path_language_matches(path: &Path, lang: &str) -> bool {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
         return false;

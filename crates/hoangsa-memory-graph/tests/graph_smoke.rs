@@ -1,4 +1,4 @@
-//! Unit tests for `thoth-graph` — BFS traversal, impact analysis, and the
+//! Unit tests for `hoangsa-memory-graph` — BFS traversal, impact analysis, and the
 //! depth-1 accessor surface. Exercises the graph via a real `KvStore`
 //! backed by a `tempdir` so the tests cover the full on-disk round-trip.
 

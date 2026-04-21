@@ -1,4 +1,4 @@
-//! `thoth index` — walk + parse + index a source tree.
+//! `hoangsa-memory index` — walk + parse + index a source tree.
 
 use std::path::Path;
 use std::sync::Mutex;

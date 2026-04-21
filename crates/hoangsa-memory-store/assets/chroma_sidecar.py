@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Thin ChromaDB sidecar — stdin/stdout JSON-RPC for thoth-mcp.
+"""Thin ChromaDB sidecar — stdin/stdout JSON-RPC for hoangsa-memory-mcp.
 
 Uses chromadb.PersistentClient (embedded mode) so ChromaDB handles
 embedding internally via its default all-MiniLM-L6-v2 function.

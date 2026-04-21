@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 pub use enforcement::{Enforcement, LessonTrigger};
 
-/// The five kinds of memory Thoth tracks.
+/// The five kinds of memory hoangsa-memory tracks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryKind {
@@ -130,7 +130,7 @@ pub struct Lesson {
     pub block_message: Option<String>,
 }
 
-/// A procedural skill — stored as a directory under `.thoth/skills/`,
+/// A procedural skill — stored as a directory under `.hoangsa-memory/skills/`,
 /// compatible with the `agentskills.io` standard.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Skill {
@@ -140,7 +140,7 @@ pub struct Skill {
     pub slug: String,
     /// One-line description (from SKILL.md frontmatter).
     pub description: String,
-    /// Relative path to the skill directory inside `.thoth/skills/`.
+    /// Relative path to the skill directory inside `.hoangsa-memory/skills/`.
     pub path: std::path::PathBuf,
 }
 

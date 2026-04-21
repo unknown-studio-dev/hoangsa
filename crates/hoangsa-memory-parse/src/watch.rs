@@ -48,9 +48,9 @@ fn build_ignore(root: &Path) -> Option<Gitignore> {
     }
 
     // `.hoangsa-memoryignore`
-    let thothignore = root.join(HOANGSA_MEMORY_IGNORE_FILE);
-    if thothignore.is_file() {
-        if let Some(e) = gb.add(&thothignore) {
+    let memory_ignore = root.join(HOANGSA_MEMORY_IGNORE_FILE);
+    if memory_ignore.is_file() {
+        if let Some(e) = gb.add(&memory_ignore) {
             warn!(error = %e, "watcher: failed to parse .hoangsa-memoryignore");
         } else {
             added = true;

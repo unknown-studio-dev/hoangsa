@@ -1,7 +1,7 @@
 //! Archive session tracker, backed by SQLite.
 //!
 //! Tracks which conversation sessions have been ingested into the ChromaDB
-//! `thoth_archive` collection. Verbatim content lives in ChromaDB; this DB
+//! `thoth_archive` ChromaDB collection. Verbatim content lives in ChromaDB; this DB
 //! only stores lightweight metadata to avoid re-processing and to support
 //! spatial queries (project / topic).
 //!

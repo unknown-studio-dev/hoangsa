@@ -1,6 +1,6 @@
 //! Append-only episodic log, backed by SQLite + FTS5.
 //!
-//! Every [`Event`] observed by Thoth is serialized to JSON and appended here,
+//! Every [`Event`] observed by hoangsa-memory is serialized to JSON and appended here,
 //! alongside a contentless FTS5 index so lessons and reflective memories can
 //! later grep the log for relevant past experiences.
 //!
@@ -214,7 +214,7 @@ impl EpisodeLog {
 
     /// Convenience: append a `QueryIssued` event for `text` with a fresh
     /// id and the current UTC timestamp. Exists so callers that only want
-    /// to satisfy `thoth-gate`'s recall window (e.g. `thoth query` on the
+    /// to satisfy `hoangsa-cli enforce`'s recall window (e.g. `hoangsa-memory query` on the
     /// direct-store path) don't need to pull `uuid` / `time` into their
     /// own Cargo manifest just to mint one event.
     pub async fn log_query_issued(&self, text: String) -> Result<i64> {
@@ -675,7 +675,7 @@ fn check_schema_version(c: &Connection) -> Result<()> {
     if version > EXPECTED_SCHEMA_VERSION {
         return Err(Error::Store(format!(
             "episodes.db schema version {version} is newer than this binary supports \
-             (expected <= {EXPECTED_SCHEMA_VERSION}); please upgrade Thoth"
+             (expected <= {EXPECTED_SCHEMA_VERSION}); please upgrade hoangsa-memory"
         )));
     }
     Ok(())

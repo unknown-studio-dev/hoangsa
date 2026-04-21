@@ -1,9 +1,9 @@
 //! Recall accuracy benchmark — inspired by LongMemEval / LoCoMo.
 //!
-//! Seeds a Thoth store with known facts, lessons, and code, then runs
+//! Seeds a hoangsa-memory store with known facts, lessons, and code, then runs
 //! a gold set of queries and asserts precision@k >= target.
 //!
-//! Run: `cargo test -p thoth-retrieve --test recall_accuracy -- --nocapture`
+//! Run: `cargo test -p hoangsa-memory-retrieve --test recall_accuracy -- --nocapture`
 
 use tempfile::tempdir;
 use hoangsa_memory_core::{Enforcement, Fact, FactScope, Lesson, MemoryKind, MemoryMeta, Query};

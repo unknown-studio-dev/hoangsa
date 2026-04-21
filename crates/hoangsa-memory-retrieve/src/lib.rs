@@ -1,4 +1,4 @@
-//! # thoth-retrieve
+//! # hoangsa-memory-retrieve
 //!
 //! Retrieval orchestrator. Given a [`Query`] and a [`Mode`], it fans out to
 //! the relevant stores, fuses the results with Reciprocal Rank Fusion, and

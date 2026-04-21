@@ -1,4 +1,4 @@
-//! Operating mode for Thoth.
+//! Operating mode for hoangsa-memory.
 
 use crate::provider::Synthesizer;
 

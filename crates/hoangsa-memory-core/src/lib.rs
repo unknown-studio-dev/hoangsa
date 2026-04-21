@@ -1,12 +1,12 @@
 //! # hoangsa-memory-core
 //!
-//! Public API, traits, and core types for **Thoth** — long-term memory for
+//! Public API, traits, and core types for **Hoangsa Memory** — long-term memory for
 //! coding agents.
 //!
 //! This crate is intentionally small: it defines the stable surface every
 //! other crate in the workspace depends on (types, traits, errors) and
-//! nothing more. Downstream crates (`thoth-store`, `thoth-retrieve`,
-//! `thoth-memory`, …) compose these types directly.
+//! nothing more. Downstream crates (`hoangsa-memory-store`, `hoangsa-memory-retrieve`,
+//! `hoangsa-memory-policy`, …) compose these types directly.
 
 #![deny(rust_2018_idioms)]
 #![warn(missing_docs)]

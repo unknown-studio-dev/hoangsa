@@ -68,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
 /// Resolve root: `$HOANGSA_MEMORY_ROOT` > populated `./.hoangsa-memory/` >
 /// `~/.hoangsa-memory/projects/{readable-slug}/`.
 ///
-/// Mirrors `thoth_cli::resolve_root`: an empty/unpopulated local
+/// Mirrors `hoangsa_memory::resolve::resolve_root`: an empty/unpopulated local
 /// `.hoangsa-memory/` must not shadow the global root, and the global
 /// layout is readable-slug only (legacy blake3 hash dirs are ignored).
 fn resolve_root() -> PathBuf {

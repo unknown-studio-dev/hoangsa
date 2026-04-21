@@ -1,8 +1,8 @@
-//! # thoth-store
+//! # hoangsa-memory-store
 //!
-//! Embedded storage backends used by Thoth. Each submodule wraps a specific
-//! backend behind a thin async-friendly API so that `thoth-retrieve` and
-//! `thoth-memory` do not depend on concrete engines.
+//! Embedded storage backends used by hoangsa-memory. Each submodule wraps a specific
+//! backend behind a thin async-friendly API so that `hoangsa-memory-retrieve` and
+//! `hoangsa-memory-policy` do not depend on concrete engines.
 //!
 //! | Backend    | Role                                              |
 //! |------------|---------------------------------------------------|
@@ -18,7 +18,7 @@
 //!
 //! ```text
 //! <root>/
-//!   config.toml        (optional user config — loaded by thoth::CodeMemory)
+//!   config.toml        (optional user config — loaded by the policy layer)
 //!   MEMORY.md
 //!   LESSONS.md
 //!   skills/<slug>/SKILL.md
@@ -54,14 +54,14 @@ pub use fts::{ChunkDoc, FtsHit, FtsIndex};
 pub use kv::{BfsDir, EdgeRow, KvStore, NodeRow, SymbolRow};
 pub use markdown::MarkdownStore;
 
-/// Root handle bundling every backend living under a `.thoth/` dir.
+/// Root handle bundling every backend living under a `.hoangsa-memory/` dir.
 ///
 /// Opening a [`StoreRoot`] lazily creates all the sub-paths required by the
 /// individual backends, so downstream code can assume "if it opened, it's
 /// ready".
 #[derive(Clone)]
 pub struct StoreRoot {
-    /// Root path on disk (typically `.thoth/`).
+    /// Root path on disk (typically `.hoangsa-memory/`).
     pub path: PathBuf,
     /// Markdown memory surface (source of truth).
     pub markdown: MarkdownStore,
@@ -156,7 +156,7 @@ async fn migrate_legacy_layout(root: &Path) -> Result<()> {
         tracing::info!(
             from = %old_path.display(),
             to = %new_path.display(),
-            "thoth-store: migrated legacy index file"
+            "hoangsa-memory-store: migrated legacy index file"
         );
     }
     // If the old directory is now empty, drop it so we never try again.

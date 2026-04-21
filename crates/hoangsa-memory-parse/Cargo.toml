@@ -6,10 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "tree-sitter wrapper, AST-aware chunking, file discovery and watching for Thoth."
+description = "tree-sitter wrapper, AST-aware chunking, file discovery and watching for hoangsa-memory."
 
 [features]
-# Users compile Thoth with the languages they care about.
+# Users compile hoangsa-memory with the languages they care about.
 default       = ["lang-rust", "lang-python", "lang-javascript", "lang-typescript"]
 lang-rust     = ["dep:tree-sitter-rust"]
 lang-python   = ["dep:tree-sitter-python"]

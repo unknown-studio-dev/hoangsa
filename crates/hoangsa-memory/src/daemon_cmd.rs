@@ -1,4 +1,4 @@
-//! `thoth` daemon-facing helpers — shared logic for commands that prefer
+//! daemon-facing helpers — shared logic for commands that prefer
 //! the running MCP daemon and fall back to in-process dispatch.
 //!
 //! This module re-exports the shared `call_mcp_tool` and `emit_output`
@@ -64,7 +64,7 @@ pub async fn call_mcp_tool(
 
 // ------------------------------------------- graph / diff CLI subcommands
 
-/// `thoth impact <fqn>` — forwards to the `memory_impact` MCP tool.
+/// `hoangsa-memory impact <fqn>` — forwards to the `memory_impact` MCP tool.
 ///
 /// The daemon path is preferred (keeps us working when Claude Code is
 /// holding the redb lock); if unavailable we fall back to opening the
@@ -87,14 +87,14 @@ pub async fn cmd_impact(
     emit_output(text, data, is_error, json)
 }
 
-/// `thoth context <fqn>` — forwards to the `memory_symbol_context` tool.
+/// `hoangsa-memory context <fqn>` — forwards to the `memory_symbol_context` tool.
 pub async fn cmd_context(root: &Path, fqn: &str, limit: usize, json: bool) -> Result<()> {
     let args = serde_json::json!({ "fqn": fqn, "limit": limit });
     let (text, data, is_error) = call_mcp_tool(root, "memory_symbol_context", args).await?;
     emit_output(text, data, is_error, json)
 }
 
-/// `thoth changes` — feed a unified diff through the `memory_detect_changes`
+/// `hoangsa-memory changes` — feed a unified diff through the `memory_detect_changes`
 /// tool. Diff source order of preference: `--from <file>` > `--from -`
 /// (stdin) > `git diff HEAD`.
 pub async fn cmd_changes(root: &Path, from: Option<&str>, depth: usize, json: bool) -> Result<()> {

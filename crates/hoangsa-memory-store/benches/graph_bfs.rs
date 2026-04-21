@@ -1,6 +1,6 @@
 //! Criterion benchmark for `KvStore::graph_bfs`.
 //!
-//! The backstory is in commit 217c001 (perf(thoth-graph,thoth-store):
+//! The backstory is in commit 217c001 (perf(hoangsa-memory-graph,hoangsa-memory-store):
 //! single-txn BFS + range-scan edges_from): `graph_bfs` collapses a
 //! chatty "one spawn_blocking per frontier item" walk into a single
 //! transaction, and the reverse-edge follow-up in this crate turned the
@@ -12,7 +12,7 @@
 //! Run with:
 //!
 //! ```text
-//! cargo bench -p thoth-store --bench graph_bfs
+//! cargo bench -p hoangsa-memory-store --bench graph_bfs
 //! ```
 //!
 //! Or with `-- --test` for a smoke run that just exercises each case

@@ -1,8 +1,8 @@
-//! Rule types for the Thoth enforcement layer.
+//! Rule types for the hoangsa-memory enforcement layer.
 //!
 //! A [`Rule`] is the merged view of an enforcement directive produced by
 //! combining layered TOML config (default / user / project) with rules
-//! compiled from lessons and from `.thoth/ignore` glob lines.
+//! compiled from lessons and from `.hoangsa-memory/ignore` glob lines.
 //!
 //! Layer precedence (later overrides earlier by rule ID):
 //!
@@ -17,7 +17,7 @@ use hoangsa_memory_core::memory::{Enforcement, LessonTrigger};
 
 pub mod types {
     //! Re-export module — the acceptance harness targets
-    //! `cargo test -p thoth-memory rules::types`, so tests live under this
+    //! `cargo test -p hoangsa-memory-policy rules::types`, so tests live under this
     //! path as well.
     pub use super::*;
 }
@@ -40,7 +40,7 @@ pub struct Rule {
     pub trigger: LessonTrigger,
     /// Optional `block_message` surfaced to the agent when the rule fires.
     pub message: Option<String>,
-    /// Where this rule came from — used by `thoth rule list` to show layer
+    /// Where this rule came from — used by `hoangsa-memory rule list` to show layer
     /// source and by the audit log for diagnostics.
     pub source: RuleSource,
 }
@@ -51,34 +51,34 @@ pub struct Rule {
 pub enum RuleSource {
     /// Shipped `rules.default.toml` baked into the binary.
     Default,
-    /// User layer at `~/.thoth/rules.user.toml`.
+    /// User layer at `~/.hoangsa-memory/rules.user.toml`.
     User,
-    /// Project layer at `.thoth/rules.project.toml`.
+    /// Project layer at `.hoangsa-memory/rules.project.toml`.
     Project,
     /// Compiled from a lesson — carries the `lesson_id` for backref.
     Lesson(String),
-    /// Compiled from a `.thoth/ignore` glob line — carries the raw glob
-    /// source so `thoth rule list` can point users at the config line.
+    /// Compiled from a `.hoangsa-memory/ignore` glob line — carries the raw glob
+    /// source so `hoangsa-memory rule list` can point users at the config line.
     Ignore(String),
 }
 
 /// Five-slot layer container for rule merge.
 ///
 /// Callers fill each slot independently (typically: parse the three TOML
-/// layers, iterate `LESSONS.md`, read `.thoth/ignore`), then invoke
+/// layers, iterate `LESSONS.md`, read `.hoangsa-memory/ignore`), then invoke
 /// [`RuleLayerMerge::effective`] to collapse duplicates by ID using the
 /// precedence documented on the module.
 #[derive(Debug, Clone, Default)]
 pub struct RuleLayerMerge {
     /// Rules from the shipped `rules.default.toml`.
     pub default: Vec<Rule>,
-    /// Rules from `~/.thoth/rules.user.toml`.
+    /// Rules from `~/.hoangsa-memory/rules.user.toml`.
     pub user: Vec<Rule>,
-    /// Rules from `.thoth/rules.project.toml`.
+    /// Rules from `.hoangsa-memory/rules.project.toml`.
     pub project: Vec<Rule>,
     /// Rules compiled from lessons at load time.
     pub from_lessons: Vec<Rule>,
-    /// Rules compiled from `.thoth/ignore` globs at load time.
+    /// Rules compiled from `.hoangsa-memory/ignore` globs at load time.
     pub from_ignore: Vec<Rule>,
 }
 
@@ -251,7 +251,7 @@ mod tests {
 
 /// TOML loader + compilers that populate a [`RuleLayerMerge`].
 ///
-/// The acceptance harness targets `cargo test -p thoth-memory
+/// The acceptance harness targets `cargo test -p hoangsa-memory-policy
 /// rules::layer_merge`, so the loader and its unit tests live under this
 /// module path.
 pub mod layer_merge {
@@ -474,7 +474,7 @@ pub mod layer_merge {
             .collect()
     }
 
-    /// Compile a `.thoth/ignore` file (one glob per line, `#` comments).
+    /// Compile a `.hoangsa-memory/ignore` file (one glob per line, `#` comments).
     ///
     /// Each glob becomes a `Block`-tier rule targeting `Edit` / `Write` on
     /// that path. A missing file yields `Ok(vec![])`.
@@ -517,7 +517,7 @@ pub mod layer_merge {
 
     /// Standard loader — assembles a [`RuleLayerMerge`] from
     /// the shipped defaults, user TOML, project TOML, a slice of lessons,
-    /// and a `.thoth/ignore` file.
+    /// and a `.hoangsa-memory/ignore` file.
     ///
     /// Missing files are tolerated (no error). Parse errors are surfaced.
     pub fn load_from_paths(

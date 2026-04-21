@@ -1,4 +1,4 @@
-//! `thoth memory` subcommands — show, edit, fact, lesson.
+//! `hoangsa-memory memory` subcommands — show, edit, fact, lesson.
 
 use std::path::Path;
 
@@ -69,7 +69,7 @@ pub async fn run_edit(root: &Path) -> Result<()> {
     // MCP daemon owns the database lock.
     let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
     if !root.exists() {
-        anyhow::bail!("{} not found — run `thoth init` first", root.display());
+        anyhow::bail!("{} not found — run `hoangsa-memory init` first", root.display());
     }
     let path = root.join("MEMORY.md");
     if !path.exists() {

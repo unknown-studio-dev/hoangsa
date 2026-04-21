@@ -1,8 +1,8 @@
-//! Error and result types for Thoth.
+//! Error and result types for hoangsa-memory.
 
 use thiserror::Error;
 
-/// Thoth's result alias.
+/// hoangsa-memory's result alias.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Top-level error enum. Library crates convert into this.

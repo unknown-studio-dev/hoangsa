@@ -1,6 +1,6 @@
 //! Full-project indexer.
 //!
-//! Walks a source tree, parses every recognised file with `thoth-parse`, and
+//! Walks a source tree, parses every recognised file with `hoangsa-memory-parse`, and
 //! writes the results into every backend of a [`StoreRoot`]:
 //!
 //! - `fts`      — one BM25 document per [`SourceChunk`].

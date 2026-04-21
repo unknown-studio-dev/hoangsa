@@ -208,7 +208,7 @@ impl RetrieveConfig {
 ///
 /// When `enabled = true`, the MCP server spawns a background file watcher
 /// on startup so source changes are reindexed automatically — no separate
-/// `thoth watch` process required. Since the MCP daemon already holds the
+/// `hoangsa-memory watch` process required. Since the MCP daemon already holds the
 /// redb exclusive lock, the watcher runs in-process and shares the same
 /// `Indexer` instance.
 ///
@@ -333,7 +333,7 @@ impl ChromaConfig {
 
 /// TOML file schema — the outer document. We only care about `[index]`,
 /// `[output]`, `[retrieve]`, `[watch]`, and `[chroma]`; other tables
-/// (e.g. `[memory]`, read by `thoth-memory`) are left to their owners,
+/// (e.g. `[memory]`, read by `hoangsa-memory-policy`) are left to their owners,
 /// so we tolerate them instead of `deny_unknown_fields` here.
 #[derive(Debug, Default, Deserialize)]
 struct ConfigFile {
@@ -413,7 +413,7 @@ mod tests {
 
     #[tokio::test]
     async fn other_tables_are_tolerated() {
-        // `[memory]` belongs to thoth-memory; presence here must not break
+        // `[memory]` belongs to hoangsa-memory-policy; presence here must not break
         // the index loader. `deny_unknown_fields` is inside IndexConfig, not
         // at the top level.
         let dir = tempdir().unwrap();

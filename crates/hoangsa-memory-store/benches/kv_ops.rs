@@ -4,7 +4,7 @@
 //! `get_node` paths that every recall cycle exercises. Run with:
 //!
 //! ```text
-//! cargo bench -p thoth-store --bench kv_ops
+//! cargo bench -p hoangsa-memory-store --bench kv_ops
 //! ```
 //!
 //! Or with `-- --test` for a single-iteration smoke run suitable for CI.

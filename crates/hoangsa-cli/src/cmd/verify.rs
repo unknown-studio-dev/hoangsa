@@ -970,8 +970,8 @@ fn test_integration_templates(t: &mut TestRunner) {
     t.check("workflows/index.md exists", idx_wf.exists(), "missing");
     if let Ok(content) = fs::read_to_string(&idx_wf) {
         t.check(
-            "index workflow thoth index",
-            content.contains("thoth index"),
+            "index workflow hoangsa-memory index",
+            content.contains("hoangsa-memory index"),
             "missing",
         );
     }

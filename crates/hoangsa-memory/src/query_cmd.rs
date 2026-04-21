@@ -1,4 +1,4 @@
-//! `thoth query` — recall subcommand.
+//! `hoangsa-memory query` — recall subcommand.
 
 use std::path::Path;
 
@@ -44,7 +44,7 @@ pub async fn run_query(
     let store = StoreRoot::open(root).await?;
     // Keep a handle to the episode log before `store` is moved into the
     // retriever — we use it below to log `QueryIssued` so the CLI query
-    // pre-satisfies `thoth-gate`, matching the daemon path (which logs
+    // pre-satisfies `hoangsa-cli enforce`, matching the daemon path (which logs
     // implicitly because MCP's `tool_recall` defaults `log_event: true`).
     let episodes = store.episodes.clone();
 

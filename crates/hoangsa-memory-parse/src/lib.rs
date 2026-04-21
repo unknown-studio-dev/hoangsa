@@ -1,13 +1,13 @@
-//! # thoth-parse
+//! # hoangsa-memory-parse
 //!
 //! tree-sitter wrapper, AST-aware chunking, file discovery, and change
 //! watching.
 //!
-//! This crate is the perception layer for Thoth. Its outputs feed every
+//! This crate is the perception layer for hoangsa-memory. Its outputs feed every
 //! other pipeline:
 //!
 //! - [`parse_file`] produces the [`SourceChunk`]s and [`SymbolTable`] that
-//!   `thoth-store` persists.
+//!   `hoangsa-memory-store` persists.
 //! - [`walk::walk_sources`] enumerates indexable files in a project, honouring
 //!   `.gitignore` and friends.
 //! - [`watch::Watcher`] streams [`hoangsa_memory_core::Event`] whenever files change.
@@ -88,7 +88,7 @@ pub struct SymbolTable {
     /// Declared symbols.
     pub symbols: Vec<Symbol>,
     /// `(caller_fqn, callee_name)` edges. Callee resolution happens later
-    /// in `thoth-graph` once imports are known.
+    /// in `hoangsa-memory-graph` once imports are known.
     pub calls: Vec<(String, String)>,
     /// Raw import specifiers (`use foo::bar`, `from x import y`, ...).
     pub imports: Vec<String>,

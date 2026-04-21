@@ -1,6 +1,6 @@
-//! # thoth-memory
+//! # hoangsa-memory-policy
 //!
-//! The memory lifecycle layer — the "policy core" of Thoth.
+//! The memory lifecycle layer — the "policy core" of hoangsa-memory.
 //!
 //! It owns:
 //!

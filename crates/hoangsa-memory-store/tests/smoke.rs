@@ -1,6 +1,6 @@
-//! End-to-end smoke tests for `thoth-store`.
+//! End-to-end smoke tests for `hoangsa-memory-store`.
 //!
-//! Run with `cargo test -p thoth-store`.
+//! Run with `cargo test -p hoangsa-memory-store`.
 
 use std::path::PathBuf;
 
@@ -249,7 +249,7 @@ async fn markdown_facts_and_lessons_roundtrip() {
 
     // Regression guard (2026-04-17): canonical append_fact + append_lesson
     // MUST write an `op="append"` entry to memory-history.jsonl. Without
-    // this, the reflection-debt counter in thoth-memory silently hides
+    // this, the reflection-debt counter in hoangsa-memory-policy silently hides
     // every auto-mode remember, so debt monotonically grows until the
     // gate hard-blocks the agent for "0 remembers" even when it has
     // remembered plenty. Verify both kinds landed in the log.
@@ -279,7 +279,7 @@ async fn markdown_lists_skills_with_frontmatter() {
     tokio::fs::create_dir_all(&skill_dir).await.unwrap();
     tokio::fs::write(
         skill_dir.join("SKILL.md"),
-        "---\nname: auth-jwt\ndescription: Wire a JWT auth flow through thoth-auth.\n---\n# steps\n1. mint key\n",
+        "---\nname: auth-jwt\ndescription: Wire a JWT auth flow through my-auth.\n---\n# steps\n1. mint key\n",
     )
     .await
     .unwrap();

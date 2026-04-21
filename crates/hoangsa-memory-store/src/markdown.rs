@@ -2,7 +2,7 @@
 //!
 //! The files below are the **source of truth** for all user-visible memory.
 //! Every binary index (redb, tantivy, sqlite, lance) is derivable from them,
-//! so users can edit these files by hand and Thoth will rebuild its indexes.
+//! so users can edit these files by hand and hoangsa-memory will rebuild its indexes.
 //!
 //! Layout under `<root>/`:
 //!
@@ -20,7 +20,7 @@
 //!
 //! ```markdown
 //! ### auth uses JWT with RS256
-//! The `thoth-auth` crate signs tokens via RS256. Keys live in Vault.
+//! The `my-auth` crate signs tokens via RS256. Keys live in Vault.
 //! tags: auth, security
 //! ```
 //!
@@ -50,7 +50,7 @@
 //! ```markdown
 //! ---
 //! name: auth-jwt-pattern
-//! description: How to wire a JWT-based auth flow through thoth-auth.
+//! description: How to wire a JWT-based auth flow through my-auth.
 //! ---
 //! # steps
 //! 1. ...
@@ -139,7 +139,7 @@ const SKILL_MD: &str = "SKILL.md";
 /// Reader/writer for the markdown memory surface under `root`.
 #[derive(Clone)]
 pub struct MarkdownStore {
-    /// Root folder (typically `.thoth/`).
+    /// Root folder (typically `.hoangsa-memory/`).
     pub root: PathBuf,
 }
 
@@ -207,7 +207,7 @@ impl MarkdownStore {
     /// Append a fact to `MEMORY.md`. File is created if missing.
     ///
     /// Also writes an `op = "append"` entry to `memory-history.jsonl` so
-    /// the reflection-debt counter in `thoth-memory` sees the remember
+    /// the reflection-debt counter in `hoangsa-memory-policy` sees the remember
     /// and decrements debt accordingly. Before this bug fix
     /// (2026-04-17) canonical appends skipped the history log, so auto
     /// mode silently hid every `memory_remember_fact` from the counter

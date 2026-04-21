@@ -1,4 +1,4 @@
-//! `thoth lesson {promote,demote,compile-triggers}` — user-facing CLI for
+//! `hoangsa-memory lesson {promote,demote,compile-triggers}` — user-facing CLI for
 //! hand-adjusting a lesson's enforcement tier along the
 //! `Advise → Require → Block` ladder, and for inspecting the rules
 //! compiled out of the current `LESSONS.md`.
@@ -122,17 +122,17 @@ async fn bump(root: &Path, id: &str, dir: Direction, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// `thoth lesson promote <id>` — step one rung stricter.
+/// `hoangsa-memory lesson promote <id>` — step one rung stricter.
 pub async fn cmd_promote(root: &Path, id: &str, json: bool) -> Result<()> {
     bump(root, id, Direction::Up, json).await
 }
 
-/// `thoth lesson demote <id>` — step one rung looser.
+/// `hoangsa-memory lesson demote <id>` — step one rung looser.
 pub async fn cmd_demote(root: &Path, id: &str, json: bool) -> Result<()> {
     bump(root, id, Direction::Down, json).await
 }
 
-/// `thoth lesson compile-triggers` — show the rules that would be compiled
+/// `hoangsa-memory lesson compile-triggers` — show the rules that would be compiled
 /// from the current `LESSONS.md` (non-`Advise` lessons only). Does not
 /// write anything; intended as a preview before the gate picks them up.
 pub async fn cmd_compile_triggers(root: &Path, json: bool) -> Result<()> {

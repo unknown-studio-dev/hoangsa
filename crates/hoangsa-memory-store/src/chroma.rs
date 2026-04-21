@@ -69,7 +69,7 @@ const SIDECAR_SCRIPT: &str = include_str!("../assets/chroma_sidecar.py");
 impl ChromaStore {
     /// Spawn the Python sidecar and open a ChromaDB PersistentClient.
     pub async fn open(chroma_data_path: &str) -> Result<Self> {
-        let script_path = std::env::temp_dir().join("thoth_chroma_sidecar.py");
+        let script_path = std::env::temp_dir().join("hoangsa_memory_chroma_sidecar.py");
         if let Err(e) = std::fs::write(&script_path, SIDECAR_SCRIPT) {
             return Err(Error::Store(format!("write sidecar script: {e}")));
         }

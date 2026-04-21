@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Hybrid retrieval orchestrator for Thoth — Mode::Zero and Mode::Full."
+description = "Hybrid retrieval orchestrator for hoangsa-memory — Mode::Zero and Mode::Full."
 
 [features]
 default   = []

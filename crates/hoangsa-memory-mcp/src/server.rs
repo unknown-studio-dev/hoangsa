@@ -57,7 +57,7 @@ pub(crate) struct Inner {
 }
 
 impl Server {
-    /// Open a server rooted at `path` (the `.thoth/` directory).
+    /// Open a server rooted at `path` (the `.hoangsa-memory/` directory).
     ///
     /// ChromaDB (and its ONNX embedder) is **not** loaded here — it is
     /// lazily initialized on first use to avoid the ~2 GB RSS hit when
@@ -126,7 +126,7 @@ impl Server {
     /// watcher was spawned.
     ///
     /// `src` is the source tree to watch (typically the project root,
-    /// i.e. the parent of `.thoth/`).
+    /// i.e. the parent of `.hoangsa-memory/`).
     pub async fn spawn_watcher(&self, src: PathBuf) -> bool {
         let cfg = WatchConfig::load_or_default(&self.inner.root).await;
         if !cfg.enabled {
@@ -910,7 +910,7 @@ impl Server {
             })
             .await?;
         let text = format!(
-            "skill proposal drafted at {} — review and run `thoth skills install` to accept",
+            "skill proposal drafted at {} — review and run `hoangsa-memory skills install` to accept",
             draft_dir.display()
         );
         let data = json!({
@@ -1569,8 +1569,8 @@ impl Server {
             // how `git diff` was invoked: `cli/src/cmd/rule.rs` (cwd-rel),
             // `./cli/src/cmd/rule.rs` (dot-prefixed), or absolute. The
             // symbols table could have been populated with a different
-            // flavour when the repo was indexed (`thoth index .` vs
-            // `thoth index /abs/path`). Go through the lenient lookup so a
+            // flavour when the repo was indexed (`hoangsa-memory index .` vs
+            // `hoangsa-memory index /abs/path`). Go through the lenient lookup so a
             // PR pre-check actually finds the symbols instead of silently
             // returning "no overlap".
             let path_buf = std::path::PathBuf::from(path);
@@ -2235,7 +2235,7 @@ fn tools_catalog() -> Vec<Tool> {
                         "default": true,
                         "description": "Whether to persist this call as a `query_issued` event in \
                                         episodes.db. Agent-initiated recalls (default true) MUST log \
-                                        — that's how `thoth-gate` proves the agent consulted memory \
+                                        — that's how `hoangsa-cli enforce` proves the agent consulted memory \
                                         before mutating. Automated hooks that auto-recall for context \
                                         injection (e.g. UserPromptSubmit) pass `false` so their \
                                         ceremonial recall doesn't satisfy the gate on the agent's behalf."
@@ -2512,7 +2512,7 @@ fn tools_catalog() -> Vec<Tool> {
             name: "memory_skill_propose".to_string(),
             description: "Draft a new SKILL.md under .hoangsa-memory/skills/<slug>.draft/ — used when \
                           you've noticed ≥5 related lessons and want to consolidate them into \
-                          a reusable skill. The user promotes via `thoth skills install`."
+                          a reusable skill. The user promotes via `hoangsa-memory skills install`."
                 .to_string(),
             input_schema: json!({
                 "type": "object",
@@ -2796,7 +2796,7 @@ fn first_nonempty_line(s: &str) -> String {
 }
 
 /// Parse the MCP-level `kind` string ("fact" / "lesson" / "preference") into
-/// the thoth-memory `MemoryKind` enum used by the three-surface markdown API
+/// the hoangsa-memory-policy `MemoryKind` enum used by the three-surface markdown API
 /// (DESIGN-SPEC REQ-04/05/06).
 fn parse_md_kind(kind: &str) -> anyhow::Result<MdKind> {
     match kind {
@@ -2885,7 +2885,7 @@ fn cap_error_output(e: CapExceededError) -> ToolOutput {
 /// Mirrors the debounce + batch logic in `cmd_watch` but runs in-process
 /// alongside the MCP daemon, sharing the same `Indexer` (and therefore the
 /// same redb write lock). This avoids the "daemon is running" conflict
-/// that blocks the standalone `thoth watch`.
+/// that blocks the standalone `hoangsa-memory watch`.
 async fn run_watcher(
     inner: Arc<Inner>,
     src: PathBuf,
@@ -3009,7 +3009,7 @@ pub fn socket_path(root: &Path) -> std::path::PathBuf {
 
 /// Run a Unix-socket sidecar alongside the stdio transport.
 ///
-/// Binds `.thoth/mcp.sock` and accepts connections in a loop. Each
+/// Binds `.hoangsa-memory/mcp.sock` and accepts connections in a loop. Each
 /// connection is a short-lived JSON-RPC session (one line in → one line
 /// out, then close). The socket is removed on clean shutdown.
 ///
@@ -3032,7 +3032,7 @@ pub async fn run_socket(server: Server) -> anyhow::Result<()> {
             // Peer responsive? Then another daemon owns the socket — bail.
             if UnixStream::connect(&sock).await.is_ok() {
                 return Err(anyhow::anyhow!(
-                    "another thoth-mcp is already listening on {}",
+                    "another hoangsa-memory-mcp is already listening on {}",
                     sock.display()
                 ));
             }

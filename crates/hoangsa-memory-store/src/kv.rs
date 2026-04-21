@@ -7,7 +7,7 @@
 //! - `edges_by_dst`   — reverse edge index, keyed by `"<dst>|<kind>|<src>"`.
 //!   Value is the same JSON-encoded `EdgeRow` as `edges` so a reverse
 //!   lookup is a single range-scan + decode (no point-lookup back into
-//!   `edges`). The cost is 2× edge-row storage; at thoth's scale that's
+//!   `edges`). The cost is 2× edge-row storage; at hoangsa-memory's scale that's
 //!   negligible and we save the O(|EDGES|) table scan that `edges_to`
 //!   used to do.
 //! - `symbols`— symbol → `(path, line_start, line_end)` lookups.

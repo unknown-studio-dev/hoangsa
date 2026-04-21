@@ -1,6 +1,6 @@
 //! Structured matcher for [`LessonTrigger`] against a tool call.
 //!
-//! `LessonTrigger` itself lives in `thoth-core` and is intentionally
+//! `LessonTrigger` itself lives in `hoangsa-memory-core` and is intentionally
 //! dependency-light (no regex / glob engines). The actual matching logic —
 //! which needs `globset` for path patterns and `regex` for command / content
 //! patterns — is layered on top here via an extension trait.
@@ -84,7 +84,7 @@ impl ToolCall {
 /// Extension trait adding a `matches()` method to [`LessonTrigger`].
 ///
 /// Implemented only for `LessonTrigger` — the trait exists so we can keep the
-/// heavy matcher dependencies (`globset`, `regex`) out of `thoth-core`.
+/// heavy matcher dependencies (`globset`, `regex`) out of `hoangsa-memory-core`.
 pub trait LessonTriggerExt {
     /// Returns `true` if every structured field set on this trigger matches
     /// the given tool call. See module docs for full semantics.
@@ -354,7 +354,7 @@ mod tests {
             path_glob: Some("**/migrations/*.rs".into()),
             ..trigger()
         };
-        let call = ToolCall::new("Edit").with_path("crates/thoth/migrations/001.rs");
+        let call = ToolCall::new("Edit").with_path("crates/sample/migrations/001.rs");
         assert!(t.matches(&call));
 
         let t2 = LessonTrigger {

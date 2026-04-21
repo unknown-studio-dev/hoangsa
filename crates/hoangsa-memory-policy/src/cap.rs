@@ -2,10 +2,10 @@
 //!
 //! DESIGN-SPEC §162-215: cap-aware verbs on the markdown surface.
 //!
-//! These live in `thoth-memory` (not `thoth-store`) because the concept of
+//! These live in `hoangsa-memory-policy` (not `hoangsa-memory-store`) because the concept of
 //! a byte cap is a *policy* decision driven by `MemoryConfig`, not a raw
 //! storage primitive. `MarkdownStoreMemoryExt` is an extension trait so the
-//! existing `MarkdownStore` in `thoth-store` stays free of policy code while
+//! existing `MarkdownStore` in `hoangsa-memory-store` stays free of policy code while
 //! the MCP / CLI layers get a single uniform entrypoint for replace, remove,
 //! preview, preference append, and cap-enforced append.
 
@@ -303,9 +303,9 @@ fn entry_tags(entry: &str) -> Vec<String> {
     Vec::new()
 }
 
-/// Render a preference entry. Mirrors `render_fact` in `thoth-store` so
+/// Render a preference entry. Mirrors `render_fact` in `hoangsa-memory-store` so
 /// USER.md parses with the same `### heading / body / tags:` shape — the
-/// MarkdownStore in thoth-store is re-used without a bespoke parser.
+/// MarkdownStore in hoangsa-memory-store is re-used without a bespoke parser.
 fn render_preference(text: &str, tags: &[String]) -> String {
     let mut lines = text.lines();
     let title = lines.next().unwrap_or("").trim();
@@ -435,7 +435,7 @@ async fn build_cap_error(
 /// entry replace/remove with backup, and a uniform preview/size API across
 /// the three markdown surfaces (`MEMORY.md` / `LESSONS.md` / `USER.md`).
 ///
-/// This is defined here rather than in `thoth-store` so the raw storage
+/// This is defined here rather than in `hoangsa-memory-store` so the raw storage
 /// crate stays policy-free (its `append_fact` / `append_lesson` don't know
 /// about caps). The MCP `memory_replace` / `memory_remove` /
 /// `memory_remember_preference` handlers call through this trait.
@@ -923,15 +923,15 @@ mod cap_enforcement_tests {
         let dir = tempdir().unwrap();
         let store = MarkdownStore::open(dir.path()).await.unwrap();
         store
-            .append_fact(&fact("thoth compact rewrites MEMORY.md"))
+            .append_fact(&fact("archive compact rewrites MEMORY.md"))
             .await
             .unwrap();
         store
-            .append_fact(&fact("thoth compact rewrites LESSONS.md"))
+            .append_fact(&fact("archive compact rewrites LESSONS.md"))
             .await
             .unwrap();
         let err = store
-            .replace(MemoryKind::Fact, "thoth compact", "new text")
+            .replace(MemoryKind::Fact, "archive compact", "new text")
             .await
             .expect_err("ambiguous replace should error");
         let msg = format!("{err}");
@@ -943,7 +943,7 @@ mod cap_enforcement_tests {
         // Neither entry rewritten.
         let facts = store.read_facts().await.unwrap();
         assert_eq!(facts.len(), 2);
-        assert!(facts.iter().all(|f| f.text.contains("thoth compact")));
+        assert!(facts.iter().all(|f| f.text.contains("archive compact")));
     }
 
     /// REQ-05: `remove` with zero substring hits must return a `no entry
@@ -1067,7 +1067,7 @@ mod cap_enforcement_tests {
             Some("session_handoff"),
         );
         assert_eq!(
-            check_content_policy("crates/thoth-memory/src/lib.rs"),
+            check_content_policy("crates/hoangsa-memory-policy/src/lib.rs"),
             Some("path_only"),
         );
         assert_eq!(check_content_policy("2025-04-18"), Some("date_only"));
