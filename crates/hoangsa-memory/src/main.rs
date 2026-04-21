@@ -257,20 +257,13 @@ async fn main() -> anyhow::Result<()> {
 // ------------------------------------------------------- provider constructors
 
 /// Build a synthesizer from the CLI flag. Returns `Ok(None)` when no flag
-/// is passed.
+/// is passed. No synth providers are currently bundled, so passing `--synth`
+/// always errors.
 pub(crate) fn build_synth(kind: Option<SynthKind>) -> anyhow::Result<Option<Arc<dyn Synthesizer>>> {
-    let Some(kind) = kind else {
-        return Ok(None);
-    };
     match kind {
-        #[cfg(feature = "anthropic")]
-        SynthKind::Anthropic => {
-            let s = thoth_synth::anthropic::AnthropicSynthesizer::from_env()?;
-            Ok(Some(Arc::new(s)))
-        }
-        #[cfg(not(feature = "anthropic"))]
-        SynthKind::Anthropic => Err(anyhow::anyhow!(
-            "--synth anthropic requires `--features anthropic` at build time"
+        None => Ok(None),
+        Some(SynthKind::Anthropic) => Err(anyhow::anyhow!(
+            "no synthesizer provider is bundled in this build"
         )),
     }
 }
@@ -299,11 +292,11 @@ pub(crate) async fn open_chroma(store: &StoreRoot) -> Option<Arc<hoangsa_memory_
             return None;
         }
     };
-    match chroma.ensure_collection("thoth_code").await {
+    match chroma.ensure_collection("hoangsa_memory_code").await {
         Ok((col, _info)) => Some(Arc::new(col)),
         Err(e) => {
             eprintln!(
-                "hoangsa-memory: chroma sidecar started but `ensure_collection(thoth_code)` failed: {e}"
+                "hoangsa-memory: chroma sidecar started but `ensure_collection(hoangsa_memory_code)` failed: {e}"
             );
             None
         }

@@ -107,6 +107,6 @@ async fn chroma_from_config(root: &std::path::Path) -> Option<Arc<ChromaCol>> {
         .data_path
         .unwrap_or_else(|| StoreRoot::chroma_path(root).to_string_lossy().to_string());
     let store = ChromaStore::open(&path).await.ok()?;
-    let (col, _info) = store.ensure_collection("thoth_code").await.ok()?;
+    let (col, _info) = store.ensure_collection("hoangsa_memory_code").await.ok()?;
     Some(Arc::new(col))
 }

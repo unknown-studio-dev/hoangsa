@@ -190,11 +190,11 @@ impl EpisodeLog {
             // Schema version tracking table.
             c.execute_batch(
                 r#"
-                CREATE TABLE IF NOT EXISTS _thoth_meta (
+                CREATE TABLE IF NOT EXISTS _hoangsa_memory_meta (
                     key   TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
-                INSERT OR IGNORE INTO _thoth_meta(key, value) VALUES ('schema_version', '1');
+                INSERT OR IGNORE INTO _hoangsa_memory_meta(key, value) VALUES ('schema_version', '1');
                 "#,
             )
             .map_err(store)?;
@@ -656,13 +656,13 @@ fn store<E: std::fmt::Display>(e: E) -> Error {
 /// schema changes; older binaries will refuse to open a newer database.
 const EXPECTED_SCHEMA_VERSION: u32 = 1;
 
-/// Read `schema_version` from `_thoth_meta` and return an error if it is
+/// Read `schema_version` from `_hoangsa_memory_meta` and return an error if it is
 /// higher than [`EXPECTED_SCHEMA_VERSION`]. This prevents an old binary from
 /// silently corrupting a database that was created by a newer version.
 fn check_schema_version(c: &Connection) -> Result<()> {
     let version_str: String = c
         .query_row(
-            "SELECT value FROM _thoth_meta WHERE key = 'schema_version'",
+            "SELECT value FROM _hoangsa_memory_meta WHERE key = 'schema_version'",
             [],
             |r| r.get(0),
         )

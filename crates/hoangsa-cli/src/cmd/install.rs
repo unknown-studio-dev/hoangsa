@@ -433,7 +433,6 @@ pub mod templates {
 //
 //   * HOANGSA hook payload construction (command = `<target>/hoangsa/bin/hoangsa-cli hook <event>`)
 //   * idempotent merge into an existing Claude Code `settings.json`
-//   * legacy cleanup (`thoth*` top-level keys, hook entries referencing `thoth-cli`)
 //   * statusLine preservation (we only default; we never clobber a user-tuned value)
 //
 // The hook entry shape matches what the Node installer emits — each entry
@@ -655,64 +654,6 @@ pub mod hooks {
         true
     }
 
-    /// Remove any legacy `thoth*` top-level keys and any hook entries whose
-    /// command references the retired `thoth-cli` binary. Returns the total
-    /// number of items stripped (keys + entries).
-    pub fn cleanup_legacy_keys(settings: &mut Value) -> usize {
-        let mut removed = 0usize;
-
-        let Some(obj) = settings.as_object_mut() else {
-            return 0;
-        };
-
-        // Strip any top-level key starting with "thoth".
-        let legacy_top: Vec<String> = obj
-            .keys()
-            .filter(|k| k.starts_with("thoth"))
-            .cloned()
-            .collect();
-        for k in legacy_top {
-            obj.remove(&k);
-            removed += 1;
-        }
-
-        // Strip statusLine if it points at the legacy binary.
-        if let Some(sl) = obj.get("statusLine")
-            && let Some(cmd) = sl.get("command").and_then(|c| c.as_str())
-            && cmd.contains("thoth-cli")
-        {
-            obj.remove("statusLine");
-            removed += 1;
-        }
-
-        // Strip any hook entries whose first command mentions thoth-cli.
-        if let Some(hooks) = obj.get_mut("hooks").and_then(|h| h.as_object_mut()) {
-            let events: Vec<String> = hooks.keys().cloned().collect();
-            for event in events {
-                let Some(arr) = hooks.get_mut(&event).and_then(|v| v.as_array_mut()) else {
-                    continue;
-                };
-                let before = arr.len();
-                arr.retain(|entry| {
-                    let Some(list) = entry.get("hooks").and_then(|h| h.as_array()) else {
-                        return true;
-                    };
-                    !list.iter().any(|h| {
-                        h.get("command")
-                            .and_then(|c| c.as_str())
-                            .is_some_and(|c| c.contains("thoth-cli"))
-                    })
-                });
-                removed += before - arr.len();
-                if arr.is_empty() {
-                    hooks.remove(&event);
-                }
-            }
-        }
-
-        removed
-    }
-
     /// Default statusLine spec — points at our own `hook statusline` subcommand
     /// (the CLI handler for which lives in a later task; we only wire it here).
     pub fn default_statusline(target_dir: &Path) -> Value {
@@ -828,41 +769,6 @@ pub mod hooks {
                 .map(|a| a.len())
                 .sum();
             assert_eq!(total, 6, "rerunning must not duplicate HOANGSA entries");
-        }
-
-        #[test]
-        fn cleanup_thoth_keys() {
-            let mut settings = json!({
-                "thothLegacy": { "foo": 1 },
-                "thoth_mode": "v0",
-                "unrelated": true,
-                "statusLine": { "type": "command", "command": "thoth-cli statusline" },
-                "hooks": {
-                    "PreToolUse": [
-                        { "_hoangsa_managed": true, "matcher": "Edit",
-                          "hooks": [{ "type": "command", "command": "/x/thoth-cli hook x" }] },
-                        { "matcher": "Bash",
-                          "hooks": [{ "type": "command", "command": "/usr/local/bin/keeper" }] }
-                    ]
-                }
-            });
-
-            let removed = cleanup_legacy_keys(&mut settings);
-            // 2 top-level thoth keys + 1 legacy statusline + 1 legacy hook entry
-            assert_eq!(removed, 4);
-
-            let obj = settings.as_object().expect("object");
-            assert!(!obj.contains_key("thothLegacy"));
-            assert!(!obj.contains_key("thoth_mode"));
-            assert!(obj.contains_key("unrelated"));
-            assert!(!obj.contains_key("statusLine"));
-
-            let pre = settings["hooks"]["PreToolUse"].as_array().expect("array");
-            assert_eq!(pre.len(), 1, "only the non-legacy entry survives");
-            assert_eq!(
-                pre[0]["hooks"][0]["command"].as_str(),
-                Some("/usr/local/bin/keeper")
-            );
         }
 
         #[test]
@@ -2009,7 +1915,6 @@ pub fn cmd_install(args: &[&str]) {
                             Value::Object(serde_json::Map::new())
                         }
                     };
-                    let legacy_removed = hooks::cleanup_legacy_keys(&mut preview_settings);
                     let target_dir = settings_file
                         .parent()
                         .map(Path::to_path_buf)
@@ -2022,7 +1927,6 @@ pub fn cmd_install(args: &[&str]) {
                         "action": "merge_settings",
                         "path": settings_file,
                         "hooks_added": hooks_added,
-                        "legacy_removed": legacy_removed,
                         "statusline_set": statusline_set,
                     }));
                 }
@@ -2168,7 +2072,6 @@ pub fn cmd_install(args: &[&str]) {
             std::process::exit(1);
         }
     };
-    let legacy_removed = hooks::cleanup_legacy_keys(&mut settings);
     let hoangsa_hooks = hooks::build_hoangsa_hooks(&target_dir);
     let hooks_added = hooks::merge_hoangsa_hooks(&mut settings, &hoangsa_hooks);
     let statusline_set =
@@ -2276,7 +2179,6 @@ pub fn cmd_install(args: &[&str]) {
         "settings": settings_file,
         "settings_backup": settings_backup,
         "hooks_added": hooks_added,
-        "legacy_removed": legacy_removed,
         "statusline_set": statusline_set,
         "memory_relocated": memory_relocated,
         "memory_skipped_missing": memory_skipped_missing,

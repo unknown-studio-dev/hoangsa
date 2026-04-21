@@ -1,7 +1,7 @@
 //! Archive session tracker, backed by SQLite.
 //!
 //! Tracks which conversation sessions have been ingested into the ChromaDB
-//! `thoth_archive` ChromaDB collection. Verbatim content lives in ChromaDB; this DB
+//! `hoangsa_memory_archive` ChromaDB collection. Verbatim content lives in ChromaDB; this DB
 //! only stores lightweight metadata to avoid re-processing and to support
 //! spatial queries (project / topic).
 //!
@@ -344,7 +344,7 @@ mod tests {
         let tracker = ArchiveTracker::open(&db).await.unwrap();
 
         tracker
-            .upsert_session("s1", "thoth", "memory-arch", 42)
+            .upsert_session("s1", "sample", "memory-arch", 42)
             .unwrap();
         assert!(tracker.is_ingested("s1").unwrap());
         assert!(!tracker.is_ingested("s2").unwrap());
@@ -358,7 +358,7 @@ mod tests {
         let (_, _, curated) = tracker.status().unwrap();
         assert_eq!(curated, 1);
 
-        let topics = tracker.topics(Some("thoth")).unwrap();
+        let topics = tracker.topics(Some("sample")).unwrap();
         assert_eq!(topics.len(), 1);
         assert_eq!(topics[0].topic, "memory-arch");
     }

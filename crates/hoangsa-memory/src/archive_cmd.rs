@@ -476,9 +476,9 @@ async fn open_archive_chroma(root: &Path) -> Result<ChromaCol> {
         .await
         .context("starting ChromaDB sidecar")?;
     let (col, _info) = store
-        .ensure_collection("thoth_archive")
+        .ensure_collection("hoangsa_memory_archive")
         .await
-        .context("ensuring thoth_archive collection in ChromaDB")?;
+        .context("ensuring hoangsa_memory_archive collection in ChromaDB")?;
     Ok(col)
 }
 

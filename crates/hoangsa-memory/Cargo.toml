@@ -12,10 +12,6 @@ description = "The `hoangsa-memory` command-line interface (memory + code-intell
 name = "hoangsa-memory"
 path = "src/main.rs"
 
-[features]
-default   = []
-anthropic = ["dep:reqwest"]
-
 [dependencies]
 hoangsa-memory-core     = { workspace = true }
 hoangsa-memory-parse    = { workspace = true }
@@ -35,7 +31,6 @@ toml                 = { workspace = true }
 time                 = { workspace = true }
 clap                 = { workspace = true }
 indicatif            = "0.18"
-reqwest              = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

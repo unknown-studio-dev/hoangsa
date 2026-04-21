@@ -2068,14 +2068,14 @@ impl Server {
     /// produces embeddings instead of silently skipping the vector stage.
     async fn open_code_chroma(&self) -> Option<ChromaCol> {
         let cs = self.get_chroma().await?;
-        match cs.ensure_collection("thoth_code").await {
+        match cs.ensure_collection("hoangsa_memory_code").await {
             Ok((col, _info)) => Some(col),
             Err(e) => {
                 // Sidecar came up but the collection handshake failed — this
                 // means embeddings will be skipped for this index run. Emit
                 // a warning so operators can debug instead of staring at a
                 // stats line that shows `embedded: 0` with no explanation.
-                tracing::warn!(error = %e, "chroma: ensure_collection(thoth_code) failed — embeddings disabled for this run");
+                tracing::warn!(error = %e, "chroma: ensure_collection(hoangsa_memory_code) failed — embeddings disabled for this run");
                 None
             }
         }
@@ -2086,7 +2086,7 @@ impl Server {
             .get_chroma()
             .await
             .ok_or_else(|| anyhow::anyhow!("ChromaDB not configured"))?;
-        let (col, _info) = cs.ensure_collection("thoth_archive").await?;
+        let (col, _info) = cs.ensure_collection("hoangsa_memory_archive").await?;
         Ok(col)
     }
 }

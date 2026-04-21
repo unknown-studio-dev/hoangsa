@@ -8,7 +8,7 @@ No separate ONNX load in the Rust process — saves ~2 GB RSS.
 Protocol: one JSON object per line on stdin, one JSON response per line
 on stdout.  stderr is free for diagnostics.
 
-Request:  {"id": 1, "op": "query_text", "collection": "thoth_memory",
+Request:  {"id": 1, "op": "query_text", "collection": "hoangsa_memory",
            "args": {"text": "...", "n_results": 5}}
 Response: {"id": 1, "data": [...], "error": null}
 """
@@ -45,7 +45,7 @@ def _get_col(path, name):
 
 def handle(req):
     op = req["op"]
-    col_name = req.get("collection", "thoth_memory")
+    col_name = req.get("collection", "hoangsa_memory")
     path = req.get("path", "")
     args = req.get("args", {})
 
