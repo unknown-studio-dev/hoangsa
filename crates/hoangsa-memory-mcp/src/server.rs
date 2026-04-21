@@ -156,11 +156,12 @@ impl Server {
             "ping" => Ok(json!({})),
             "tools/list" => Ok(self.tools_list()),
             "tools/call" => self.tools_call(msg.params).await,
-            // Thoth-private extension: same dispatch as `tools/call` but
-            // returns the raw `ToolOutput` (with structured `data`) instead
-            // of the text-only `CallToolResult`. Consumed by the CLI
-            // thin-client so it can honour `--json` and pretty-print.
-            "hoangsa-memory.call" => self.thoth_call(msg.params).await,
+            // hoangsa-memory-private extension: same dispatch as
+            // `tools/call` but returns the raw `ToolOutput` (with structured
+            // `data`) instead of the text-only `CallToolResult`. Consumed
+            // by the CLI thin-client so it can honour `--json` and
+            // pretty-print.
+            "hoangsa-memory.call" => self.memory_call(msg.params).await,
             "resources/list" => Ok(self.resources_list()),
             "resources/read" => self.resources_read(msg.params).await,
             "prompts/list" => Ok(self.prompts_list()),
@@ -209,7 +210,8 @@ impl Server {
     /// MCP `tools/call` — returns a text-only [`CallToolResult`] (which is
     /// what every MCP client understands). The structured `data` half of
     /// [`ToolOutput`] is dropped; clients wanting the machine-readable
-    /// form should call [`Self::thoth_call`] via `thoth.call` instead.
+    /// form should call [`Self::memory_call`] via `hoangsa-memory.call`
+    /// instead.
     async fn tools_call(&self, params: Value) -> Result<Value, RpcError> {
         let out = self.dispatch_tool(params).await?;
         let wrapped = CallToolResult {
@@ -220,16 +222,17 @@ impl Server {
             .map_err(|e| RpcError::new(error_codes::INTERNAL_ERROR, e.to_string()))
     }
 
-    /// Thoth-private `thoth.call` — returns the raw [`ToolOutput`] so the
-    /// CLI thin-client can honour `--json` and pretty-print structured
-    /// data. Dispatch logic is shared with [`Self::tools_call`].
-    async fn thoth_call(&self, params: Value) -> Result<Value, RpcError> {
+    /// hoangsa-memory-private `hoangsa-memory.call` — returns the raw
+    /// [`ToolOutput`] so the CLI thin-client can honour `--json` and
+    /// pretty-print structured data. Dispatch logic is shared with
+    /// [`Self::tools_call`].
+    async fn memory_call(&self, params: Value) -> Result<Value, RpcError> {
         let out = self.dispatch_tool(params).await?;
         serde_json::to_value(out)
             .map_err(|e| RpcError::new(error_codes::INTERNAL_ERROR, e.to_string()))
     }
 
-    /// Shared dispatch used by both `tools/call` and `thoth.call`. Tool
+    /// Shared dispatch used by both `tools/call` and `hoangsa-memory.call`. Tool
     /// errors are folded into `ToolOutput { is_error: true, .. }` so the
     /// RPC layer can still emit a successful envelope (callers inspect
     /// `is_error` on the payload).
@@ -1177,11 +1180,11 @@ impl Server {
             .map_err(|e| RpcError::new(error_codes::INVALID_PARAMS, e.to_string()))?;
 
         let (description, body) = match name.as_str() {
-            "thoth.reflect" => (
+            "memory_reflect" => (
                 "Reflect on the session so far and decide what to remember.",
                 render_reflect_prompt(&arguments),
             ),
-            "thoth.nudge" => {
+            "memory_nudge" => {
                 // Record that the agent actually expanded the nudge prompt —
                 // strict-mode gates use this to distinguish "ran a recall"
                 // from "actually reflected on lessons".
@@ -1199,7 +1202,7 @@ impl Server {
                     render_nudge_prompt(&arguments),
                 )
             }
-            "thoth.grounding_check" => (
+            "memory_grounding_check" => (
                 "Verify a claim against the indexed codebase before asserting it.",
                 render_grounding_prompt(&arguments),
             ),
@@ -2634,7 +2637,7 @@ fn tools_catalog() -> Vec<Tool> {
 fn prompts_catalog(grounding_enabled: bool) -> Vec<Prompt> {
     let mut prompts = vec![
         Prompt {
-            name: "thoth.reflect".to_string(),
+            name: "memory_reflect".to_string(),
             description:
                 "End-of-step self-reflection: decide whether to save a lesson or fact based \
                  on what just happened."
@@ -2654,7 +2657,7 @@ fn prompts_catalog(grounding_enabled: bool) -> Vec<Prompt> {
             ],
         },
         Prompt {
-            name: "thoth.nudge".to_string(),
+            name: "memory_nudge".to_string(),
             description:
                 "Pre-action nudge: surface the most relevant lessons and force the agent to \
                  acknowledge them before proceeding."
@@ -2668,7 +2671,7 @@ fn prompts_catalog(grounding_enabled: bool) -> Vec<Prompt> {
     ];
     if grounding_enabled {
         prompts.push(Prompt {
-            name: "thoth.grounding_check".to_string(),
+            name: "memory_grounding_check".to_string(),
             description: "Ask the agent to verify a factual claim against the indexed code before \
                  asserting it to the user."
                 .to_string(),

@@ -1,4 +1,4 @@
-//! # thoth-core
+//! # hoangsa-memory-core
 //!
 //! Public API, traits, and core types for **Thoth** — long-term memory for
 //! coding agents.

@@ -1,5 +1,5 @@
 //! Thin-client that forwards CLI requests to a running MCP daemon via
-//! its Unix domain socket (`.thoth/mcp.sock`).
+//! its Unix domain socket (`.hoangsa-memory/mcp.sock`).
 //!
 //! When the MCP server is alive (spawned by Claude Code), `redb` holds an
 //! exclusive file lock on `graph.redb`. Instead of fighting for the lock
@@ -8,7 +8,7 @@
 //! result. If the socket doesn't exist or the connection fails, the
 //! caller should fall back to opening the store directly.
 //!
-//! We speak the Thoth-private `thoth.call` RPC (not MCP `tools/call`) so
+//! We speak the private `hoangsa-memory.call` RPC (not MCP `tools/call`) so
 //! the response carries the structured [`ToolOutput`] `data` half — that's
 //! what `--json` and the CLI's pretty-printers need. The MCP wire format
 //! is text-only and would force us to re-parse text on every command.
@@ -88,7 +88,10 @@ impl DaemonClient {
         let fut = self.roundtrip(&request);
         let resp: Value = match tokio::time::timeout(timeout, fut).await {
             Ok(inner) => inner?,
-            Err(_) => anyhow::bail!("thoth-mcp daemon did not respond within {:?}", timeout),
+            Err(_) => anyhow::bail!(
+                "hoangsa-memory-mcp daemon did not respond within {:?}",
+                timeout
+            ),
         };
 
         // Check for JSON-RPC level error.

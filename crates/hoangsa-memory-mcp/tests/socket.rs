@@ -53,11 +53,11 @@ async fn roundtrip(sock: &std::path::Path, request: Value) -> Value {
 }
 
 // ===========================================================================
-// `thoth.call` — the Thoth-private structured RPC
+// `hoangsa-memory.call` — the private structured RPC
 // ===========================================================================
 
 #[tokio::test]
-async fn thoth_call_returns_structured_tool_output() {
+async fn memory_call_returns_structured_tool_output() {
     let tmp = tempfile::tempdir().unwrap();
     let (_server, sock, _guard) = spawn_daemon(&tmp).await;
 
@@ -110,7 +110,7 @@ async fn thoth_call_returns_structured_tool_output() {
 }
 
 #[tokio::test]
-async fn thoth_call_unknown_tool_surfaces_method_not_found() {
+async fn memory_call_unknown_tool_surfaces_method_not_found() {
     let tmp = tempfile::tempdir().unwrap();
     let (_server, sock, _guard) = spawn_daemon(&tmp).await;
 

@@ -231,10 +231,10 @@ pub struct ResourceContents {
 ///   [`CallToolResult`] by keeping only the rendered `text` (as a single
 ///   text content block). That's what Claude Code / Cowork / Cursor see,
 ///   because the MCP wire format is text-centric.
-/// - The **Thoth** `thoth.call` handler (a private RPC extension used only
-///   by the CLI thin-client over the Unix socket) returns the struct
-///   verbatim so the CLI can look at `data` and honour `--json`,
-///   pretty-print tables, etc.
+/// - The **hoangsa-memory** `hoangsa-memory.call` handler (a private RPC
+///   extension used only by the CLI thin-client over the Unix socket)
+///   returns the struct verbatim so the CLI can look at `data` and honour
+///   `--json`, pretty-print tables, etc.
 ///
 /// Tools should populate both fields. `data` is the machine-readable
 /// truth; `text` is a human fallback used when structured data is not
