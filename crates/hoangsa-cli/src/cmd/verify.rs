@@ -989,8 +989,8 @@ fn test_integration_workflow_refs(t: &mut TestRunner) {
             "missing",
         );
         t.check(
-            "menu → thoth",
-            c.contains("thoth") || c.contains("THOTH"),
+            "menu → hoangsa-memory",
+            c.contains("hoangsa-memory") || c.contains("memory_"),
             "missing",
         );
     }
