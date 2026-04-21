@@ -12,6 +12,26 @@ use time::macros::format_description;
 /// CLI version stamped into the manifest. Pulled from Cargo at compile time.
 const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Resolve the user's home directory via `$HOME` without pulling the `dirs`
+/// crate. Shared by `templates`, `hooks`, `relocate`, and `install_dst_dir`
+/// so every home-anchored path in the installer agrees on the same root.
+fn home_path() -> Result<PathBuf, String> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| "cannot resolve $HOME".to_string())
+}
+
+/// Compact `YYYYMMDD-HHMMSS` UTC stamp used as a suffix for both template
+/// patch backups and `settings.json` backups. A single formatter keeps the
+/// two backup naming schemes in sync.
+fn backup_timestamp() -> String {
+    OffsetDateTime::now_utc()
+        .format(format_description!(
+            "[year][month][day]-[hour][minute][second]"
+        ))
+        .unwrap_or_else(|_| String::from("00000000-000000"))
+}
+
 /// Parsed install flags. Kept in one struct so later tasks (T-04/T-05/T-06)
 /// can extend without touching the parser skeleton.
 #[derive(Debug, Default)]
@@ -148,7 +168,7 @@ pub mod templates {
         }
         match mode {
             "global" => {
-                let home = home_dir().ok_or_else(|| "cannot resolve $HOME".to_string())?;
+                let home = super::home_path()?;
                 let p = home.join(".hoangsa").join("share").join("templates");
                 if p.is_dir() {
                     Ok(p)
@@ -176,11 +196,6 @@ pub mod templates {
                 ))
             }
         }
-    }
-
-    /// Resolve the user's home directory without pulling the `dirs` crate.
-    fn home_dir() -> Option<PathBuf> {
-        std::env::var_os("HOME").map(PathBuf::from)
     }
 
     fn now_iso() -> String {
@@ -254,16 +269,6 @@ pub mod templates {
             .join("/")
     }
 
-    /// Monotonic timestamp suffix for backup filenames. Avoids collisions on
-    /// rapid successive runs in tests.
-    fn backup_stamp() -> String {
-        let now = OffsetDateTime::now_utc();
-        now.format(format_description!(
-            "[year][month][day]-[hour][minute][second]"
-        ))
-        .unwrap_or_else(|_| String::from("00000000-000000"))
-    }
-
     /// Copy `src` → `dst` recursively, backing up any `dst` file that the user
     /// modified since the previous install. A file counts as "modified" when
     /// its current SHA256 differs from the hash recorded in `prev_manifest`.
@@ -284,7 +289,7 @@ pub mod templates {
         fs::create_dir_all(dst)?;
 
         let patch_root = patches_root(dst);
-        let stamp = backup_stamp();
+        let stamp = super::backup_timestamp();
         let mut report = CopyReport::default();
         let mut new_manifest = Manifest::new(CLI_VERSION);
 
@@ -355,7 +360,7 @@ pub mod templates {
             return Ok(actions);
         }
         let patch_root = patches_root(dst);
-        let stamp = backup_stamp();
+        let stamp = super::backup_timestamp();
 
         for src_file in walk_files(src)? {
             let rel = src_file
@@ -394,8 +399,7 @@ pub mod templates {
     /// Per Decision #11 the real install writes to `~/.hoangsa-memory/manifest.json`,
     /// but tests pass a tempdir — so the caller computes it.
     pub fn default_manifest_path() -> Result<PathBuf, String> {
-        let home = home_dir().ok_or_else(|| "cannot resolve $HOME".to_string())?;
-        Ok(home.join(".hoangsa-memory").join("manifest.json"))
+        Ok(super::home_path()?.join(".hoangsa-memory").join("manifest.json"))
     }
 }
 
@@ -429,12 +433,7 @@ pub mod hooks {
     /// `global` → `~/.claude/settings.json`; otherwise `<cwd>/.claude/settings.json`.
     pub fn settings_path(mode: &str, cwd: &Path) -> Result<PathBuf, String> {
         match mode {
-            "global" => {
-                let home = std::env::var_os("HOME")
-                    .map(PathBuf::from)
-                    .ok_or_else(|| "cannot resolve $HOME".to_string())?;
-                Ok(home.join(".claude").join("settings.json"))
-            }
+            "global" => Ok(super::home_path()?.join(".claude").join("settings.json")),
             _ => Ok(cwd.join(".claude").join("settings.json")),
         }
     }
@@ -703,11 +702,7 @@ pub mod hooks {
         if !path.exists() {
             return Ok(None);
         }
-        let stamp = OffsetDateTime::now_utc()
-            .format(format_description!(
-                "[year][month][day]-[hour][minute][second]"
-            ))
-            .unwrap_or_else(|_| String::from("00000000-000000"));
+        let stamp = super::backup_timestamp();
         let file_name = path
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
@@ -923,13 +918,9 @@ pub mod relocate {
     }
 
     /// Production destination: `~/.hoangsa-memory/bin/`. Resolves `$HOME` via
-    /// the same helper `templates` uses so we stay consistent (no `dirs`
-    /// crate dependency).
+    /// the shared [`super::home_path`] helper (no `dirs` crate dependency).
     pub fn memory_bin_dir() -> Result<PathBuf, String> {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .ok_or_else(|| "cannot resolve $HOME".to_string())?;
-        Ok(home.join(".hoangsa-memory").join("bin"))
+        Ok(super::home_path()?.join(".hoangsa-memory").join("bin"))
     }
 
     /// Resolve the staging directory the CLI should pull memory bins from.
@@ -1192,12 +1183,7 @@ pub mod relocate {
 /// `global` → `~/.claude/hoangsa/`, `local` → `<cwd>/.claude/hoangsa/`.
 fn install_dst_dir(mode: &str, cwd: &Path) -> Result<PathBuf, String> {
     match mode {
-        "global" => {
-            let home = std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .ok_or_else(|| "cannot resolve $HOME".to_string())?;
-            Ok(home.join(".claude").join("hoangsa"))
-        }
+        "global" => Ok(home_path()?.join(".claude").join("hoangsa")),
         _ => Ok(cwd.join(".claude").join("hoangsa")),
     }
 }
