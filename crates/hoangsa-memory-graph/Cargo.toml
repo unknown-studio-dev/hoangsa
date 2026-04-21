@@ -1,0 +1,19 @@
+[package]
+name = "hoangsa-memory-graph"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Symbol / call / import graph built on top of hoangsa-memory-store's KV."
+
+[dependencies]
+hoangsa-memory-core   = { workspace = true }
+hoangsa-memory-store  = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+
+[dev-dependencies]
+tokio    = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
+tempfile = { workspace = true }

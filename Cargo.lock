@@ -1028,6 +1028,166 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoangsa-memory"
+version = "0.0.4"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "clap",
+ "hoangsa-memory-core",
+ "hoangsa-memory-mcp",
+ "hoangsa-memory-parse",
+ "hoangsa-memory-policy",
+ "hoangsa-memory-retrieve",
+ "hoangsa-memory-store",
+ "indicatif",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "time",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "hoangsa-memory-core"
+version = "0.0.4"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "time",
+ "uuid",
+]
+
+[[package]]
+name = "hoangsa-memory-graph"
+version = "0.0.4"
+dependencies = [
+ "hoangsa-memory-core",
+ "hoangsa-memory-store",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "hoangsa-memory-mcp"
+version = "0.0.4"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "hoangsa-memory-core",
+ "hoangsa-memory-graph",
+ "hoangsa-memory-parse",
+ "hoangsa-memory-policy",
+ "hoangsa-memory-retrieve",
+ "hoangsa-memory-store",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "time",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "hoangsa-memory-parse"
+version = "0.0.4"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "hoangsa-memory-core",
+ "ignore",
+ "notify",
+ "serde",
+ "tempfile",
+ "time",
+ "tokio",
+ "tracing",
+ "tree-sitter",
+ "tree-sitter-go",
+ "tree-sitter-javascript",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+]
+
+[[package]]
+name = "hoangsa-memory-policy"
+version = "0.0.4"
+dependencies = [
+ "globset",
+ "hoangsa-memory-core",
+ "hoangsa-memory-store",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "time",
+ "tokio",
+ "toml",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "hoangsa-memory-retrieve"
+version = "0.0.4"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "blake3",
+ "criterion",
+ "futures",
+ "hoangsa-memory-core",
+ "hoangsa-memory-graph",
+ "hoangsa-memory-parse",
+ "hoangsa-memory-store",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "hoangsa-memory-store"
+version = "0.0.4"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "criterion",
+ "hoangsa-memory-core",
+ "parking_lot",
+ "paste",
+ "redb",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tantivy",
+ "tempfile",
+ "time",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "htmlescape"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2794,166 +2954,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "thoth-cli"
-version = "0.0.4"
-dependencies = [
- "anyhow",
- "blake3",
- "clap",
- "indicatif",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "thoth-core",
- "thoth-mcp",
- "thoth-memory",
- "thoth-parse",
- "thoth-retrieve",
- "thoth-store",
- "time",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "thoth-core"
-version = "0.0.4"
-dependencies = [
- "anyhow",
- "async-trait",
- "serde",
- "serde_json",
- "thiserror",
- "time",
- "uuid",
-]
-
-[[package]]
-name = "thoth-graph"
-version = "0.0.4"
-dependencies = [
- "serde",
- "serde_json",
- "tempfile",
- "thoth-core",
- "thoth-store",
- "tokio",
-]
-
-[[package]]
-name = "thoth-mcp"
-version = "0.0.4"
-dependencies = [
- "anyhow",
- "blake3",
- "serde",
- "serde_json",
- "tempfile",
- "thoth-core",
- "thoth-graph",
- "thoth-memory",
- "thoth-parse",
- "thoth-retrieve",
- "thoth-store",
- "time",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "thoth-memory"
-version = "0.0.4"
-dependencies = [
- "globset",
- "regex",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "thoth-core",
- "thoth-store",
- "time",
- "tokio",
- "toml",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "thoth-parse"
-version = "0.0.4"
-dependencies = [
- "anyhow",
- "blake3",
- "ignore",
- "notify",
- "serde",
- "tempfile",
- "thoth-core",
- "time",
- "tokio",
- "tracing",
- "tree-sitter",
- "tree-sitter-go",
- "tree-sitter-javascript",
- "tree-sitter-python",
- "tree-sitter-rust",
- "tree-sitter-typescript",
-]
-
-[[package]]
-name = "thoth-retrieve"
-version = "0.0.4"
-dependencies = [
- "anyhow",
- "async-trait",
- "blake3",
- "criterion",
- "futures",
- "parking_lot",
- "serde",
- "serde_json",
- "tempfile",
- "thoth-core",
- "thoth-graph",
- "thoth-parse",
- "thoth-store",
- "tokio",
- "toml",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "thoth-store"
-version = "0.0.4"
-dependencies = [
- "anyhow",
- "async-trait",
- "criterion",
- "parking_lot",
- "paste",
- "redb",
- "rusqlite",
- "serde",
- "serde_json",
- "tantivy",
- "tempfile",
- "thoth-core",
- "time",
- "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]

@@ -5,14 +5,14 @@
 resolver = "3"
 members = [
     "crates/hoangsa-cli",
-    "crates/thoth-core",
-    "crates/thoth-parse",
-    "crates/thoth-store",
-    "crates/thoth-graph",
-    "crates/thoth-memory",
-    "crates/thoth-retrieve",
-    "crates/thoth-cli",
-    "crates/thoth-mcp",
+    "crates/hoangsa-memory-core",
+    "crates/hoangsa-memory-parse",
+    "crates/hoangsa-memory-store",
+    "crates/hoangsa-memory-graph",
+    "crates/hoangsa-memory-policy",
+    "crates/hoangsa-memory-retrieve",
+    "crates/hoangsa-memory",
+    "crates/hoangsa-memory-mcp",
 ]
 
 [workspace.package]
@@ -25,13 +25,13 @@ authors = ["Than The Van"]
 
 [workspace.dependencies]
 # Internal crates
-thoth-core     = { path = "crates/thoth-core",     version = "0.0.4" }
-thoth-parse    = { path = "crates/thoth-parse",    version = "0.0.4" }
-thoth-store    = { path = "crates/thoth-store",    version = "0.0.4" }
-thoth-graph    = { path = "crates/thoth-graph",    version = "0.0.4" }
-thoth-memory   = { path = "crates/thoth-memory",   version = "0.0.4" }
-thoth-retrieve = { path = "crates/thoth-retrieve", version = "0.0.4" }
-thoth-mcp      = { path = "crates/thoth-mcp",      version = "0.0.4" }
+hoangsa-memory-core     = { path = "crates/hoangsa-memory-core",     version = "0.0.4" }
+hoangsa-memory-parse    = { path = "crates/hoangsa-memory-parse",    version = "0.0.4" }
+hoangsa-memory-store    = { path = "crates/hoangsa-memory-store",    version = "0.0.4" }
+hoangsa-memory-graph    = { path = "crates/hoangsa-memory-graph",    version = "0.0.4" }
+hoangsa-memory-policy   = { path = "crates/hoangsa-memory-policy",   version = "0.0.4" }
+hoangsa-memory-retrieve = { path = "crates/hoangsa-memory-retrieve", version = "0.0.4" }
+hoangsa-memory-mcp      = { path = "crates/hoangsa-memory-mcp",      version = "0.0.4" }
 
 # Async + error handling
 tokio        = { version = "1.43", features = ["macros", "rt-multi-thread", "fs", "sync", "time", "io-util"] }

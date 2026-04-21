@@ -58,7 +58,7 @@ jobs:
         run: |
           builder=$([ "${{ matrix.use_cross }}" = "true" ] && echo cross || echo cargo)
           $builder build --release --locked --target ${{ matrix.target }} \
-            -p hoangsa-cli -p thoth-cli -p thoth-mcp
+            -p hoangsa-cli -p hoangsa-memory -p hoangsa-memory-mcp
 
       - name: Stage binaries
         shell: bash
