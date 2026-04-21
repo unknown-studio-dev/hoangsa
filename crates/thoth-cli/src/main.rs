@@ -217,25 +217,6 @@ async fn main() -> anyhow::Result<()> {
             memory_cmd::MemoryCmd::Lesson { when, advice } => {
                 memory_cmd::run_lesson(&root, when, advice.join(" ")).await?
             }
-            memory_cmd::MemoryCmd::Forget => memory_cmd::run_forget(&root, cli.json).await?,
-            memory_cmd::MemoryCmd::Nudge { window } => {
-                memory_cmd::run_nudge(&root, window, cli.json, cli.synth).await?
-            }
-            memory_cmd::MemoryCmd::Pending => memory_cmd::run_pending(&root, cli.json).await?,
-            memory_cmd::MemoryCmd::Promote { kind, index } => {
-                memory_cmd::run_promote(&root, &kind, index, cli.json).await?
-            }
-            memory_cmd::MemoryCmd::Reject {
-                kind,
-                index,
-                reason,
-            } => memory_cmd::run_reject(&root, &kind, index, reason.as_deref(), cli.json).await?,
-            memory_cmd::MemoryCmd::Log { limit } => {
-                memory_cmd::run_log(&root, limit, cli.json).await?
-            }
-            memory_cmd::MemoryCmd::Migrate { .. } => {
-                anyhow::bail!("memory migrate has been removed; migrate manually or via a script");
-            }
         },
         Cmd::Skills { cmd } => match cmd {
             hooks::SkillsCmd::List => hooks::cmd_skills_list(&root, cli.json).await?,
