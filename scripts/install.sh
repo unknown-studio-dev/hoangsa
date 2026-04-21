@@ -239,6 +239,113 @@ fetch_stdout() {
 }
 
 # ---------------------------------------------------------------------------
+# PATH rc-file edit (managed markers, TTY-gated, HOANGSA_NO_PATH_EDIT aware)
+# ---------------------------------------------------------------------------
+
+# Print the manual export instructions. Used as a fallback whenever the rc
+# edit is skipped for any reason (env flag, non-TTY, user declined, no rc).
+print_manual_export() {
+    info "add the following line to your ~/.zshrc or ~/.bashrc:"
+    # shellcheck disable=SC2016  # `$PATH` is intentionally literal — it is
+    # what the user pastes into their rc file, not what we expand here.
+    printf '    export PATH="%s/bin:%s:$PATH"\n' \
+        "$HOANGSA_INSTALL_DIR" "$HOANGSA_CLI_DIR"
+}
+
+# Rewrite the managed block inside the given rc file. Strips any existing
+# block delimited by the managed markers, then appends a fresh one. BSD/GNU
+# awk compatible.
+rewrite_managed_block() {
+    _rc="$1"
+    _tmp="$_rc.hoangsa.tmp.$$"
+
+    # Ensure the file exists before awk reads it. `touch` is POSIX.
+    [ -f "$_rc" ] || touch "$_rc"
+
+    # Strip any existing managed block (inclusive of both marker lines).
+    awk '
+        /# hoangsa-memory:managed start/ { flag=1; next }
+        /# hoangsa-memory:managed end/   { flag=0; next }
+        !flag                             { print }
+    ' "$_rc" > "$_tmp" || {
+        rm -f "$_tmp"
+        return 1
+    }
+
+    # Ensure trailing newline before appending the fresh block.
+    if [ -s "$_tmp" ]; then
+        _last=$(tail -c 1 "$_tmp" 2>/dev/null || printf '')
+        if [ "$_last" != "" ]; then
+            # tail -c 1 returns empty when the last byte is a newline in
+            # command substitution (trailing newlines are stripped). So a
+            # non-empty value means we need to add a newline.
+            printf '\n' >> "$_tmp"
+        fi
+    fi
+
+    {
+        printf '# hoangsa-memory:managed start\n'
+        # shellcheck disable=SC2016  # `$HOME` / `$PATH` are intentionally
+        # literal — we write them verbatim into the rc file so the user's
+        # shell expands them at source time, not our installer.
+        printf 'export PATH="$HOME/.hoangsa-memory/bin:$HOME/.hoangsa/bin:$PATH"\n'
+        printf '# hoangsa-memory:managed end\n'
+    } >> "$_tmp"
+
+    mv -f "$_tmp" "$_rc"
+}
+
+edit_path_in_rc() {
+    # Respect explicit opt-out.
+    if [ "$HOANGSA_NO_PATH_EDIT" = "1" ]; then
+        info "HOANGSA_NO_PATH_EDIT=1 — skipping rc file edit"
+        print_manual_export
+        return 0
+    fi
+
+    # Pick the first existing rc file (zsh wins over bash by convention).
+    _rc=""
+    if [ -f "$HOME/.zshrc" ]; then
+        _rc="$HOME/.zshrc"
+    elif [ -f "$HOME/.bashrc" ]; then
+        _rc="$HOME/.bashrc"
+    else
+        warn "no ~/.zshrc or ~/.bashrc found; cannot auto-edit PATH"
+        print_manual_export
+        return 0
+    fi
+
+    # Non-TTY → curl|sh pipeline or other non-interactive shell. Never edit
+    # rc files silently; surface the manual line instead.
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+        info "non-interactive shell detected — skipping rc file edit"
+        print_manual_export
+        return 0
+    fi
+
+    # Interactive: prompt before touching the rc file.
+    printf 'Add ~/.hoangsa-memory/bin to PATH in %s? [Y/n] ' "$_rc"
+    REPLY=""
+    # shellcheck disable=SC2039  # `read -r` is POSIX
+    read -r REPLY || REPLY=""
+    case "$REPLY" in
+        n*|N*)
+            info "skipped rc file edit (user declined)"
+            print_manual_export
+            return 0
+            ;;
+    esac
+
+    if ! rewrite_managed_block "$_rc"; then
+        warn "failed to update $_rc"
+        print_manual_export
+        return 0
+    fi
+
+    info "PATH updated in $_rc. Open a new shell or run: source $_rc"
+}
+
+# ---------------------------------------------------------------------------
 # Resolve tag (latest -> vX.Y.Z)
 # ---------------------------------------------------------------------------
 
@@ -364,15 +471,11 @@ main() {
         export HOANGSA_TEMPLATES_DIR
     fi
 
-    # PATH rc-file edit + TTY gating is T-10's job. For now, emit the manual
-    # export line so the user sees it on first install regardless of TTY.
+    # PATH rc-file append with managed markers + TTY gating. Skipped entirely
+    # when the memory bin dir is already on $PATH.
     case ":$PATH:" in
         *":$HOANGSA_INSTALL_DIR/bin:"*) ;;
-        *)
-            info "add the following line to your shell rc file:"
-            printf '    export PATH="%s/bin:%s:$PATH"\n' \
-                "$HOANGSA_INSTALL_DIR" "$HOANGSA_CLI_DIR"
-            ;;
+        *) edit_path_in_rc ;;
     esac
 
     # Hand off to the CLI for the real install work. Use eval to re-expand the
