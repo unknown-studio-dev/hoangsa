@@ -111,11 +111,11 @@ For precise budget estimation, run:
 
 **If Thoth available:** For each key symbol mentioned in the DESIGN-SPEC (types, functions, classes to create or modify):
 
-1. Run `thoth_symbol_context({name: "symbolName"})` to get callers, callees, and process participation
+1. Run `memory_symbol_context({name: "symbolName"})` to get callers, callees, and process participation
 2. Use callers/callees to:
    - Identify correct `depends_on` between tasks (if task A modifies a symbol called by task B's symbol → B depends on A)
    - Generate precise `context_pointers` — include caller definitions that workers need to see
-3. Run `thoth_impact({target: "symbolName", direction: "upstream"})` for symbols being modified → if HIGH/CRITICAL risk, flag in the plan and consider splitting the task
+3. Run `memory_impact({target: "symbolName", direction: "upstream"})` for symbols being modified → if HIGH/CRITICAL risk, flag in the plan and consider splitting the task
 
 **If Thoth unavailable:** Use Grep/Glob to find references and imports. Less precise but functional.
 

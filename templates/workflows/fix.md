@@ -87,7 +87,7 @@ fi
 
 Search for past fixes of similar bugs:
 ```
-thoth_archive_search({query: "<error message or bug description>"})
+memory_archive_search({query: "<error message or bug description>"})
 ```
 
 If results found → check if same root cause was seen before, learn from prior fix approach.
@@ -312,14 +312,14 @@ Cross-layer notes:
 
 Instructions:
 1. Read all context_pointers files first
-2. Use thoth_symbol_context({name: "buggySymbol"}) to understand all callers and callees before fixing (if Thoth is available)
-3. Run thoth_impact({target: "symbolName", direction: "upstream"}) on every symbol you modify — if HIGH/CRITICAL, report to orchestrator
+2. Use memory_symbol_context({name: "buggySymbol"}) to understand all callers and callees before fixing (if Thoth is available)
+3. Run memory_impact({target: "symbolName", direction: "upstream"}) on every symbol you modify — if HIGH/CRITICAL, report to orchestrator
 4. Implement the minimal fix — do not change anything outside scope
 5. Run the acceptance command to verify: <task.acceptance>
 6. If acceptance fails, fix and retry (max 3 attempts)
 7. Commit with message: "fix(<scope>): <task.name>" — `<scope>` = primary module/package from task.files, NOT session_id/branch name
 8. After committing, verify change scope:
-   thoth_detect_changes({diff: "<git diff of your commit>"})
+   memory_detect_changes({diff: "<git diff of your commit>"})
    Confirm only expected symbols were affected — hotfix must be minimal.
 
 Acceptance command: <task.acceptance>
@@ -392,7 +392,7 @@ Fixing...
 After a successful fix, persist the root cause as a lesson so future agents avoid the same trap:
 
 ```
-thoth_remember_lesson({
+memory_remember_lesson({
   when: "touching <module/file where bug lived>",
   then: "<root cause pattern — what was wrong and why>",
   stage: true
@@ -404,7 +404,7 @@ thoth_remember_lesson({
 If the bug revealed that an existing fact in MEMORY.md is wrong (e.g., "X uses Y" was incorrect):
 
 ```
-thoth_memory_replace({kind: "fact", old_text: "<incorrect fact substring>", new_text: "<corrected fact>"})
+memory_replace({kind: "fact", old_text: "<incorrect fact substring>", new_text: "<corrected fact>"})
 ```
 
 This keeps the memory accurate — bugs often expose incorrect assumptions that were persisted as facts.
@@ -414,7 +414,7 @@ This keeps the memory accurate — bugs often expose incorrect assumptions that 
 If this fix revealed a pattern seen in ≥5 existing lessons (e.g., same module keeps breaking, same root cause pattern):
 
 1. Check LESSONS.md for clusters of related lessons
-2. If cluster ≥5 with good success rates → `thoth_skill_propose({slug: "<pattern-name>", body: "<SKILL.md content>", source_triggers: ["<trigger1>", "<trigger2>", ...]})`
+2. If cluster ≥5 with good success rates → `memory_skill_propose({slug: "<pattern-name>", body: "<SKILL.md content>", source_triggers: ["<trigger1>", "<trigger2>", ...]})`
 3. Report draft to user
 
 Skip this step if Thoth is unavailable or the fix was trivial (typo, missing import).
@@ -422,10 +422,10 @@ Skip this step if Thoth is unavailable or the fix was trivial (typo, missing imp
 ### Save fix summary for future reference
 
 ```
-thoth_turn_save({role: "assistant", text: "Fix: <bug summary> | Root cause: <root cause layer> — <description> | Files: <changed files>"})
+memory_turn_save({role: "assistant", text: "Fix: <bug summary> | Root cause: <root cause layer> — <description> | Files: <changed files>"})
 ```
 
-This creates a searchable record of the fix that future `thoth_archive_search` can find.
+This creates a searchable record of the fix that future `memory_archive_search` can find.
 
 ---
 

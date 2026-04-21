@@ -21,7 +21,7 @@ pub async fn run_query(
     if !wants_full && let Some(mut d) = crate::daemon::DaemonClient::try_connect(root).await {
         let result = d
             .call(
-                "thoth_recall",
+                "memory_recall",
                 serde_json::json!({ "query": text, "top_k": top_k }),
             )
             .await?;

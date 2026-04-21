@@ -38,7 +38,7 @@ pub async fn run_show(root: &Path) -> Result<()> {
     // when available because the MCP server is the single writer — reading
     // through it guarantees we see the same view Claude Code sees.
     if let Some(mut d) = crate::daemon::DaemonClient::try_connect(root).await {
-        let result = d.call("thoth_memory_show", serde_json::json!({})).await?;
+        let result = d.call("memory_show", serde_json::json!({})).await?;
         if crate::daemon::tool_is_error(&result) {
             anyhow::bail!("{}", crate::daemon::tool_text(&result));
         }
@@ -103,7 +103,7 @@ pub async fn run_fact(root: &Path, text: String, tags: Option<String>) -> Result
     if let Some(mut d) = crate::daemon::DaemonClient::try_connect(root).await {
         let result = d
             .call(
-                "thoth_remember_fact",
+                "memory_remember_fact",
                 serde_json::json!({ "text": text, "tags": tags }),
             )
             .await?;
@@ -139,7 +139,7 @@ pub async fn run_lesson(root: &Path, when: String, advice: String) -> Result<()>
     if let Some(mut d) = crate::daemon::DaemonClient::try_connect(root).await {
         let result = d
             .call(
-                "thoth_remember_lesson",
+                "memory_remember_lesson",
                 serde_json::json!({ "trigger": when, "advice": advice }),
             )
             .await?;

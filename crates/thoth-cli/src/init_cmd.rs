@@ -95,7 +95,7 @@ const DEFAULT_CONFIG_TOML: &str = r#"# hoangsa-memory config. All fields are opt
 # Set to 0 to disable.
 # max_total_bytes = 32768
 
-# Node count above which `thoth_impact` groups results by file
+# Node count above which `memory_impact` groups results by file
 # rather than listing every node. Default: 50. Set to 0 to disable
 # grouping (always flat list).
 # impact_group_threshold = 50

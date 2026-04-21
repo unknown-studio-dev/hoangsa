@@ -33,7 +33,7 @@ Show the user a summary of what will be staged.
 Before staging, validate that changes match expected scope:
 
 ```
-thoth_detect_changes({diff: "$(git diff)"})
+memory_detect_changes({diff: "$(git diff)"})
 ```
 
 Check for:

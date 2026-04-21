@@ -324,7 +324,7 @@ fn count_incomplete_tasks(plan: &serde_json::Value) -> usize {
 ///
 /// Single PreToolUse entry point for ALL enforcement:
 /// 1. Pattern-based rules from rules.json (same as rule-gate)
-/// 2. Stateful rule: require thoth_impact before Edit (first-touch files only)
+/// 2. Stateful rule: require memory_impact before Edit (first-touch files only)
 /// 3. Stateful rule: require detect_changes before git commit
 ///
 /// Critical (block) rules fail-CLOSED. Quality (warn) rules fail-OPEN.
@@ -491,7 +491,7 @@ fn stateful_rule_enabled(cwd: &str, stateful_id: &str) -> bool {
     true
 }
 
-/// Rule #9: Require thoth_impact for first-touch files before Edit.
+/// Rule #9: Require memory_impact for first-touch files before Edit.
 /// Softened: if the file already has events (prior impact or edit), skip.
 /// Thin wrapper — does I/O, delegates correlation to `intent_guard_edit`.
 fn stateful_check_edit(cwd: &str, tool_input: &serde_json::Value) -> Option<EnforceResult> {
@@ -565,8 +565,8 @@ pub fn intent_guard_edit(events: &str, file_path: &str) -> IntentOutcome {
     } else {
         IntentOutcome::Block(format!(
             "⛔ STATEFUL: require-thoth-impact\n\n\
-             No thoth_impact found for '{path}'\n\
-             Run thoth_impact on this file before editing.\n\n\
+             No memory_impact found for '{path}'\n\
+             Run memory_impact on this file before editing.\n\n\
              If this is a false positive, use:\n\
              hoangsa-cli enforce override --rule require-thoth-impact --target {path} --reason \"...\"",
             path = file_path
@@ -610,8 +610,8 @@ pub fn intent_guard_bash_commit(events: &str, staged_files: &[String]) -> Intent
     if detected.is_empty() {
         return IntentOutcome::Block(
             "⛔ STATEFUL: require-detect-changes\n\n\
-             No thoth_detect_changes found before commit.\n\
-             Run thoth_detect_changes to verify scope before committing.\n\n\
+             No memory_detect_changes found before commit.\n\
+             Run memory_detect_changes to verify scope before committing.\n\n\
              If this is a false positive, use:\n\
              hoangsa-cli enforce override --rule require-detect-changes --target commit --reason \"...\""
                 .to_string(),
@@ -642,7 +642,7 @@ pub fn intent_guard_bash_commit(events: &str, staged_files: &[String]) -> Intent
             .join(", ");
         IntentOutcome::Warn(format!(
             "⚠️ INTENT GUARD: Files in staged diff not covered by detect_changes: [{list}]\n\
-             Consider re-running thoth_detect_changes before commit."
+             Consider re-running memory_detect_changes before commit."
         ))
     }
 }
@@ -773,9 +773,9 @@ pub fn cmd_post_enforce(cwd: &str) {
     let tool_input = parsed.get("tool_input").cloned().unwrap_or(json!({}));
 
     let event = match tool_name {
-        "mcp__thoth__thoth_impact" => build_impact_event(cwd, &tool_input),
-        "mcp__thoth__thoth_detect_changes" => build_detect_changes_event(&tool_input, &parsed),
-        "mcp__thoth__thoth_recall" => build_recall_event(&tool_input),
+        "mcp__thoth__memory_impact" => build_impact_event(cwd, &tool_input),
+        "mcp__thoth__memory_detect_changes" => build_detect_changes_event(&tool_input, &parsed),
+        "mcp__thoth__memory_recall" => build_recall_event(&tool_input),
         "Edit" | "Write" | "MultiEdit" => build_drift_event(cwd, &tool_input),
         _ => None,
     };

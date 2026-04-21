@@ -51,7 +51,7 @@ DIFF_STAT=$(git diff --stat $BASE_BRANCH...HEAD 2>/dev/null)
 Run change detection to understand the impact scope of the branch:
 
 ```
-thoth_detect_changes({diff: "$(git diff $BASE_BRANCH...HEAD)"})
+memory_detect_changes({diff: "$(git diff $BASE_BRANCH...HEAD)"})
 ```
 
 Present blast-radius summary alongside the git state:
@@ -79,8 +79,8 @@ Launch 2 agents in parallel using the Agent tool:
 Spawn a subagent that:
 - Gets the diff: `git diff $BASE_BRANCH...HEAD`
 - Reviews for: bugs, logic errors, code quality, naming, dead code
-- Uses `thoth_detect_changes` blast-radius output to prioritize review on high-impact symbols
-- Runs `thoth_symbol_context` on any symbol flagged as high-risk to understand its full dependency graph
+- Uses `memory_detect_changes` blast-radius output to prioritize review on high-impact symbols
+- Runs `memory_symbol_context` on any symbol flagged as high-risk to understand its full dependency graph
 - Uses confidence scoring (0-100 scale):
   - 0: False positive
   - 25: Might be real
@@ -94,7 +94,7 @@ Spawn a subagent that:
 Spawn a subagent that:
 - Gets the diff: `git diff $BASE_BRANCH...HEAD`
 - Reviews for: injection (SQL, command, XSS), authentication/authorization issues, secrets/credentials exposure, unsafe deserialization, path traversal, SSRF, insecure crypto, hardcoded secrets
-- Uses `thoth_impact` on security-sensitive functions (auth, crypto, input parsing) to verify no callers bypass validation
+- Uses `memory_impact` on security-sensitive functions (auth, crypto, input parsing) to verify no callers bypass validation
 - Same confidence scoring as Agent A
 - Returns structured list: each issue has severity, file, line, description, confidence
 

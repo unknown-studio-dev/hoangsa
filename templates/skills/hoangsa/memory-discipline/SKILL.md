@@ -19,7 +19,7 @@ You are coding inside a repository that has a Thoth memory server attached
 via MCP. That server gives you four things you MUST use before taking any
 load-bearing action:
 
-1. **Indexed code graph** — via `thoth_recall` (hybrid BM25 + symbol +
+1. **Indexed code graph** — via `memory_recall` (hybrid BM25 + symbol +
    vector search over the tree).
 2. **User preferences** — `.thoth/USER.md`, first-person style + workflow
    choices that apply across projects.
@@ -28,7 +28,7 @@ load-bearing action:
 4. **Reflective lessons** — `.thoth/LESSONS.md`, action-triggered advice.
 
 USER.md + MEMORY.md + LESSONS.md are injected verbatim at SessionStart, so
-you already have them in context. The `thoth_recall` hit extends that with
+you already have them in context. The `memory_recall` hit extends that with
 relevant code chunks.
 
 Skipping this loop causes drift. Past sessions spent hours fixing
@@ -41,7 +41,7 @@ Run this before writing code or asserting a non-obvious fact:
 
 ### 1. Recall
 
-Call `thoth_recall` with a query derived from the user's intent. If the
+Call `memory_recall` with a query derived from the user's intent. If the
 intent is "add a retry wrapper around the HTTP client", recall
 `"http client retry"`. Prefer nouns from the user's request over verbs.
 
@@ -68,12 +68,12 @@ quote the recalled chunk ids you relied on.
 After the action completes (tests pass/fail, file saved, command run),
 decide what to persist. Three surfaces, three tools:
 
-- **Preference** (`thoth_remember_preference`) — first-person, stable
+- **Preference** (`memory_remember_preference`) — first-person, stable
   across projects ("user prefers Vietnamese responses", "user runs
   `make test` not `cargo test`"). Writes to USER.md.
-- **Fact** (`thoth_remember_fact`) — project-specific invariant
+- **Fact** (`memory_remember_fact`) — project-specific invariant
   ("HTTP retry lives in crates/net/retry.rs"). Writes to MEMORY.md.
-- **Lesson** (`thoth_remember_lesson`) — action-triggered advice
+- **Lesson** (`memory_remember_lesson`) — action-triggered advice
   ("when adding a retry → use RetryPolicy, not reqwest middleware").
   Writes to LESSONS.md.
 
@@ -98,7 +98,7 @@ would exceed `[memory].cap_*_bytes`. The error JSON has this shape:
   "current_bytes": 13784,
   "cap_bytes": 16384,
   "attempted_bytes": 14200,
-  "hint": "Call thoth_memory_replace or thoth_memory_remove to free space, then retry.",
+  "hint": "Call memory_replace or memory_remove to free space, then retry.",
   "preview": [
     {"index": 0, "first_line": "...", "bytes": 396, "tags": [...]}
   ]
@@ -112,9 +112,9 @@ new memory. Instead:
    `bytes`.
 2. Pick the entry(s) to consolidate or drop — prefer dropping stale
    session-handoff / bare-SHA / outdated entries over real invariants.
-3. Call `thoth_memory_replace { kind, query, new_text }` to consolidate
+3. Call `memory_replace { kind, query, new_text }` to consolidate
    (merges the new memory into an existing entry), or
-   `thoth_memory_remove { kind, query }` to free space outright.
+   `memory_remove { kind, query }` to free space outright.
 4. Retry the original `remember_*` call.
 
 For bulk cleanup of a legacy MEMORY.md / LESSONS.md that accumulated
@@ -125,7 +125,7 @@ applies via the same replace/remove verbs.
 ## Anti-hallucination rules
 
 - **Never assert a name, signature, or behaviour without a recall hit.**
-  If `thoth_recall` returns nothing relevant, say so explicitly: "I can't
+  If `memory_recall` returns nothing relevant, say so explicitly: "I can't
   find that in the indexed code — can you point me at it?"
 - **Quote chunk ids.** Citations look like `[chunk-id]` in your answer;
   the Thoth server uses them to validate that you grounded the response.
@@ -150,9 +150,9 @@ The enforcement level comes from `<root>/config.toml` under
 
 - `mode = "nudge"` (default) — warn the user if you skip a step.
 - `mode = "strict"` — a PreToolUse gate hook will **block** every `Write`,
-  `Edit`, `NotebookEdit`, and `Bash` tool call unless a `thoth_recall` was
+  `Edit`, `NotebookEdit`, and `Bash` tool call unless a `memory_recall` was
   logged within the gate window. The block response tells you exactly
-  what to do: run `thoth_recall`, then retry.
+  what to do: run `memory_recall`, then retry.
 - `gate_window_short_secs = 60` — recency shortcut; any recall within
   this window passes without a relevance check.
 - `gate_window_long_secs = 1800` — relevance pool; the gate looks this
@@ -173,14 +173,14 @@ gate falls open (approves) with a warning and asks you to run
 
 ## Memory modes: `auto` vs `review`
 
-When you call `thoth_remember_*`, the server honours `memory_mode`:
+When you call `memory_remember_*`, the server honours `memory_mode`:
 
 - **`auto`** — the entry is appended straight to its target file.
   Fastest. Relies on the forget pass + confidence counters to prune bad
   memory later. Good for solo use.
 - **`review`** — the entry is appended to a `*.pending.md` sibling. The
   user must run `thoth memory promote <kind> <index>` (or call
-  `thoth_memory_promote`) to accept. Rejected entries are archived with
+  `memory_promote`) to accept. Rejected entries are archived with
   a reason in `memory-history.jsonl`. Good for teams.
 
 Even in `auto` mode, the server refuses to silently **overwrite** an
@@ -202,7 +202,7 @@ shed since reflection debt counts from `.session-start` anyway.
 ## Proposing new skills
 
 When you've hit the same pattern in ≥5 lessons, consolidate them into a
-reusable skill via `thoth_skill_propose`:
+reusable skill via `memory_skill_propose`:
 
 - `slug`: kebab-case directory name.
 - `body`: full SKILL.md text starting with `---\nname: ...` frontmatter.
@@ -220,7 +220,7 @@ runaway self-modification.
 
 Prompts alone are bypassable — a self-confident agent can talk itself
 into skipping the recall step. Strict mode trips a **ground-truth** check
-against `<root>/episodes.db`: every `thoth_recall` call writes a
+against `<root>/episodes.db`: every `memory_recall` call writes a
 `query_issued` event, and the `thoth-gate` binary (a small Rust executable
 shipped alongside `thoth-mcp`) queries SQLite directly. If no recent event
 exists, the tool call is blocked at the hook level — the agent never gets
@@ -228,8 +228,8 @@ to rationalise its way past it. You see:
 
 ```json
 {"decision": "block",
- "reason": "Thoth discipline: no `thoth_recall` has been logged ..."}
+ "reason": "Thoth discipline: no `memory_recall` has been logged ..."}
 ```
 
-Treat that as non-negotiable: call `thoth_recall`, read the chunks, then
+Treat that as non-negotiable: call `memory_recall`, read the chunks, then
 retry the original tool call.

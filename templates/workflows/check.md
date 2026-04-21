@@ -147,7 +147,7 @@ Thoth Memory:
 ### Step 4c: Conversation archive status
 
 ```
-thoth_archive_status()
+memory_archive_status()
 ```
 
 Display:
@@ -162,7 +162,7 @@ Conversation Archive:
 ### Step 4d: Installed skills
 
 ```
-thoth_skills_list()
+memory_skills_list()
 ```
 
 Display:

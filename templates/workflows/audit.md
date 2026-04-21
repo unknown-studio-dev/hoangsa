@@ -221,7 +221,7 @@ Agents must:
 - Skip all files matching `AUDIT_EXCLUDES` — do not read, grep, or report findings from excluded paths
 
 Use conversation archive to identify audit focus areas:
-  thoth_archive_topics() — find most-discussed areas (likely areas of churn)
+  memory_archive_topics() — find most-discussed areas (likely areas of churn)
   Areas with high conversation volume may need more audit attention.
 
 Example agent invocation:
@@ -263,7 +263,7 @@ Scan for:
    - Trace import graphs: A → B → C → A
    - For JS/TS: follow import/require statements across files
    - For Rust: check mod/use relationships in modules
-   - If Thoth available: use thoth_impact({target: "symbol", direction: "down"}) to query dependency cycles, then check for circular refs in the results
+   - If Thoth available: use memory_impact({target: "symbol", direction: "down"}) to query dependency cycles, then check for circular refs in the results
    - If Thoth unavailable: use Grep to trace import/require statements across files, building a dependency graph manually. Start from high-fan-in files and follow import chains.
    - Evidence: list the cycle chain with file paths
 
@@ -326,7 +326,7 @@ Scan for:
      - Rate severity by how confusing it is for a new developer
 
 5. DEAD CODE & ZOMBIE CODE
-   - Exported symbols with zero importers (if Thoth available: use thoth_symbol_context({name: "symbol"}) to check references count = 0 for each export; if Thoth unavailable: Grep for `export` declarations, then Grep for each exported name across all files — zero matches = dead export)
+   - Exported symbols with zero importers (if Thoth available: use memory_symbol_context({name: "symbol"}) to check references count = 0 for each export; if Thoth unavailable: Grep for `export` declarations, then Grep for each exported name across all files — zero matches = dead export)
    - Files not imported anywhere — entire modules nobody calls
    - Functions defined but never invoked (grep for definition, then grep for usage — 0 hits = dead)
    - Feature flags that are always on/off (grep for the flag, check all branches — if only one branch ever runs, the other is dead)
@@ -463,7 +463,7 @@ Scan for:
 
 5. SHOTGUN SURGERY INDICATORS
    - A single logical change requires touching >5 files
-   - If Thoth available: use thoth_impact({target: "symbol", direction: "upstream"}) to check impact for high-fan-out symbols
+   - If Thoth available: use memory_impact({target: "symbol", direction: "upstream"}) to check impact for high-fan-out symbols
    - If Thoth unavailable: use Grep to find a symbol's usages across files; if >5 files reference it, flag as high fan-out
    - Evidence: symbol name, list of files that would need changes
 
@@ -899,14 +899,14 @@ Top simplification opportunities:
 
 Analyze the quality and health of Thoth memory:
 
-1. `thoth_memory_show()` — read full MEMORY.md and LESSONS.md
+1. `memory_show()` — read full MEMORY.md and LESSONS.md
 2. Check for:
    - Stale facts that reference deleted files or renamed symbols
    - Duplicate or near-duplicate entries
    - Lessons with high failure rates (should be quarantined)
    - Facts that contradict current code state
 3. For stale or contradictory entries, recommend removal:
-   `thoth_memory_remove({kind: "fact|lesson", text: "<substring of stale entry>"})`
+   `memory_remove({kind: "fact|lesson", text: "<substring of stale entry>"})`
 4. Report findings with specific entries to remove/update
 
 ---

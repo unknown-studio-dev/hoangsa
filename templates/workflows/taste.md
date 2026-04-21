@@ -71,7 +71,7 @@ Running acceptance tests...
 Run change detection to understand what symbols the tests should cover:
 
 ```
-thoth_detect_changes({diff: "$(git diff main...HEAD)"})
+memory_detect_changes({diff: "$(git diff main...HEAD)"})
 ```
 
 Use the detected symbols to:
@@ -164,7 +164,7 @@ The taste workflow does NOT attempt to fix failures itself — that is the fix w
 After tests are run, check if a lesson cluster has reached the skill proposal threshold:
 
 1. Count lessons in `.thoth/LESSONS.md` by topic/domain (e.g., lessons about editing source files, lessons about migration, etc.)
-2. If a cluster has ≥5 lessons with cumulative success signals → call `thoth_skill_propose` to draft a consolidated skill
+2. If a cluster has ≥5 lessons with cumulative success signals → call `memory_skill_propose` to draft a consolidated skill
 3. Include `source_triggers` (the trigger text of each consolidated lesson) so Thoth can track provenance
 4. Report the draft to the user: "New skill draft: `.thoth/skills/<slug>.draft/` — run `thoth skills install` to accept"
 

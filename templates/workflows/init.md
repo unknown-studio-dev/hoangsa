@@ -1144,7 +1144,7 @@ Use AskUserQuestion:
      header: "Thoth"
      options:
        - label: "Off (recommended)", description: "Thoth là khuyến khích, worker có thể skip để tiết kiệm token"
-       - label: "On", description: "Bắt buộc thoth_impact/thoth_recall trước mỗi edit — an toàn hơn, tốn token"
+       - label: "On", description: "Bắt buộc memory_impact/memory_recall trước mỗi edit — an toàn hơn, tốn token"
 
 Save each setting via `"$HOANGSA_ROOT/bin/hoangsa-cli" pref set .` accordingly.
 
@@ -1184,8 +1184,8 @@ timeout 120 thoth --json index . && rm -f .thoth/.outdated && echo "THOTH_OK" ||
 After successful indexing, warm up the memory and show skills:
 
 ```
-thoth_wakeup()
-thoth_skills_list()
+memory_wakeup()
+memory_skills_list()
 ```
 
 Display installed Thoth skills in the Step 8 report.
@@ -1204,7 +1204,7 @@ Project mới — skip indexing. Chạy /hoangsa:index sau khi có code.
 
 Retrieve memory and skills data for the report:
 ```
-thoth_memory_show()
+memory_show()
 ```
 
 ```

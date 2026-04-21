@@ -16,16 +16,16 @@
 //!
 //! | Tool                       | Purpose                                          |
 //! |----------------------------|--------------------------------------------------|
-//! | `thoth_recall`             | Mode::Zero hybrid recall over the code memory    |
-//! | `thoth_index`              | Walk a source path and populate indexes          |
-//! | `thoth_remember_fact`      | Append a fact to `MEMORY.md`                     |
-//! | `thoth_remember_lesson`    | Append a lesson to `LESSONS.md`                  |
-//! | `thoth_skills_list`        | Enumerate installed skills under `.thoth/skills/`|
-//! | `thoth_memory_show`        | Return current `MEMORY.md` + `LESSONS.md`        |
+//! | `memory_recall`             | Mode::Zero hybrid recall over the code memory    |
+//! | `memory_index`              | Walk a source path and populate indexes          |
+//! | `memory_remember_fact`      | Append a fact to `MEMORY.md`                     |
+//! | `memory_remember_lesson`    | Append a lesson to `LESSONS.md`                  |
+//! | `memory_skills_list`        | Enumerate installed skills under `.thoth/skills/`|
+//! | `memory_show`        | Return current `MEMORY.md` + `LESSONS.md`        |
 //!
 //! Two markdown files are also published as MCP resources so clients can
-//! surface them directly: `thoth://memory/MEMORY.md` and
-//! `thoth://memory/LESSONS.md`.
+//! surface them directly: `hoangsa-memory://memory/MEMORY.md` and
+//! `hoangsa-memory://memory/LESSONS.md`.
 //!
 //! The on-disk layout is the same as everywhere else in Thoth — see
 //! `thoth_store::StoreRoot`.

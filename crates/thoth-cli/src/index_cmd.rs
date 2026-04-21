@@ -15,7 +15,7 @@ pub async fn run_index(root: &Path, src: &Path, json: bool) -> Result<()> {
     if let Some(mut d) = crate::daemon::DaemonClient::try_connect(root).await {
         let result = d
             .call(
-                "thoth_index",
+                "memory_index",
                 serde_json::json!({ "path": src.to_string_lossy() }),
             )
             .await?;

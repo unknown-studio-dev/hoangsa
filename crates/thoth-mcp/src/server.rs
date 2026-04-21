@@ -32,9 +32,9 @@ use crate::proto::{
 };
 
 /// URI of the `MEMORY.md` resource.
-const MEMORY_URI: &str = "thoth://memory/MEMORY.md";
+const MEMORY_URI: &str = "hoangsa-memory://memory/MEMORY.md";
 /// URI of the `LESSONS.md` resource.
-const LESSONS_URI: &str = "thoth://memory/LESSONS.md";
+const LESSONS_URI: &str = "hoangsa-memory://memory/LESSONS.md";
 
 // ===========================================================================
 // Server
@@ -160,7 +160,7 @@ impl Server {
             // returns the raw `ToolOutput` (with structured `data`) instead
             // of the text-only `CallToolResult`. Consumed by the CLI
             // thin-client so it can honour `--json` and pretty-print.
-            "thoth.call" => self.thoth_call(msg.params).await,
+            "hoangsa-memory.call" => self.thoth_call(msg.params).await,
             "resources/list" => Ok(self.resources_list()),
             "resources/read" => self.resources_read(msg.params).await,
             "prompts/list" => Ok(self.prompts_list()),
@@ -244,26 +244,26 @@ impl Server {
             .map_err(|e| RpcError::new(error_codes::INVALID_PARAMS, e.to_string()))?;
 
         let result = match name.as_str() {
-            "thoth_recall" => self.tool_recall(arguments).await,
-            "thoth_index" => self.tool_index(arguments).await,
-            "thoth_remember_fact" => self.tool_remember_fact(arguments).await,
-            "thoth_remember_lesson" => self.tool_remember_lesson(arguments).await,
-            "thoth_remember_preference" => self.tool_remember_preference(arguments).await,
-            "thoth_memory_replace" => self.tool_memory_replace(arguments).await,
-            "thoth_memory_remove" => self.tool_memory_remove(arguments).await,
-            "thoth_skills_list" => self.tool_skills_list().await,
-            "thoth_memory_show" => self.tool_memory_show().await,
-            "thoth_wakeup" => self.tool_wakeup(arguments).await,
-            "thoth_memory_detail" => self.tool_memory_detail(arguments).await,
-            "thoth_skill_propose" => self.tool_skill_propose(arguments).await,
-            "thoth_impact" => self.tool_impact(arguments).await,
-            "thoth_symbol_context" => self.tool_symbol_context(arguments).await,
-            "thoth_detect_changes" => self.tool_detect_changes(arguments).await,
-            "thoth_turn_save" => self.tool_turn_save(arguments).await,
-            "thoth_turns_search" => self.tool_turns_search(arguments).await,
-            "thoth_archive_status" => self.tool_archive_status().await,
-            "thoth_archive_topics" => self.tool_archive_topics(arguments).await,
-            "thoth_archive_search" => self.tool_archive_search(arguments).await,
+            "memory_recall" => self.tool_recall(arguments).await,
+            "memory_index" => self.tool_index(arguments).await,
+            "memory_remember_fact" => self.tool_remember_fact(arguments).await,
+            "memory_remember_lesson" => self.tool_remember_lesson(arguments).await,
+            "memory_remember_preference" => self.tool_remember_preference(arguments).await,
+            "memory_replace" => self.tool_memory_replace(arguments).await,
+            "memory_remove" => self.tool_memory_remove(arguments).await,
+            "memory_skills_list" => self.tool_skills_list().await,
+            "memory_show" => self.tool_memory_show().await,
+            "memory_wakeup" => self.tool_wakeup(arguments).await,
+            "memory_detail" => self.tool_memory_detail(arguments).await,
+            "memory_skill_propose" => self.tool_skill_propose(arguments).await,
+            "memory_impact" => self.tool_impact(arguments).await,
+            "memory_symbol_context" => self.tool_symbol_context(arguments).await,
+            "memory_detect_changes" => self.tool_detect_changes(arguments).await,
+            "memory_turn_save" => self.tool_turn_save(arguments).await,
+            "memory_turns_search" => self.tool_turns_search(arguments).await,
+            "memory_archive_status" => self.tool_archive_status().await,
+            "memory_archive_topics" => self.tool_archive_topics(arguments).await,
+            "memory_archive_search" => self.tool_archive_search(arguments).await,
             other => {
                 return Err(RpcError::new(
                     error_codes::METHOD_NOT_FOUND,
@@ -284,14 +284,14 @@ impl Server {
                 uri: MEMORY_URI.to_string(),
                 name: "MEMORY.md".to_string(),
                 description:
-                    "Declarative facts (full text). For a compact index, use thoth_wakeup."
+                    "Declarative facts (full text). For a compact index, use memory_wakeup."
                         .to_string(),
                 mime_type: "text/markdown".to_string(),
             },
             Resource {
                 uri: LESSONS_URI.to_string(),
                 name: "LESSONS.md".to_string(),
-                description: "Lessons learned (full text). For a compact index, use thoth_wakeup."
+                description: "Lessons learned (full text). For a compact index, use memory_wakeup."
                     .to_string(),
                 mime_type: "text/markdown".to_string(),
             },
@@ -477,7 +477,7 @@ impl Server {
         let reparsed = stats.files.saturating_sub(stats.files_skipped);
         // Counts are deltas for this run. `files_skipped` = content-hash
         // cache hit (no reparse needed). Callers that want lifetime totals
-        // should query `thoth_memory_show` or read the KV directly.
+        // should query `memory_show` or read the KV directly.
         let text = format!(
             "indexed {}: {} file(s) — {} reparsed, {} cached. Δ: {} chunks, {} symbols, {} calls, {} imports",
             src.display(),
@@ -536,7 +536,7 @@ impl Server {
             self.inner.store.markdown.append_pending_fact(&fact).await?;
             let path = self.inner.root.join("MEMORY.pending.md");
             let text = format!(
-                "staged (review mode) — run `thoth_memory_promote` to accept: {}",
+                "staged (review mode) — run `memory_promote` to accept: {}",
                 first_line(&fact.text)
             );
             let data = json!({
@@ -657,7 +657,7 @@ impl Server {
             let note = if conflict.is_some() {
                 "staged (conflict with existing lesson — user must review)"
             } else {
-                "staged (review mode) — run `thoth_memory_promote` to accept"
+                "staged (review mode) — run `memory_promote` to accept"
             };
             let path = self.inner.root.join("LESSONS.pending.md");
             let text = format!("{note}: {}", lesson.trigger);
@@ -917,7 +917,7 @@ impl Server {
     /// Compact one-line-per-entry index of MEMORY.md + LESSONS.md.
     ///
     /// Returns a scannable summary (~1 line per entry) so the LLM can
-    /// quickly see what's stored and then call `thoth_memory_detail` for
+    /// quickly see what's stored and then call `memory_detail` for
     /// the full content of specific entries. This is the "L1 wake-up"
     /// layer inspired by MemPalace's layered memory stack.
     async fn tool_wakeup(&self, args: Value) -> anyhow::Result<ToolOutput> {
@@ -1196,7 +1196,7 @@ impl Server {
             0 => Ok(Err(ToolOutput::error(format!(
                 "symbol not found: {fqn}. \
                  Graph keys are `module::name` (e.g. `rule::cmd_rule_add`); \
-                 call `thoth_recall` first if you don't know the exact FQN."
+                 call `memory_recall` first if you don't know the exact FQN."
             )))),
             _ => {
                 let shown = candidates.len().min(10);
@@ -1362,7 +1362,7 @@ impl Server {
     /// 360-degree view of a symbol: callers, callees, parent types,
     /// subtypes, imports-to-this-symbol, and siblings in the same file.
     ///
-    /// Unlike `thoth_recall` this is a pure graph lookup keyed on the
+    /// Unlike `memory_recall` this is a pure graph lookup keyed on the
     /// exact FQN — use it when the agent already knows the symbol it
     /// wants to understand (e.g. after a recall returned a chunk).
     async fn tool_symbol_context(&self, args: Value) -> anyhow::Result<ToolOutput> {
@@ -1984,7 +1984,7 @@ fn parse_post_image_range(header: &str) -> Option<(u32, u32)> {
 fn tools_catalog() -> Vec<Tool> {
     vec![
         Tool {
-            name: "thoth_recall".to_string(),
+            name: "memory_recall".to_string(),
             description: "Hybrid recall (symbol + BM25 + graph + markdown + semantic) over the \
                           code memory. Returns ranked chunks with path, line span, and preview. \
                           Use `scope` to include archived conversations."
@@ -2022,7 +2022,7 @@ fn tools_catalog() -> Vec<Tool> {
             }),
         },
         Tool {
-            name: "thoth_index".to_string(),
+            name: "memory_index".to_string(),
             description: "Walk a source tree, parse every supported file, and populate the \
                           indexes (symbols, call graph, BM25, chunks)."
                 .to_string(),
@@ -2034,7 +2034,7 @@ fn tools_catalog() -> Vec<Tool> {
             }),
         },
         Tool {
-            name: "thoth_remember_fact".to_string(),
+            name: "memory_remember_fact".to_string(),
             description: "Append a semantic fact to MEMORY.md. Use this when you learn \
                           something about the codebase that should survive across sessions."
                 .to_string(),
@@ -2051,14 +2051,14 @@ fn tools_catalog() -> Vec<Tool> {
                         "type": "string",
                         "enum": ["always", "on-demand"],
                         "default": "always",
-                        "description": "always = injected every session start; on-demand = only surfaced via thoth_recall."
+                        "description": "always = injected every session start; on-demand = only surfaced via memory_recall."
                     }
                 },
                 "required": ["text"]
             }),
         },
         Tool {
-            name: "thoth_remember_lesson".to_string(),
+            name: "memory_remember_lesson".to_string(),
             description: "Append a reflective lesson to LESSONS.md. Use this after a mistake \
                           or surprise so future sessions can avoid the trap. `trigger` may be \
                           a plain string (legacy) or a structured object with optional \
@@ -2109,7 +2109,7 @@ fn tools_catalog() -> Vec<Tool> {
             }),
         },
         Tool {
-            name: "thoth_remember_preference".to_string(),
+            name: "memory_remember_preference".to_string(),
             description: "Append a user preference to USER.md. Returns a structured \
                           `cap_exceeded` / `content_policy` error (isError=true) when the \
                           write would exceed `[memory].cap_user_bytes` or the content policy \
@@ -2129,7 +2129,7 @@ fn tools_catalog() -> Vec<Tool> {
             }),
         },
         Tool {
-            name: "thoth_memory_replace".to_string(),
+            name: "memory_replace".to_string(),
             description: "Replace one entry in MEMORY.md / LESSONS.md / USER.md identified by \
                           a substring match. Use this to update an existing fact / lesson / \
                           preference instead of appending a near-duplicate (REQ-04)."
@@ -2145,7 +2145,7 @@ fn tools_catalog() -> Vec<Tool> {
             }),
         },
         Tool {
-            name: "thoth_memory_remove".to_string(),
+            name: "memory_remove".to_string(),
             description: "Remove one entry from MEMORY.md / LESSONS.md / USER.md identified by \
                           a substring match. Use this to prune obsolete entries after a cap \
                           hit (REQ-05)."
@@ -2160,25 +2160,25 @@ fn tools_catalog() -> Vec<Tool> {
             }),
         },
         Tool {
-            name: "thoth_skills_list".to_string(),
+            name: "memory_skills_list".to_string(),
             description: "List every installed skill under .hoangsa-memory/skills/.".to_string(),
             input_schema: json!({ "type": "object", "properties": {} }),
         },
         Tool {
-            name: "thoth_memory_show".to_string(),
+            name: "memory_show".to_string(),
             description: "Return the current MEMORY.md and LESSONS.md as plain text. \
-                          For large memory sets, prefer thoth_wakeup (compact index) + \
-                          thoth_memory_detail (drill into specific entries)."
+                          For large memory sets, prefer memory_wakeup (compact index) + \
+                          memory_detail (drill into specific entries)."
                 .to_string(),
             input_schema: json!({ "type": "object", "properties": {} }),
         },
         Tool {
-            name: "thoth_wakeup".to_string(),
+            name: "memory_wakeup".to_string(),
             description: "Compact one-line-per-entry index of facts and lessons. \
                           By default only shows `always`-scope facts (core context). \
                           Pass `include_on_demand: true` to also show on-demand facts. \
                           Use at session start for a cheap overview, then call \
-                          thoth_memory_detail for specific entries."
+                          memory_detail for specific entries."
                 .to_string(),
             input_schema: json!({
                 "type": "object",
@@ -2192,15 +2192,15 @@ fn tools_catalog() -> Vec<Tool> {
                     "include_on_demand": {
                         "type": "boolean",
                         "default": false,
-                        "description": "When true, also include on-demand facts (normally only surfaced via thoth_recall)."
+                        "description": "When true, also include on-demand facts (normally only surfaced via memory_recall)."
                     }
                 }
             }),
         },
         Tool {
-            name: "thoth_memory_detail".to_string(),
+            name: "memory_detail".to_string(),
             description: "Return the full content of a specific fact or lesson. \
-                          Pass an index from thoth_wakeup (e.g. 'F03', 'L01') or \
+                          Pass an index from memory_wakeup (e.g. 'F03', 'L01') or \
                           a heading substring to match."
                 .to_string(),
             input_schema: json!({
@@ -2215,7 +2215,7 @@ fn tools_catalog() -> Vec<Tool> {
             }),
         },
         Tool {
-            name: "thoth_impact".to_string(),
+            name: "memory_impact".to_string(),
             description: "Blast-radius analysis over the code graph. Given a symbol FQN, \
                           returns every reachable symbol grouped by distance. Use \
                           `direction=\"up\"` (default) to answer \"what breaks if I change \
@@ -2242,11 +2242,11 @@ fn tools_catalog() -> Vec<Tool> {
             }),
         },
         Tool {
-            name: "thoth_symbol_context".to_string(),
+            name: "memory_symbol_context".to_string(),
             description: "360-degree view of a single symbol: callers, callees, parent types, \
                           subtypes, references, siblings, and unresolved imports. Use this \
                           when you already know the FQN of a symbol and want structured context \
-                          around it (post-`thoth_recall` drill-down)."
+                          around it (post-`memory_recall` drill-down)."
                 .to_string(),
             input_schema: json!({
                 "type": "object",
@@ -2264,7 +2264,7 @@ fn tools_catalog() -> Vec<Tool> {
             }),
         },
         Tool {
-            name: "thoth_detect_changes".to_string(),
+            name: "memory_detect_changes".to_string(),
             description: "Parse a unified diff (e.g. `git diff`), find every indexed symbol \
                           whose declaration span overlaps a changed hunk, and return their \
                           upstream blast radius. Ideal as a PR pre-check — answers \"which \
@@ -2286,7 +2286,7 @@ fn tools_catalog() -> Vec<Tool> {
             }),
         },
         Tool {
-            name: "thoth_skill_propose".to_string(),
+            name: "memory_skill_propose".to_string(),
             description: "Draft a new SKILL.md under .hoangsa-memory/skills/<slug>.draft/ — used when \
                           you've noticed ≥5 related lessons and want to consolidate them into \
                           a reusable skill. The user promotes via `thoth skills install`."
@@ -2307,7 +2307,7 @@ fn tools_catalog() -> Vec<Tool> {
         },
         // ---- conversation turn tools ----
         Tool {
-            name: "thoth_turn_save".to_string(),
+            name: "memory_turn_save".to_string(),
             description: "Save a verbatim conversation turn (user or assistant) to the \
                           episodic log. Called automatically by hooks or manually by the \
                           agent to preserve important exchanges."
@@ -2323,7 +2323,7 @@ fn tools_catalog() -> Vec<Tool> {
             }),
         },
         Tool {
-            name: "thoth_turns_search".to_string(),
+            name: "memory_turns_search".to_string(),
             description: "Full-text search over saved conversation turns. Returns matching \
                           turns with session context."
                 .to_string(),
@@ -2338,14 +2338,14 @@ fn tools_catalog() -> Vec<Tool> {
         },
         // ---- archive tools ----
         Tool {
-            name: "thoth_archive_status".to_string(),
+            name: "memory_archive_status".to_string(),
             description: "Archive summary: total sessions, turns, and curated count. \
                           ~100 tokens. Good for L0 orientation."
                 .to_string(),
             input_schema: json!({ "type": "object", "properties": {} }),
         },
         Tool {
-            name: "thoth_archive_topics".to_string(),
+            name: "memory_archive_topics".to_string(),
             description: "List topics in the conversation archive with session and turn counts. \
                           Optionally filter by project."
                 .to_string(),
@@ -2357,7 +2357,7 @@ fn tools_catalog() -> Vec<Tool> {
             }),
         },
         Tool {
-            name: "thoth_archive_search".to_string(),
+            name: "memory_archive_search".to_string(),
             description: "Semantic search across archived verbatim conversations stored in \
                           ChromaDB. Returns the most relevant conversation turns. Use this to \
                           find past discussions, decisions, and context."
@@ -2452,9 +2452,9 @@ fn render_reflect_prompt(args: &serde_json::Map<String, Value>) -> String {
          \n\
          ## Decide\n\
          1. Is there a durable FACT worth saving about this codebase?\n\
-            If yes, call `thoth_remember_fact` with a one-line summary.\n\
+            If yes, call `memory_remember_fact` with a one-line summary.\n\
          2. Is there a LESSON — a non-obvious pattern a future session would miss?\n\
-            If yes, call `thoth_remember_lesson` with a crisp `trigger` and `advice`.\n\
+            If yes, call `memory_remember_lesson` with a crisp `trigger` and `advice`.\n\
          3. If neither, reply `no memory needed` and continue.\n\
          \n\
          Be conservative: only save memory that is useful, specific, and not \
@@ -2481,8 +2481,8 @@ fn render_nudge_prompt(args: &serde_json::Map<String, Value>) -> String {
          {intent}\n\
          \n\
          ## Required checks\n\
-         1. Call `thoth_recall` with a short query derived from the intent above.\n\
-         2. Read LESSONS.md via `resources/read thoth://memory/LESSONS.md` and pick \
+         1. Call `memory_recall` with a short query derived from the intent above.\n\
+         2. Read LESSONS.md via `resources/read hoangsa-memory://memory/LESSONS.md` and pick \
             every lesson whose `trigger` plausibly applies.\n\
          3. Restate the plan in one paragraph, naming each lesson you're honouring.\n\
          4. Only then execute. If a lesson advises against the plan, STOP and ask \
@@ -2504,7 +2504,7 @@ fn render_grounding_prompt(args: &serde_json::Map<String, Value>) -> String {
          {claim}\n\
          \n\
          ## Procedure\n\
-         1. Call `thoth_recall` with the most load-bearing nouns from the claim.\n\
+         1. Call `memory_recall` with the most load-bearing nouns from the claim.\n\
          2. Read the returned chunks and decide: supported, contradicted, or \
             insufficient evidence.\n\
          3. If supported, cite at least one chunk id when you answer the user.\n\
@@ -2570,8 +2570,8 @@ fn md_kind_path(root: &Path, kind: MdKind) -> PathBuf {
 
 /// Serialize a [`GuardedAppendError`] as a structured MCP tool error so the
 /// client can key off `data.code` = `"cap_exceeded"` / `"content_policy"`
-/// and use the attached `preview` entries to pick a `thoth_memory_replace`
-/// or `thoth_memory_remove` target. DESIGN-SPEC REQ-03 / REQ-12.
+/// and use the attached `preview` entries to pick a `memory_replace`
+/// or `memory_remove` target. DESIGN-SPEC REQ-03 / REQ-12.
 fn guarded_error_output(err: GuardedAppendError) -> ToolOutput {
     match err {
         GuardedAppendError::CapExceeded(e) => cap_error_output(e),
@@ -2876,7 +2876,7 @@ mod enforcement_tools {
         let (_td, srv) = fresh_server().await;
         let out = dispatch(
             &srv,
-            "thoth_remember_lesson",
+            "memory_remember_lesson",
             json!({
                 "trigger": {
                     "tool": "Bash",
@@ -2904,7 +2904,7 @@ mod enforcement_tools {
         let (_td, srv) = fresh_server().await;
         let out = dispatch(
             &srv,
-            "thoth_remember_lesson",
+            "memory_remember_lesson",
             json!({
                 "trigger": { "natural": "skip tests on main" },
                 "advice": "never push without running tests",
@@ -2922,7 +2922,7 @@ mod enforcement_tools {
         let (_td, srv) = fresh_server().await;
         let out = dispatch(
             &srv,
-            "thoth_remember_lesson",
+            "memory_remember_lesson",
             json!({
                 "trigger": "plain legacy trigger",
                 "advice": "still gets stored"
@@ -2943,7 +2943,7 @@ mod enforcement_tools {
     #[test]
     fn tools_catalog_advertises_enforcement_surface() {
         let names: Vec<String> = tools_catalog().into_iter().map(|t| t.name).collect();
-        for needed in ["thoth_remember_lesson"] {
+        for needed in ["memory_remember_lesson"] {
             assert!(
                 names.iter().any(|n| n == needed),
                 "tools catalog missing `{needed}`; have {names:?}"

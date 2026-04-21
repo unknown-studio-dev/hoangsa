@@ -12,7 +12,7 @@ metadata:
 # Debugging with Thoth
 
 Find the origin of a bug by walking the graph backwards from the
-symptom. Recall locates the suspect symbol; `thoth_symbol_context`
+symptom. Recall locates the suspect symbol; `memory_symbol_context`
 walks its callers until you reach the real cause.
 
 ## When to Use
@@ -26,10 +26,10 @@ walks its callers until you reach the real cause.
 ## Workflow
 
 ```
-1. resources/read thoth://memory/LESSONS.md           → known-bug lessons first
-2. thoth_recall({query: "<error or symptom>"})        → find the suspect
-3. thoth_symbol_context({fqn: <suspect>})             → callers / callees
-4. thoth_impact({fqn, direction: "up"})               → full upstream
+1. resources/read hoangsa-memory://memory/LESSONS.md           → known-bug lessons first
+2. memory_recall({query: "<error or symptom>"})        → find the suspect
+3. memory_symbol_context({fqn: <suspect>})             → callers / callees
+4. memory_impact({fqn, direction: "up"})               → full upstream
 5. Read the suspect + its callers carefully
 6. After the fix: thoth_lesson_outcome + remember_lesson
 ```
@@ -41,7 +41,7 @@ on trigger strings — scan for anything matching the symptom. If a
 lesson says "this exact error comes from X", start there.
 
 ```
-resources/read { uri: "thoth://memory/LESSONS.md" }
+resources/read { uri: "hoangsa-memory://memory/LESSONS.md" }
 ```
 
 ### 2. Recall the symptom
@@ -50,7 +50,7 @@ Feed the error message literally. Retrieval is strongest on exact
 tokens (function names, error strings, log lines). For example:
 
 ```
-thoth_recall { query: "connection refused retry pool exhausted" }
+memory_recall { query: "connection refused retry pool exhausted" }
 ```
 
 Include the error type, a noun from the failing operation, and any
@@ -61,7 +61,7 @@ concrete identifier (module, handler, queue name).
 Once recall returns a candidate FQN:
 
 ```
-thoth_symbol_context { fqn: "pool::checkout" }
+memory_symbol_context { fqn: "pool::checkout" }
 ```
 
 Pay special attention to:
@@ -78,7 +78,7 @@ Pay special attention to:
 If context doesn't make the cause obvious, run:
 
 ```
-thoth_impact { fqn: <suspect>, direction: "up", depth: 3 }
+memory_impact { fqn: <suspect>, direction: "up", depth: 3 }
 ```
 
 The depth-1 callers are the contexts in which the bug manifests.
@@ -105,7 +105,7 @@ thoth_lesson_outcome {
 If the bug is durable and non-obvious (not a typo), persist a lesson:
 
 ```
-thoth_remember_lesson {
+memory_remember_lesson {
   trigger: "seeing ETIMEDOUT from the pool on cold start",
   advice: "pool::checkout has a 5s dial timeout; raise it or pre-warm
            via pool::ensure_min in the init path."

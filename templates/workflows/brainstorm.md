@@ -88,10 +88,10 @@ Parse the result — if `type` is `"docs"` and `files` contains `"RESEARCH.md"`:
 ### 2b. Codebase scan
 
 **If THOTH_AVAILABLE:**
-- Run `thoth_recall({query: "<IDEA>"})` to find relevant code, flows, and patterns
-- For top symbols found → run `thoth_symbol_context({name: "<symbol>"})` to understand structure
+- Run `memory_recall({query: "<IDEA>"})` to find relevant code, flows, and patterns
+- For top symbols found → run `memory_symbol_context({name: "<symbol>"})` to understand structure
 - Search past conversations for prior brainstorms on similar topics:
-  `thoth_archive_search({query: "<IDEA>"})`
+  `memory_archive_search({query: "<IDEA>"})`
   If relevant past brainstorms found → surface to user: "You discussed something similar in a past session."
 
 **If THOTH_NOT_INSTALLED:**
@@ -180,7 +180,7 @@ If the user picks Other → incorporate their direction into the design.
 If the user's choice reveals a strong design preference (e.g., "prefers composition over inheritance", "no ORMs", "always REST over GraphQL"):
 
 ```
-thoth_remember_preference({text: "<preference derived from user's choice>"})
+memory_remember_preference({text: "<preference derived from user's choice>"})
 ```
 
 This persists across projects so future brainstorms can surface relevant preferences.

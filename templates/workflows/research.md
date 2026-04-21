@@ -137,8 +137,8 @@ Goal: Understand how the codebase is organized relative to the research topic.
 
 ```
 If THOTH_STATUS == "THOTH_AVAILABLE":
-  - Run thoth_recall({query: "<RESEARCH_TOPIC>"}) to find relevant execution flows
-  - Run thoth_symbol_context({name: "<key symbol found>"}) for top symbols
+  - Run memory_recall({query: "<RESEARCH_TOPIC>"}) to find relevant execution flows
+  - Run memory_symbol_context({name: "<key symbol found>"}) for top symbols
 Else (THOTH_NOT_INSTALLED fallback):
   - Use Glob to find project entry points (index.*, main.*, app.*, server.*)
   - Use Grep to find files referencing the research topic keywords
@@ -156,7 +156,7 @@ Goal: Identify coding patterns and conventions used in the codebase.
 
 ```
 If THOTH_STATUS == "THOTH_AVAILABLE":
-  - Use thoth_symbol_context({name: "<relevant function or class>"}) for key symbols
+  - Use memory_symbol_context({name: "<relevant function or class>"}) for key symbols
   - Trace callers and callees to understand patterns
 Else (THOTH_NOT_INSTALLED fallback):
   - Use Grep to find error handling patterns (try/catch, Result, Option, etc.)
@@ -191,9 +191,9 @@ Output:
 Search past conversations for prior research and discussions on this topic:
 
 ```
-thoth_archive_search({query: "<RESEARCH_TOPIC>"})
-thoth_archive_topics()
-thoth_turns_search({query: "<RESEARCH_TOPIC>"})
+memory_archive_search({query: "<RESEARCH_TOPIC>"})
+memory_archive_topics()
+memory_turns_search({query: "<RESEARCH_TOPIC>"})
 ```
 
 Extract:

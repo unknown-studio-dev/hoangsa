@@ -178,10 +178,10 @@ mod tests {
 
     #[test]
     fn short_query_passes_through() {
-        let r = sanitize_query("what is thoth_recall?");
+        let r = sanitize_query("what is memory_recall?");
         assert!(!r.was_sanitized);
         assert_eq!(r.method, "passthrough");
-        assert_eq!(r.clean_query, "what is thoth_recall?");
+        assert_eq!(r.clean_query, "what is memory_recall?");
     }
 
     #[test]

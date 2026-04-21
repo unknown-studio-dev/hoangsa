@@ -26,9 +26,9 @@ survive after the TTL sweeps the log clean.
 
 Call the Thoth MCP server:
 
-- `thoth_memory_show` — current `USER.md` + `MEMORY.md` + `LESSONS.md`
+- `memory_show` — current `USER.md` + `MEMORY.md` + `LESSONS.md`
   contents, so you know what's already there and don't duplicate it.
-- `resources/read thoth://memory/MEMORY.md` (same data, different wire
+- `resources/read hoangsa-memory://memory/MEMORY.md` (same data, different wire
   shape — use whichever your client supports).
 
 If the session had enough tool calls to make a summary expensive, ask the
@@ -58,7 +58,7 @@ For each decision from step 2, call the matching tool.
 **Preference** (first-person, cross-project):
 
 ```
-thoth_remember_preference {
+memory_remember_preference {
   "text": "User prefers concise Vietnamese responses in code review
            contexts, with commit messages in English.",
   "tags": ["style", "language"]
@@ -68,7 +68,7 @@ thoth_remember_preference {
 **Fact** (project-specific invariant):
 
 ```
-thoth_remember_fact {
+memory_remember_fact {
   "text": "The HTTP client in crates/net uses its own retry wrapper; the
            reqwest defaults are overridden in src/client.rs:42.",
   "tags": ["net", "retry"]
@@ -82,7 +82,7 @@ Rust workspace" is not a fact worth persisting).
 **Lesson** (action-triggered advice):
 
 ```
-thoth_remember_lesson {
+memory_remember_lesson {
   "trigger": "adding a retry to an HTTP call in this repo",
   "advice": "Use the existing RetryPolicy in crates/net/retry.rs; do not
              add reqwest middleware directly or it double-retries."
@@ -96,8 +96,8 @@ trigger as a situation description, not a command.
 
 If any of the three tools returns a structured `cap_exceeded` error, do
 NOT silently drop the entry. The error payload includes a `preview` list
-— pick a stale entry from it, then call `thoth_memory_replace` (to
-consolidate) or `thoth_memory_remove` (to drop), and retry the remember
+— pick a stale entry from it, then call `memory_replace` (to
+consolidate) or `memory_remove` (to drop), and retry the remember
 call. Reflection is exactly when the memory store is most likely to be
 near its cap, so you MUST know this path.
 
@@ -160,5 +160,5 @@ positives pollute the store faster than missing entries hurt.
   repo's code, it belongs in MEMORY.md, not USER.md. Preferences cross
   project boundaries.
 - **Cap-blind appends.** If MEMORY/LESSONS is near its cap, prefer
-  `thoth_memory_replace` (consolidate into an existing heading) over
+  `memory_replace` (consolidate into an existing heading) over
   adding a new entry that will push the file over the cap.

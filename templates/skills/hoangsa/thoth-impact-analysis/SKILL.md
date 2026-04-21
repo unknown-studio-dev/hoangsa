@@ -29,22 +29,22 @@ languages in one query.
 ## Workflow
 
 ```
-1. thoth_recall({query: "<name or concept>"})        → find the exact FQN
-2. thoth_impact({fqn, direction: "up", depth: 3})    → who calls / references
-3. (optional) thoth_symbol_context({fqn})            → full 360° on target
+1. memory_recall({query: "<name or concept>"})        → find the exact FQN
+2. memory_impact({fqn, direction: "up", depth: 3})    → who calls / references
+3. (optional) memory_symbol_context({fqn})            → full 360° on target
 4. Quote chunk ids in your answer                    → prove grounding
 ```
 
 ### 1. Pin the FQN
 
 Graph keys are `module::symbol` (e.g. `server::dispatch_tool`). If the
-user gave you a bare name, run `thoth_recall` first to disambiguate —
-otherwise `thoth_impact` returns `symbol not found`.
+user gave you a bare name, run `memory_recall` first to disambiguate —
+otherwise `memory_impact` returns `symbol not found`.
 
 ### 2. Walk the blast radius
 
 ```
-thoth_impact {
+memory_impact {
   fqn: "server::dispatch_tool",
   direction: "up",       // "up" | "down" | "both"
   depth: 3               // 1..8
@@ -64,7 +64,7 @@ in your answer — that's what actually breaks on change.
 
 ### 3. Read the context (optional)
 
-If you're about to edit the symbol, also pull `thoth_symbol_context
+If you're about to edit the symbol, also pull `memory_symbol_context
 {fqn}` to see siblings (other symbols in the same file you might
 accidentally touch) and unresolved imports (external deps you can't
 mock).
@@ -84,19 +84,19 @@ API, cross-crate edges).
 
 ## PR review compose
 
-During PR review, pipe the diff through `thoth_detect_changes`:
+During PR review, pipe the diff through `memory_detect_changes`:
 
 ```
 1. gh pr diff <n>                                    → unified diff
-2. thoth_detect_changes({diff, depth: 2})            → touched symbols + upstream
-3. For each high-risk symbol: thoth_impact({..})    → deeper walk
+2. memory_detect_changes({diff, depth: 2})            → touched symbols + upstream
+3. For each high-risk symbol: memory_impact({..})    → deeper walk
 4. Flag: missing tests, public API breaks, cross-crate edges
 ```
 
-`thoth_detect_changes` parses the diff, maps hunks to graph nodes, and
+`memory_detect_changes` parses the diff, maps hunks to graph nodes, and
 returns their upstream callers in one call — cheaper than running
-`thoth_impact` per symbol. Use it as the first pass, then drill in
-with `thoth_impact` on anything risky.
+`memory_impact` per symbol. Use it as the first pass, then drill in
+with `memory_impact` on anything risky.
 
 Compose with `pr-review-toolkit:review-pr` (or `code-reviewer` /
 `silent-failure-hunter`) if installed — Thoth covers the **graph** side
@@ -106,14 +106,14 @@ design.
 
 ## Anti-patterns
 
-- **Skipping the recall step.** Running `thoth_impact` on a guessed
+- **Skipping the recall step.** Running `memory_impact` on a guessed
   FQN wastes a round-trip when `symbol not found` comes back. Always
   recall first unless you literally copied the FQN out of prior output.
 - **Mistaking depth-5 transitive reach for real risk.** Most changes
   don't propagate past depth 2. Lead with the depth-1 ring.
 - **Using `direction: both` by default.** It's 2–5× the noise. Only
   reach for it when you genuinely want both directions.
-- **Forgetting references.** `thoth_impact direction: up` includes
+- **Forgetting references.** `memory_impact direction: up` includes
   non-call references (type refs, trait bounds, generic params). A
   symbol with 0 callers but 20 references is still load-bearing.
 

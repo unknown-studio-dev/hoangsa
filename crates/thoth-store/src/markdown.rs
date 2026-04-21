@@ -210,7 +210,7 @@ impl MarkdownStore {
     /// the reflection-debt counter in `thoth-memory` sees the remember
     /// and decrements debt accordingly. Before this bug fix
     /// (2026-04-17) canonical appends skipped the history log, so auto
-    /// mode silently hid every `thoth_remember_fact` from the counter
+    /// mode silently hid every `memory_remember_fact` from the counter
     /// — debt kept growing until the gate hard-blocked. History writes
     /// are best-effort: a failure here only affects the debt counter,
     /// so we swallow it with a `warn!` the same way `append_history`

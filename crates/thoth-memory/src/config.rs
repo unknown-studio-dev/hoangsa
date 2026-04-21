@@ -37,10 +37,10 @@ pub struct MemoryConfig {
     /// Whether to invoke the LLM nudge at session end (Mode::Full only).
     pub enable_nudge: bool,
     /// Hard cap for `MEMORY.md` in bytes. Default 16384 (~4K tokens).
-    /// A `thoth_remember_fact` that would push the file above this cap
+    /// A `memory_remember_fact` that would push the file above this cap
     /// returns a structured [`CapExceededError`] instead of silently
-    /// appending — the agent must call `thoth_memory_replace` or
-    /// `thoth_memory_remove` first.
+    /// appending — the agent must call `memory_replace` or
+    /// `memory_remove` first.
     ///
     /// Sized so USER + MEMORY + LESSONS combined inject < ~10K tokens
     /// (< 5% of a 200K context window) at SessionStart.
@@ -154,7 +154,7 @@ pub struct EnforcementConfig {
     /// (`require` → `nudge` → `off`). Default `2`.
     #[serde(default = "default_demote_threshold")]
     pub demote_threshold: u32,
-    /// How many turns back the gate looks for a `thoth_recall` event when
+    /// How many turns back the gate looks for a `memory_recall` event when
     /// enforcing `RequireRecall` rules. Default `3` — enough for a small
     /// task without trapping long-running mutation bursts.
     #[serde(default = "default_recall_window")]
@@ -300,10 +300,10 @@ pub struct DisciplineConfig {
     pub grounding_check: bool,
     /// How new facts and lessons land in memory:
     ///
-    /// - `"auto"` (default) — `thoth_remember_fact` and
-    ///   `thoth_remember_lesson` write straight to `MEMORY.md` / `LESSONS.md`.
+    /// - `"auto"` (default) — `memory_remember_fact` and
+    ///   `memory_remember_lesson` write straight to `MEMORY.md` / `LESSONS.md`.
     /// - `"review"` — writes land in `MEMORY.pending.md` / `LESSONS.pending.md`
-    ///   and a human must run `thoth_memory_promote` (or the CLI equivalent)
+    ///   and a human must run `memory_promote` (or the CLI equivalent)
     ///   to accept them. Rejected entries are archived with a reason.
     ///
     /// Teams that want hard curation should switch to `"review"`; teams that
@@ -313,7 +313,7 @@ pub struct DisciplineConfig {
     /// In `strict` mode, the gate also requires a `nudge_invoked` event
     /// within [`Self::gate_window_secs`] before a `Write`/`Edit`/`Bash`
     /// tool call. This forces the agent to actually expand `thoth.nudge`
-    /// (not just run a no-op `thoth_recall`). Default `false`.
+    /// (not just run a no-op `memory_recall`). Default `false`.
     pub gate_require_nudge: bool,
     /// Lessons whose `failure_count / (success_count + failure_count)`
     /// exceeds this ratio (once they have at least
@@ -327,7 +327,7 @@ pub struct DisciplineConfig {
     pub quarantine_min_attempts: u32,
     /// Reflection debt — number of **mutations** (successful Write/Edit/
     /// NotebookEdit tool calls, derived from `gate.jsonl`) since the last
-    /// `thoth_remember_fact` / `thoth_remember_lesson` call (derived from
+    /// `memory_remember_fact` / `memory_remember_lesson` call (derived from
     /// `memory-history.jsonl`). Above [`Self::reflect_debt_nudge`] the
     /// hooks surface a soft reminder; above [`Self::reflect_debt_block`]
     /// the gate hard-blocks new mutations until the agent reflects.

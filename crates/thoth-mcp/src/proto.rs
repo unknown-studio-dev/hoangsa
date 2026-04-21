@@ -200,7 +200,7 @@ impl ContentBlock {
 /// An MCP resource descriptor.
 #[derive(Debug, Clone, Serialize)]
 pub struct Resource {
-    /// URI (we use the `thoth://` scheme).
+    /// URI (we use the `hoangsa-memory://` scheme).
     pub uri: String,
     /// Human-readable name.
     pub name: String,

@@ -360,7 +360,7 @@ Be smart about depth: a quick config change doesn't need 5 deep-dive questions. 
 If the user's choices reveal strong design preferences (e.g., "always use interfaces", "prefer functional over OOP", "no magic strings"):
 
 ```
-thoth_remember_preference({text: "<preference>"})
+memory_remember_preference({text: "<preference>"})
 ```
 
 ### 3e. Write CONTEXT.md
@@ -578,7 +578,7 @@ status: "draft"
 
 ### Affected Files
 
-**If Thoth available:** Use `thoth_impact({target: "symbolName", direction: "upstream"})` for each symbol being modified to discover all affected files (direct callers at d=1, indirect at d=2). This prevents missing files that import or call the changed code.
+**If Thoth available:** Use `memory_impact({target: "symbolName", direction: "upstream"})` for each symbol being modified to discover all affected files (direct callers at d=1, indirect at d=2). This prevents missing files that import or call the changed code.
 
 | File | Action | Description | Impact |
 |------|--------|-------------|--------|

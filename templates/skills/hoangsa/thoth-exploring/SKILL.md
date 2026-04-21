@@ -12,8 +12,8 @@ metadata:
 # Exploring Codebases with Thoth
 
 Understand unfamiliar code without reading every file. The hybrid
-retriever (`thoth_recall`) finds entry points by intent; the graph
-(`thoth_symbol_context`) walks relationships.
+retriever (`memory_recall`) finds entry points by intent; the graph
+(`memory_symbol_context`) walks relationships.
 
 ## When to Use
 
@@ -26,9 +26,9 @@ retriever (`thoth_recall`) finds entry points by intent; the graph
 ## Workflow
 
 ```
-1. resources/read thoth://memory/MEMORY.md           → durable facts first
-2. thoth_recall({query: "<concept>"})                 → candidate chunks
-3. thoth_symbol_context({fqn})                        → 360° around each
+1. resources/read hoangsa-memory://memory/MEMORY.md           → durable facts first
+2. memory_recall({query: "<concept>"})                 → candidate chunks
+3. memory_symbol_context({fqn})                        → 360° around each
 4. Walk callers to find entry points                  → root of flow
 5. Cite chunk ids in the explanation
 ```
@@ -40,18 +40,18 @@ decisions and conventions you'd otherwise miss. If a fact names the
 module you're about to explore, it saves a recall.
 
 ```
-resources/read { uri: "thoth://memory/MEMORY.md" }
-resources/read { uri: "thoth://memory/LESSONS.md" }
+resources/read { uri: "hoangsa-memory://memory/MEMORY.md" }
+resources/read { uri: "hoangsa-memory://memory/LESSONS.md" }
 ```
 
-(Or equivalently: `thoth_memory_show`.)
+(Or equivalently: `memory_show`.)
 
 ### 2. Recall by intent
 
 Use the user's own vocabulary. For "how does auth work", try:
 
 ```
-thoth_recall { query: "authentication login session token" }
+memory_recall { query: "authentication login session token" }
 ```
 
 Prefer **nouns** over verbs. The hybrid retriever rewards topical
@@ -63,7 +63,7 @@ concrete symbols you see in the README.
 Pick the top-ranked chunk's FQN. Then:
 
 ```
-thoth_symbol_context { fqn: "auth::verify_token", limit: 16 }
+memory_symbol_context { fqn: "auth::verify_token", limit: 16 }
 ```
 
 Sections to read:
@@ -110,8 +110,8 @@ are the #1 source of drift in exploratory sessions.
 
 ## When recall returns nothing
 
-If `thoth_recall` gives `(no matches — did you run thoth_index?)`,
-the graph is empty. Run `thoth index .` (CLI) or `thoth_index` (MCP)
+If `memory_recall` gives `(no matches — did you run memory_index?)`,
+the graph is empty. Run `thoth index .` (CLI) or `memory_index` (MCP)
 and retry. If it still returns nothing, the concept genuinely isn't
 indexed — ask the user for a file path to anchor from, or fall back to
 `Grep` for a literal keyword.

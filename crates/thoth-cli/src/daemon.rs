@@ -78,7 +78,7 @@ impl DaemonClient {
         let request = json!({
             "jsonrpc": "2.0",
             "id": id,
-            "method": "thoth.call",
+            "method": "hoangsa-memory.call",
             "params": {
                 "name": tool,
                 "arguments": arguments,

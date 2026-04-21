@@ -26,26 +26,26 @@ touch the code — so the edit plan is grounded, not guessed.
 ## Workflow
 
 ```
-1. thoth_recall({query: "<target concept>"})         → find exact FQN
-2. thoth_impact({fqn, direction: "up", depth: 3})    → every dependent
-3. thoth_symbol_context({fqn})                        → siblings + extends
+1. memory_recall({query: "<target concept>"})         → find exact FQN
+2. memory_impact({fqn, direction: "up", depth: 3})    → every dependent
+3. memory_symbol_context({fqn})                        → siblings + extends
 4. Draft the edit plan, naming every touched file
 5. Apply edits in order: callees first, then callers
-6. Re-index if needed: thoth_index
-7. Verify: repeat thoth_impact, confirm 0 stale refs
+6. Re-index if needed: memory_index
+7. Verify: repeat memory_impact, confirm 0 stale refs
 8. thoth_lesson_outcome on the triggers you followed
 ```
 
 ### 1. Pin the FQN
 
-Use `thoth_recall` to disambiguate the target. Refactors on wrong
+Use `memory_recall` to disambiguate the target. Refactors on wrong
 symbols are the most expensive mistake — double-check the FQN matches
 what the user meant.
 
 ### 2. Map the blast radius
 
 ```
-thoth_impact { fqn: "auth::verify_token", direction: "up", depth: 3 }
+memory_impact { fqn: "auth::verify_token", direction: "up", depth: 3 }
 ```
 
 Count the depth-1 ring. That's the minimum number of sites you must
@@ -59,7 +59,7 @@ this; did you mean to delete it?").
 ### 3. Pull sibling context
 
 ```
-thoth_symbol_context { fqn: "auth::verify_token", limit: 32 }
+memory_symbol_context { fqn: "auth::verify_token", limit: 32 }
 ```
 
 Look for:
@@ -99,7 +99,7 @@ Apply one file at a time — don't rely on one big diff to land atomically.
 After the edits, the graph reflects the *old* code. Run:
 
 ```
-thoth_index { path: "." }
+memory_index { path: "." }
 ```
 
 (Or `thoth index .` via CLI. If `thoth watch` is running, it already
@@ -107,9 +107,9 @@ re-indexed on save — skip this step.)
 
 ### 7. Verify zero stale refs
 
-Re-run `thoth_impact` on the **old** FQN. It should error with
+Re-run `memory_impact` on the **old** FQN. It should error with
 `symbol not found` — that's the success signal (the old name is
-gone). Then run `thoth_impact` on the **new** FQN and confirm the
+gone). Then run `memory_impact` on the **new** FQN and confirm the
 dependent count matches what you expected from step 2.
 
 Run the test suite. If it passes, the refactor held.
@@ -130,7 +130,7 @@ If the refactor surfaced a recurring pattern (e.g. "this repo never
 changes a public trait without adding a blanket impl"), persist it:
 
 ```
-thoth_remember_lesson {
+memory_remember_lesson {
   trigger: "renaming a method on a public trait in this repo",
   advice: "Add a default impl calling the new name that delegates to
            the old name for one release; remove after N+1."
@@ -140,19 +140,19 @@ thoth_remember_lesson {
 ## Anti-patterns
 
 - **Skipping impact.** Renaming blind is how you ship a broken PR.
-  Always run `thoth_impact` first, even for "tiny" renames.
+  Always run `memory_impact` first, even for "tiny" renames.
 - **Treating depth-3 hits as depth-1.** The direct ring is what
   breaks on rename. Deep transitive hits only break on signature
   changes.
 - **Assuming the graph is fresh.** If you've edited in this session,
-  re-index or `thoth_impact` will omit new callers and include
+  re-index or `memory_impact` will omit new callers and include
   deleted ones.
 - **Batching unrelated refactors.** One rename per commit. Users who
   see a 40-file diff can't tell signal from noise.
 
 ## When the radius is huge
 
-If `thoth_impact depth: 1` returns > 30 dependents, stop and reconsider.
+If `memory_impact depth: 1` returns > 30 dependents, stop and reconsider.
 
 - **Pattern: deprecate + migrate.** Add the new API alongside the old,
   migrate callers in batches, delete the old. Safer than a single big

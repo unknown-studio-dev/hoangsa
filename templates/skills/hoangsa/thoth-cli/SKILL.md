@@ -192,7 +192,7 @@ Without `PATH`: (re)installs the bundled skills (`memory-discipline`,
 `thoth-impact-analysis`, `thoth-refactoring`, `thoth-cli`).
 
 With a `PATH` pointing at a `<slug>.draft/` directory (produced by
-the agent's `thoth_skill_propose` MCP tool): promotes the draft into
+the agent's `memory_skill_propose` MCP tool): promotes the draft into
 a live skill and removes the draft.
 
 ```bash

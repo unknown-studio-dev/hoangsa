@@ -68,9 +68,9 @@ async fn thoth_call_returns_structured_tool_output() {
         json!({
             "jsonrpc": "2.0",
             "id": 1,
-            "method": "thoth.call",
+            "method": "hoangsa-memory.call",
             "params": {
-                "name": "thoth_remember_fact",
+                "name": "memory_remember_fact",
                 "arguments": {
                     "text": "sockets close after one response",
                     "tags": ["mcp", "transport"],
@@ -119,7 +119,7 @@ async fn thoth_call_unknown_tool_surfaces_method_not_found() {
         json!({
             "jsonrpc": "2.0",
             "id": 2,
-            "method": "thoth.call",
+            "method": "hoangsa-memory.call",
             "params": { "name": "no_such_tool" }
         }),
     )
@@ -158,7 +158,7 @@ async fn tools_call_strips_structured_data_keeps_text() {
             "jsonrpc": "2.0",
             "id": 3,
             "method": "tools/call",
-            "params": { "name": "thoth_memory_show" }
+            "params": { "name": "memory_show" }
         }),
     )
     .await;

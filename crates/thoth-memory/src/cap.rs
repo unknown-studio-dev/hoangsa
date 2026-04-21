@@ -19,7 +19,7 @@ use crate::text_sim;
 ///
 /// Distinct from [`thoth_core::MemoryKind`] (the five-class taxonomy) —
 /// this one only covers the three markdown surfaces exposed by the
-/// `thoth_memory_replace` / `thoth_memory_remove` / `thoth_remember_*`
+/// `memory_replace` / `memory_remove` / `memory_remember_*`
 /// verbs introduced in DESIGN-SPEC REQ-04/05/06.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,7 +47,7 @@ pub struct CapExceededError {
     pub attempted_bytes: usize,
     /// Snapshot of current entries so the agent can choose what to drop.
     pub entries: Vec<MemoryEntryPreview>,
-    /// Suggested next verb — e.g. "Call thoth_memory_replace or thoth_memory_remove.".
+    /// Suggested next verb — e.g. "Call memory_replace or memory_remove.".
     pub hint: String,
 }
 
@@ -426,7 +426,7 @@ async fn build_cap_error(
         cap_bytes,
         attempted_bytes,
         entries,
-        hint: "Call thoth_memory_replace or thoth_memory_remove to free space, then retry."
+        hint: "Call memory_replace or memory_remove to free space, then retry."
             .to_string(),
     }
 }
@@ -437,8 +437,8 @@ async fn build_cap_error(
 ///
 /// This is defined here rather than in `thoth-store` so the raw storage
 /// crate stays policy-free (its `append_fact` / `append_lesson` don't know
-/// about caps). The MCP `thoth_memory_replace` / `thoth_memory_remove` /
-/// `thoth_remember_preference` handlers call through this trait.
+/// about caps). The MCP `memory_replace` / `memory_remove` /
+/// `memory_remember_preference` handlers call through this trait.
 #[allow(async_fn_in_trait)]
 pub trait MarkdownStoreMemoryExt {
     /// Append a user preference to `USER.md`, enforcing `cap_user_bytes`.

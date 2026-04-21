@@ -775,7 +775,7 @@ function ensureHoangsaHooks(settings, targetDir) {
       },
     ],
     matcher:
-      "mcp__thoth__thoth_impact|mcp__thoth__thoth_detect_changes|mcp__thoth__thoth_recall|Edit|Write|MultiEdit",
+      "mcp__thoth__memory_impact|mcp__thoth__memory_detect_changes|mcp__thoth__memory_recall|Edit|Write|MultiEdit",
   });
   console.log(
     `  ${green}✓${reset} Installed post-enforce hook (records thoth events for enforcement)`,

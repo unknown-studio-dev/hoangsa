@@ -54,12 +54,12 @@ async fn tools_list_includes_recall_and_memory_tools() {
         .collect();
 
     for expected in [
-        "thoth_recall",
-        "thoth_index",
-        "thoth_remember_fact",
-        "thoth_remember_lesson",
-        "thoth_skills_list",
-        "thoth_memory_show",
+        "memory_recall",
+        "memory_index",
+        "memory_remember_fact",
+        "memory_remember_lesson",
+        "memory_skills_list",
+        "memory_show",
     ] {
         assert!(
             names.contains(&expected.to_string()),
@@ -79,7 +79,7 @@ async fn remember_fact_then_memory_show_roundtrip() {
             3,
             "tools/call",
             json!({
-                "name": "thoth_remember_fact",
+                "name": "memory_remember_fact",
                 "arguments": { "text": "auth uses RS256 JWTs", "tags": ["auth"] }
             }),
         ))
@@ -89,7 +89,7 @@ async fn remember_fact_then_memory_show_roundtrip() {
 
     // then read it back via memory_show
     let resp = srv
-        .handle(req(4, "tools/call", json!({ "name": "thoth_memory_show" })))
+        .handle(req(4, "tools/call", json!({ "name": "memory_show" })))
         .await
         .expect("response");
     let text = resp.result.unwrap()["content"][0]["text"]
@@ -119,14 +119,14 @@ async fn resources_list_and_read_markdown_files() {
         .iter()
         .map(|r| r["uri"].as_str().unwrap().to_string())
         .collect();
-    assert!(uris.iter().any(|u| u == "thoth://memory/MEMORY.md"));
-    assert!(uris.iter().any(|u| u == "thoth://memory/LESSONS.md"));
+    assert!(uris.iter().any(|u| u == "hoangsa-memory://memory/MEMORY.md"));
+    assert!(uris.iter().any(|u| u == "hoangsa-memory://memory/LESSONS.md"));
 
     let resp = srv
         .handle(req(
             6,
             "resources/read",
-            json!({ "uri": "thoth://memory/MEMORY.md" }),
+            json!({ "uri": "hoangsa-memory://memory/MEMORY.md" }),
         ))
         .await
         .expect("response");
@@ -167,7 +167,7 @@ async fn initialized_notification_returns_nothing() {
 }
 
 /// Small helper: index a tempdir containing one Rust source file through
-/// the MCP `thoth_index` tool, so subsequent graph tools have data to
+/// the MCP `memory_index` tool, so subsequent graph tools have data to
 /// work with. Returns the source directory's temp handle so the caller
 /// can keep it alive for the test's duration.
 async fn index_rust_fixture(srv: &Server, src: &str) -> tempfile::TempDir {
@@ -178,9 +178,9 @@ async fn index_rust_fixture(srv: &Server, src: &str) -> tempfile::TempDir {
     let resp = srv
         .handle(req(
             100,
-            "thoth.call",
+            "hoangsa-memory.call",
             json!({
-                "name": "thoth_index",
+                "name": "memory_index",
                 "arguments": { "path": src_dir.path().to_string_lossy() }
             }),
         ))
@@ -219,9 +219,9 @@ pub fn root() -> i32 { mid() }
     let resp = srv
         .handle(req(
             101,
-            "thoth.call",
+            "hoangsa-memory.call",
             json!({
-                "name": "thoth_impact",
+                "name": "memory_impact",
                 "arguments": { "fqn": "m::leaf", "direction": "up", "depth": 3 }
             }),
         ))
@@ -264,9 +264,9 @@ pub fn caller() { let _ = English; }
     let resp = srv
         .handle(req(
             102,
-            "thoth.call",
+            "hoangsa-memory.call",
             json!({
-                "name": "thoth_symbol_context",
+                "name": "memory_symbol_context",
                 "arguments": { "fqn": "m::English" }
             }),
         ))
@@ -321,9 +321,9 @@ pub fn root() -> i32 { mid() }
     let resp = srv
         .handle(req(
             103,
-            "thoth.call",
+            "hoangsa-memory.call",
             json!({
-                "name": "thoth_detect_changes",
+                "name": "memory_detect_changes",
                 "arguments": { "diff": diff, "depth": 3 }
             }),
         ))
@@ -382,9 +382,9 @@ pub fn via_root() -> i32 { leaf() }
     let resp = srv
         .handle(req(
             150,
-            "thoth.call",
+            "hoangsa-memory.call",
             json!({
-                "name": "thoth_impact",
+                "name": "memory_impact",
                 "arguments": { "fqn": "m::leaf", "direction": "up", "depth": 3 }
             }),
         ))
@@ -430,9 +430,9 @@ async fn impact_reports_unknown_symbol_cleanly() {
     let resp = srv
         .handle(req(
             104,
-            "thoth.call",
+            "hoangsa-memory.call",
             json!({
-                "name": "thoth_impact",
+                "name": "memory_impact",
                 "arguments": { "fqn": "does::not::exist" }
             }),
         ))
@@ -447,7 +447,7 @@ async fn impact_reports_unknown_symbol_cleanly() {
 }
 
 /// REQ-03: when an append would push `MEMORY.md` past the configured cap,
-/// `thoth_remember_fact` must return a structured error the agent can parse
+/// `memory_remember_fact` must return a structured error the agent can parse
 /// (code="cap_exceeded", current/cap/attempted byte counts, and a preview of
 /// existing entries) so it can pick a replace/remove target instead of
 /// silently overflowing the file.
@@ -472,7 +472,7 @@ async fn mcp_remember_fact_returns_structured_cap_error() {
             1,
             "tools/call",
             json!({
-                "name": "thoth_remember_fact",
+                "name": "memory_remember_fact",
                 "arguments": { "text": "beta fact that definitely pushes past the cap", "tags": [] }
             }),
         ))
@@ -530,9 +530,9 @@ pub fn use_rule(r: &Rule) -> String { r.id.clone() }
     let resp = srv
         .handle(req(
             200,
-            "thoth.call",
+            "hoangsa-memory.call",
             json!({
-                "name": "thoth_detect_changes",
+                "name": "memory_detect_changes",
                 "arguments": { "diff": diff, "depth": 2 }
             }),
         ))
@@ -573,9 +573,9 @@ pub fn dispatch(a: &str, b: &str) -> i32 {
     let resp = srv
         .handle(req(
             201,
-            "thoth.call",
+            "hoangsa-memory.call",
             json!({
-                "name": "thoth_impact",
+                "name": "memory_impact",
                 "arguments": { "fqn": "m::target", "direction": "up", "depth": 2 }
             }),
         ))
@@ -616,9 +616,9 @@ pub fn generic<T: Into<Config>>(t: T) {}
     let resp = srv
         .handle(req(
             202,
-            "thoth.call",
+            "hoangsa-memory.call",
             json!({
-                "name": "thoth_impact",
+                "name": "memory_impact",
                 "arguments": { "fqn": "m::Config", "direction": "up", "depth": 2 }
             }),
         ))

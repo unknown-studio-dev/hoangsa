@@ -205,7 +205,7 @@ impl RenderOptions {
 
 impl Retrieval {
     /// Render this retrieval as the human-readable text surface that both
-    /// the CLI (`thoth query`) and MCP (`thoth_recall` tool text) display.
+    /// the CLI (`thoth query`) and MCP (`memory_recall` tool text) display.
     ///
     /// The format is designed so an agent reading the output can answer
     /// three questions per chunk without opening the file:
@@ -226,7 +226,7 @@ impl Retrieval {
     /// Like [`Self::render`] but honours `opts`. See [`RenderOptions`].
     pub fn render_with(&self, opts: &RenderOptions) -> String {
         if self.chunks.is_empty() {
-            return "(no matches — did you run thoth_index?)".to_string();
+            return "(no matches — did you run memory_index?)".to_string();
         }
         let mut out = String::new();
         for (i, c) in self.chunks.iter().enumerate() {
@@ -501,7 +501,7 @@ mod tests {
         };
         assert_eq!(
             retrieval.render(),
-            "(no matches — did you run thoth_index?)"
+            "(no matches — did you run memory_index?)"
         );
     }
 }

@@ -76,10 +76,10 @@ impl MemoryMeta {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum FactScope {
-    /// Always included in `thoth_wakeup` output — core identity / essential context.
+    /// Always included in `memory_wakeup` output — core identity / essential context.
     #[default]
     Always,
-    /// Only surfaced when a `thoth_recall` query matches.
+    /// Only surfaced when a `memory_recall` query matches.
     OnDemand,
 }
 
@@ -119,7 +119,7 @@ pub struct Lesson {
     /// serialized before this field existed.
     #[serde(default)]
     pub enforcement: Enforcement,
-    /// Tier Claude suggested at `thoth_remember_lesson` time — audit-only,
+    /// Tier Claude suggested at `memory_remember_lesson` time — audit-only,
     /// NOT applied. Stored so the curator can later see what the proposer
     /// thought and validate against violation evidence.
     #[serde(default)]
@@ -217,7 +217,7 @@ pub mod lesson {
         #[test]
         fn suggested_enforcement_is_audit_only() {
             // The struct itself doesn't enforce REQ-03 (that's server-side
-            // policy in thoth_remember_lesson), but we verify suggested can
+            // policy in memory_remember_lesson), but we verify suggested can
             // differ from actual without error.
             let mut l = base_lesson();
             l.enforcement = Enforcement::Advise;
@@ -242,7 +242,7 @@ pub mod enforcement {
     /// - [`Enforcement::Advise`] — banner inject only (default, backwards compat).
     /// - [`Enforcement::Require`] — PreToolUse injects lesson body into tool call context.
     /// - [`Enforcement::Block`] — PreToolUse exits 2 with `block_message`.
-    /// - [`Enforcement::RequireRecall`] — exit 2 unless a matching `thoth_recall`
+    /// - [`Enforcement::RequireRecall`] — exit 2 unless a matching `memory_recall`
     ///   event occurred within `recall_within_turns`.
     /// - [`Enforcement::WorkflowGate`] — exit 2 if tool call diverges from an
     ///   active workflow's expected next step.
@@ -258,7 +258,7 @@ pub mod enforcement {
         Block,
         /// Exit 2 unless `gate.jsonl` has a matching recall within the window.
         RequireRecall {
-            /// How many turns back to look for a matching `thoth_recall` event.
+            /// How many turns back to look for a matching `memory_recall` event.
             recall_within_turns: u32,
         },
         /// Exit 2 if tool call doesn't match expected workflow step.

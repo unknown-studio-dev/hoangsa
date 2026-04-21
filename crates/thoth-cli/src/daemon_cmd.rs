@@ -35,7 +35,7 @@ pub async fn call_mcp_tool(
     let msg = thoth_mcp::proto::RpcIncoming {
         jsonrpc: "2.0".to_string(),
         id: Some(serde_json::Value::Number(1.into())),
-        method: "thoth.call".to_string(),
+        method: "hoangsa-memory.call".to_string(),
         params,
     };
     let resp = server.handle(msg).await;
@@ -64,7 +64,7 @@ pub async fn call_mcp_tool(
 
 // ------------------------------------------- graph / diff CLI subcommands
 
-/// `thoth impact <fqn>` — forwards to the `thoth_impact` MCP tool.
+/// `thoth impact <fqn>` — forwards to the `memory_impact` MCP tool.
 ///
 /// The daemon path is preferred (keeps us working when Claude Code is
 /// holding the redb lock); if unavailable we fall back to opening the
@@ -83,18 +83,18 @@ pub async fn cmd_impact(
         "direction": direction,
         "depth": depth,
     });
-    let (text, data, is_error) = call_mcp_tool(root, "thoth_impact", args).await?;
+    let (text, data, is_error) = call_mcp_tool(root, "memory_impact", args).await?;
     emit_output(text, data, is_error, json)
 }
 
-/// `thoth context <fqn>` — forwards to the `thoth_symbol_context` tool.
+/// `thoth context <fqn>` — forwards to the `memory_symbol_context` tool.
 pub async fn cmd_context(root: &Path, fqn: &str, limit: usize, json: bool) -> Result<()> {
     let args = serde_json::json!({ "fqn": fqn, "limit": limit });
-    let (text, data, is_error) = call_mcp_tool(root, "thoth_symbol_context", args).await?;
+    let (text, data, is_error) = call_mcp_tool(root, "memory_symbol_context", args).await?;
     emit_output(text, data, is_error, json)
 }
 
-/// `thoth changes` — feed a unified diff through the `thoth_detect_changes`
+/// `thoth changes` — feed a unified diff through the `memory_detect_changes`
 /// tool. Diff source order of preference: `--from <file>` > `--from -`
 /// (stdin) > `git diff HEAD`.
 pub async fn cmd_changes(root: &Path, from: Option<&str>, depth: usize, json: bool) -> Result<()> {
@@ -130,7 +130,7 @@ pub async fn cmd_changes(root: &Path, from: Option<&str>, depth: usize, json: bo
         return Ok(());
     }
     let args = serde_json::json!({ "diff": diff, "depth": depth });
-    let (text, data, is_error) = call_mcp_tool(root, "thoth_detect_changes", args).await?;
+    let (text, data, is_error) = call_mcp_tool(root, "memory_detect_changes", args).await?;
     emit_output(text, data, is_error, json)
 }
 

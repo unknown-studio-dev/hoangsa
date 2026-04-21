@@ -98,7 +98,7 @@ Only continue when user confirms.
 ### Session memory warm-up
 
 ```
-thoth_wakeup()
+memory_wakeup()
 ```
 
 Load compact memory index at cook start to ensure recall is fast during execution.
@@ -206,9 +206,9 @@ Do NOT read skills unless your task specifically requires them.
 ## Instructions
 
 1. Read all context_pointers files first
-2. Before modifying any function/class/method, run thoth_impact({target: "symbolName", direction: "upstream"}) to check blast radius (if Thoth is available)
+2. Before modifying any function/class/method, run memory_impact({target: "symbolName", direction: "upstream"}) to check blast radius (if Thoth is available)
 2b. Before starting, search for past work on this area:
-    thoth_archive_search({query: "<task.name> <primary module>"})
+    memory_archive_search({query: "<task.name> <primary module>"})
     Use findings to avoid repeating past mistakes or duplicating solutions.
 3. If impact returns HIGH or CRITICAL risk — report it, do not proceed without orchestrator acknowledgment
 4. Implement the task
@@ -219,10 +219,10 @@ Do NOT read skills unless your task specifically requires them.
 Acceptance command: <task.acceptance>
 
 After task passes — save key findings for future reference:
-  thoth_turn_save({role: "assistant", text: "Task <task.id>: <one-line summary of what was done and key finding>"})
+  memory_turn_save({role: "assistant", text: "Task <task.id>: <one-line summary of what was done and key finding>"})
 
 After task passes — verify change scope:
-  thoth_detect_changes({diff: "<git diff of this task's commit>"})
+  memory_detect_changes({diff: "<git diff of this task's commit>"})
   If unexpected symbols are affected, report to orchestrator.
 ```
 
@@ -353,7 +353,7 @@ Commit fixes with message: "refactor(<scope>): simplify <task.id>" — `<scope>`
 
 After all tasks in a wave complete (and simplify passes finish):
 
-1. **Verify wave scope:** Run `thoth_detect_changes({diff: "<git diff of wave commits>"})` to confirm only expected symbols were affected across the wave.
+1. **Verify wave scope:** Run `memory_detect_changes({diff: "<git diff of wave commits>"})` to confirm only expected symbols were affected across the wave.
 
 ### Track progress:
 

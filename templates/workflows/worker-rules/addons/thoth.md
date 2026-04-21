@@ -15,7 +15,7 @@ If the orchestrator tells you Thoth is available (`THOTH_AVAILABLE`), use it to 
 ### Before editing a symbol (function, class, method):
 
 ```
-thoth_impact({target: "symbolName", direction: "upstream"})
+memory_impact({target: "symbolName", direction: "upstream"})
 ```
 
 Check the blast radius. If risk is HIGH or CRITICAL, report it to the orchestrator before proceeding — do not silently push through.
@@ -23,7 +23,7 @@ Check the blast radius. If risk is HIGH or CRITICAL, report it to the orchestrat
 ### When you need to understand a symbol's callers/callees:
 
 ```
-thoth_symbol_context({name: "symbolName"})
+memory_symbol_context({name: "symbolName"})
 ```
 
 This gives you the full picture — who calls it, what it calls, which execution flows it participates in. Use this instead of grepping for function names.
@@ -31,14 +31,14 @@ This gives you the full picture — who calls it, what it calls, which execution
 ### When tracing a bug or finding related code:
 
 ```
-thoth_recall({query: "description of what you're looking for"})
+memory_recall({query: "description of what you're looking for"})
 ```
 
 Returns execution flows ranked by relevance. Better than `Grep` for understanding how pieces connect.
 
 ### Rules:
 
-- **Impact before edit.** Run `thoth_impact` on every symbol you're about to modify. This is not optional — it prevents breaking callers you didn't know about.
+- **Impact before edit.** Run `memory_impact` on every symbol you're about to modify. This is not optional — it prevents breaking callers you didn't know about.
 - **HIGH/CRITICAL = report.** If impact analysis returns HIGH or CRITICAL risk, report it to the orchestrator with the affected symbols. Do not proceed without acknowledgment.
 - **Fallback gracefully.** If a Thoth tool call fails (timeout, error), fall back to Grep/Glob. Do not block on it.
 - **Thoth unavailable = skip.** If the orchestrator does not pass `THOTH_AVAILABLE`, use Grep/Glob as usual. Do not attempt Thoth calls.
@@ -49,10 +49,10 @@ Returns execution flows ranked by relevance. Better than `Grep` for understandin
 
 When you discover something worth persisting (a non-obvious fact about the codebase, a gotcha, a lesson learned from a mistake):
 
-1. **Facts:** `thoth_remember_fact({text: "<concise fact>", tags: ["<tag>"]})` — durable truths about the codebase.
-2. **Lessons:** `thoth_remember_lesson({trigger: "<when this applies>", advice: "<what to do>"})` — actionable advice for future edits.
+1. **Facts:** `memory_remember_fact({text: "<concise fact>", tags: ["<tag>"]})` — durable truths about the codebase.
+2. **Lessons:** `memory_remember_lesson({trigger: "<when this applies>", advice: "<what to do>"})` — actionable advice for future edits.
 
-Before any non-trivial edit, recall first: `thoth_recall({query: "<what you're about to do>"})`.
+Before any non-trivial edit, recall first: `memory_recall({query: "<what you're about to do>"})`.
 
 ---
 
@@ -61,7 +61,7 @@ Before any non-trivial edit, recall first: `thoth_recall({query: "<what you're a
 Before starting implementation, search past conversations for relevant context:
 
 ```
-thoth_archive_search({query: "<module name> <task domain>"})
+memory_archive_search({query: "<module name> <task domain>"})
 ```
 
 Look for:
@@ -78,7 +78,7 @@ If archive returns relevant hits, factor them into your approach. If no relevant
 After completing your task and before committing:
 
 ```
-thoth_detect_changes({diff: "<git diff of your changes>"})
+memory_detect_changes({diff: "<git diff of your changes>"})
 ```
 
 Verify that:
@@ -92,10 +92,10 @@ This is a quick sanity check, not a blocker if the changes are intentional.
 
 ## Memory Detail Lookup
 
-When `thoth_recall` returns a fact or lesson with a partial match (truncated content or unclear context):
+When `memory_recall` returns a fact or lesson with a partial match (truncated content or unclear context):
 
 ```
-thoth_memory_detail({kind: "fact|lesson", index: <N>})
+memory_detail({kind: "fact|lesson", index: <N>})
 ```
 
 Use this to read the full content before acting on it. Do not make assumptions based on truncated recall results.

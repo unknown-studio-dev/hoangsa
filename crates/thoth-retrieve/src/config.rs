@@ -66,7 +66,7 @@ impl Default for IndexConfig {
 /// Retrieval-output display limits. Mirrors the `[output]` table in
 /// `<root>/config.toml`. Bounds the per-chunk body length and the total
 /// rendered size of a recall, and sets the threshold above which
-/// `thoth_impact` switches from a per-node listing to a file-grouped
+/// `memory_impact` switches from a per-node listing to a file-grouped
 /// summary.
 ///
 /// The values here feed [`thoth_core::RenderOptions`] via
@@ -82,7 +82,7 @@ pub struct OutputConfig {
     /// Soft cap on total rendered bytes per recall. `0` disables the
     /// size budget. Default: 32 KiB.
     pub max_total_bytes: usize,
-    /// Node count above which `thoth_impact` groups results by file
+    /// Node count above which `memory_impact` groups results by file
     /// rather than listing every node. `0` disables grouping. Default: 50.
     pub impact_group_threshold: usize,
 }
@@ -127,7 +127,7 @@ impl OutputConfig {
 
     /// Convert to the render-time options consumed by
     /// [`thoth_core::Retrieval::render_with`]. The `impact_group_threshold`
-    /// is used directly by `thoth_impact`, not via `RenderOptions`.
+    /// is used directly by `memory_impact`, not via `RenderOptions`.
     pub fn render_options(&self) -> thoth_core::RenderOptions {
         thoth_core::RenderOptions {
             max_body_lines: self.max_body_lines,
