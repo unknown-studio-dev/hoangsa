@@ -34,7 +34,6 @@ const hasUninstall = args.includes("--uninstall") || args.includes("-u");
 const hasMedia = args.includes("--media");
 const hasJoke = args.includes("--joke");
 const hasInstallChroma = args.includes("--install-chroma");
-const hasSkipChroma = args.includes("--no-chroma");
 
 /** Resolve global config dir: ~/.claude */
 function getGlobalDir() {
@@ -68,7 +67,7 @@ console.log(banner);
 // Show help if requested
 if (hasHelp) {
   console.log(
-    `  ${yellow}Usage:${reset} npx hoangsa-cc [options]\n\n  ${yellow}Options:${reset}\n    ${cyan}-g, --global${reset}              Install globally (to ~/.claude/)\n    ${cyan}-l, --local${reset}               Install locally (to ./.claude/)\n    ${cyan}    --media${reset}               Include video debugging support (montage/diff)\n    ${cyan}    --install-chroma${reset}      Provision sidecar venv + pip install chromadb (standalone)\n    ${cyan}    --no-chroma${reset}           Skip chroma venv provisioning during install\n    ${cyan}-u, --uninstall${reset}           Uninstall HOANGSA (remove all HOANGSA files)\n    ${cyan}    --joke${reset}                Easter egg 🥚\n    ${cyan}-h, --help${reset}                Show this help message\n\n  ${yellow}Examples:${reset}\n    ${dim}# Interactive install (prompts for location)${reset}\n    npx hoangsa-cc\n\n    ${dim}# Install globally${reset}\n    npx hoangsa-cc --global\n\n    ${dim}# Install with video debugging support${reset}\n    npx hoangsa-cc --global --media\n\n    ${dim}# Install to current project only${reset}\n    npx hoangsa-cc --local\n\n    ${dim}# Provision chroma sidecar only (no config changes)${reset}\n    npx hoangsa-cc --install-chroma\n\n    ${dim}# Uninstall HOANGSA globally${reset}\n    npx hoangsa-cc --global --uninstall\n`,
+    `  ${yellow}Usage:${reset} npx hoangsa-cc [options]\n\n  ${yellow}Options:${reset}\n    ${cyan}-g, --global${reset}              Install globally (to ~/.claude/)\n    ${cyan}-l, --local${reset}               Install locally (to ./.claude/)\n    ${cyan}    --media${reset}               Include video debugging support (montage/diff)\n    ${cyan}    --install-chroma${reset}      Provision sidecar venv + pip install chromadb (enables archive search)\n    ${cyan}-u, --uninstall${reset}           Uninstall HOANGSA (remove all HOANGSA files)\n    ${cyan}    --joke${reset}                Easter egg 🥚\n    ${cyan}-h, --help${reset}                Show this help message\n\n  ${yellow}Examples:${reset}\n    ${dim}# Interactive install (prompts for location)${reset}\n    npx hoangsa-cc\n\n    ${dim}# Install globally${reset}\n    npx hoangsa-cc --global\n\n    ${dim}# Install with video debugging support${reset}\n    npx hoangsa-cc --global --media\n\n    ${dim}# Install to current project only${reset}\n    npx hoangsa-cc --local\n\n    ${dim}# Provision chroma sidecar only (no config changes)${reset}\n    npx hoangsa-cc --install-chroma\n\n    ${dim}# Uninstall HOANGSA globally${reset}\n    npx hoangsa-cc --global --uninstall\n`,
   );
   process.exit(0);
 }
@@ -1210,7 +1209,10 @@ function runPostInstall(result, isInteractive) {
   handleTaskManager(mcpJsonPath, isInteractive, () => {
     writeSettings(result.settingsPath, result.settings);
     console.log(
-      `\n  ${green}Done!${reset} Start Claude Code and run ${cyan}/hoangsa:menu${reset} to begin.\n`,
+      `\n  ${green}Done!${reset} Start Claude Code and run ${cyan}/hoangsa:menu${reset} to begin.`,
+    );
+    console.log(
+      `  ${dim}hoangsa-memory MCP is registered. For archive search, run:${reset} ${cyan}npx hoangsa-cc --install-chroma${reset}\n`,
     );
   });
 }

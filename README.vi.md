@@ -56,9 +56,22 @@ Sau `/hoangsa:menu`, chạy `/hoangsa:prepare` để lập kế hoạch, rồi `
 | `/hoangsa:addon` | Addons — liệt kê, thêm, hoặc gỡ addon worker rules theo framework |
 | `/hoangsa:init` | Khởi tạo — phát hiện codebase, cấu hình preferences, thiết lập lần đầu |
 | `/hoangsa:check` | Trạng thái — hiển thị tiến độ session và các task đang chờ |
-| `/hoangsa:index` | Index — xây dựng lại đồ thị code intelligence Thoth |
+| `/hoangsa:index` | Index — xây dựng lại đồ thị code intelligence hoangsa-memory |
 | `/hoangsa:update` | Cập nhật — nâng cấp HOANGSA lên phiên bản mới nhất |
 | `/hoangsa:help` | Trợ giúp — hiển thị tất cả lệnh có sẵn |
+
+---
+
+## Memory & Code Intelligence
+
+HOANGSA đi kèm **hoangsa-memory** — MCP server chạy local, cung cấp cho Claude bộ nhớ lâu dài (facts, lessons, preferences) và hiểu biết về code graph (impact analysis, symbol context, change detection) qua nhiều session.
+
+- **Tự động cài** bởi `npx hoangsa-cc`: binary đặt tại `~/.hoangsa-memory/bin/`, MCP server được đăng ký trong `.mcp.json` của project.
+- **State** theo từng project nằm trong `~/.hoangsa-memory/projects/<slug>/` (MEMORY.md, LESSONS.md, USER.md + index).
+- **Hooks** cài vào settings Claude Code: pre-edit rule enforcement, pre-edit lesson recall, post-tool event logging, và PreCompact / SessionEnd archive ingest để recall nội dung hội thoại.
+- **Archive search** (lịch sử hội thoại đầy đủ) cần chroma sidecar — tùy chọn, cài bằng `npx hoangsa-cc --install-chroma`.
+
+Reindex thủ công: `/hoangsa:index` hoặc `~/.hoangsa-memory/bin/hoangsa-memory --json index .`
 
 ---
 

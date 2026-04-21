@@ -54,9 +54,22 @@ After `/hoangsa:menu`, run `/hoangsa:prepare` to plan, then `/hoangsa:cook` to e
 | `/hoangsa:addon` | Addons — list, add, or remove framework-specific worker rule addons |
 | `/hoangsa:init` | Initialize — detect codebase, configure preferences, first-time setup |
 | `/hoangsa:check` | Status — show current session progress and pending tasks |
-| `/hoangsa:index` | Index — rebuild Thoth code intelligence graph |
+| `/hoangsa:index` | Index — rebuild hoangsa-memory code intelligence graph |
 | `/hoangsa:update` | Update — upgrade HOANGSA to the latest version |
 | `/hoangsa:help` | Help — show all available commands |
+
+---
+
+## Memory & Code Intelligence
+
+HOANGSA ships with **hoangsa-memory**, a local MCP server that gives Claude persistent memory (facts, lessons, preferences) and code-graph awareness (impact analysis, symbol context, change detection) across sessions.
+
+- **Auto-installed** by `npx hoangsa-cc`: binaries land in `~/.hoangsa-memory/bin/` and the MCP server is registered in your project's `.mcp.json`.
+- **State** per project lives under `~/.hoangsa-memory/projects/<slug>/` (MEMORY.md, LESSONS.md, USER.md + index).
+- **Hooks** installed into Claude Code settings: pre-edit rule enforcement, pre-edit lesson recall, post-tool event logging, and PreCompact / SessionEnd archive ingest for conversation recall.
+- **Archive search** (full conversation history) needs a chroma sidecar — optional, provision with `npx hoangsa-cc --install-chroma`.
+
+Manual reindex: `/hoangsa:index` or `~/.hoangsa-memory/bin/hoangsa-memory --json index .`
 
 ---
 
