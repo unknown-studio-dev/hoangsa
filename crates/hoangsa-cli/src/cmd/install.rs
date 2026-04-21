@@ -1,6 +1,6 @@
 use crate::helpers;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
@@ -399,6 +399,496 @@ pub mod templates {
     }
 }
 
+// ───────────────────────── hooks submodule ─────────────────────────
+//
+// Port of `bin/install`'s `ensureHoangsaHooks` + `cleanupHooksFromSettings`
+// + the top-level `settings.json` read/write helpers. Owns:
+//
+//   * HOANGSA hook payload construction (command = `<target>/hoangsa/bin/hoangsa-cli hook <event>`)
+//   * idempotent merge into an existing Claude Code `settings.json`
+//   * legacy cleanup (`thoth*` top-level keys, hook entries referencing `thoth-cli`)
+//   * statusLine preservation (we only default; we never clobber a user-tuned value)
+//
+// The hook entry shape matches what the Node installer emits — each entry
+// carries `_hoangsa_managed: true` so future runs (and uninstall) can find
+// and replace them without touching user-authored hooks.
+//
+// Source of truth for the hook list: `bin/install` (search for
+// `ensureHoangsaHooks`). If `templates/.claude/settings.json` ever lands
+// in the template tree we can switch to reading from there; today we
+// inline the hook payload here.
+pub mod hooks {
+    use super::*;
+    use serde_json::{Value, json};
+
+    /// Sentinel key we write on every HOANGSA-managed hook entry so we can
+    /// find (and replace) our own entries without walking command strings.
+    pub const MANAGED_SENTINEL: &str = "_hoangsa_managed";
+
+    /// Resolve the `settings.json` path for the given install mode.
+    /// `global` → `~/.claude/settings.json`; otherwise `<cwd>/.claude/settings.json`.
+    pub fn settings_path(mode: &str, cwd: &Path) -> Result<PathBuf, String> {
+        match mode {
+            "global" => {
+                let home = std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .ok_or_else(|| "cannot resolve $HOME".to_string())?;
+                Ok(home.join(".claude").join("settings.json"))
+            }
+            _ => Ok(cwd.join(".claude").join("settings.json")),
+        }
+    }
+
+    /// Read existing `settings.json`, returning an empty object on missing /
+    /// unreadable / malformed files. Matches the Node installer semantics so
+    /// a first-time install still produces a fully-formed file.
+    pub fn load_settings(path: &Path) -> io::Result<Value> {
+        match fs::read_to_string(path) {
+            Ok(raw) => match serde_json::from_str::<Value>(&raw) {
+                Ok(v) if v.is_object() => Ok(v),
+                _ => Ok(Value::Object(serde_json::Map::new())),
+            },
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Value::Object(serde_json::Map::new())),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Save `settings` with two-space pretty JSON + trailing newline — matches
+    /// the format Claude Code writes (and matches the Node installer).
+    pub fn save_settings(path: &Path, settings: &Value) -> io::Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut out = serde_json::to_string_pretty(settings).map_err(io::Error::other)?;
+        out.push('\n');
+        fs::write(path, out)
+    }
+
+    /// Build the HOANGSA-managed hook tree keyed by Claude Code event name.
+    /// `target_dir` is the `.claude/` directory (parent of `hoangsa/`).
+    /// Mirrors `ensureHoangsaHooks` in `bin/install`.
+    pub fn build_hoangsa_hooks(target_dir: &Path) -> Value {
+        let cli = target_dir
+            .join("hoangsa")
+            .join("bin")
+            .join("hoangsa-cli")
+            .display()
+            .to_string();
+
+        let managed_entry = |command: String, timeout: u64, matcher: Option<&str>| -> Value {
+            let mut obj = serde_json::Map::new();
+            obj.insert(MANAGED_SENTINEL.into(), Value::Bool(true));
+            if let Some(m) = matcher {
+                obj.insert("matcher".into(), Value::String(m.into()));
+            }
+            obj.insert(
+                "hooks".into(),
+                json!([{
+                    "type": "command",
+                    "command": command,
+                    "timeout": timeout,
+                }]),
+            );
+            Value::Object(obj)
+        };
+
+        json!({
+            "Stop": [managed_entry(format!("{cli} hook stop-check"), 5, None)],
+            "PostToolUse": [managed_entry(
+                format!("{cli} hook post-enforce"),
+                5,
+                Some("mcp__hoangsa-memory__memory_impact|mcp__hoangsa-memory__memory_detect_changes|mcp__hoangsa-memory__memory_recall|Edit|Write|MultiEdit"),
+            )],
+            "PreToolUse": [
+                managed_entry(format!("{cli} hook lesson-guard"), 10, Some("Edit|Write")),
+                managed_entry(format!("{cli} hook enforce"), 10, Some("Edit|Write|Bash|NotebookEdit")),
+            ],
+            "PreCompact": [managed_entry(format!("{cli} hook session-archive"), 5, None)],
+            "SessionEnd": [managed_entry(format!("{cli} hook session-archive"), 5, None)],
+        })
+    }
+
+    /// Return `true` iff `entry` is a HOANGSA-managed hook object (carries
+    /// the sentinel flag OR references our binary via the legacy command form).
+    fn is_hoangsa_entry(entry: &Value) -> bool {
+        let Some(obj) = entry.as_object() else {
+            return false;
+        };
+        if obj.get(MANAGED_SENTINEL).and_then(|v| v.as_bool()).unwrap_or(false) {
+            return true;
+        }
+        if let Some(hooks) = obj.get("hooks").and_then(|h| h.as_array()) {
+            for h in hooks {
+                if let Some(cmd) = h.get("command").and_then(|c| c.as_str())
+                    && cmd.contains("hoangsa-cli")
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Dedupe key for entries: matcher (or "") + first command string.
+    /// Sufficient for our own entries and for the common user-authored shape.
+    fn entry_dedupe_key(entry: &Value) -> String {
+        let matcher = entry
+            .get("matcher")
+            .and_then(|m| m.as_str())
+            .unwrap_or("");
+        let cmd = entry
+            .get("hooks")
+            .and_then(|h| h.as_array())
+            .and_then(|a| a.first())
+            .and_then(|h0| h0.get("command"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("");
+        format!("{matcher}\x1f{cmd}")
+    }
+
+    /// Merge HOANGSA hooks into `settings["hooks"]`:
+    ///
+    ///   1. Strip any prior HOANGSA-managed entries per event (so re-runs stay idempotent).
+    ///   2. Append our fresh entries, deduping by (matcher, first command).
+    ///   3. Preserve every non-HOANGSA entry the user may have authored.
+    ///
+    /// Returns the count of entries we added.
+    pub fn merge_hoangsa_hooks(settings: &mut Value, hoangsa_hooks: &Value) -> usize {
+        let mut added = 0usize;
+
+        let settings_obj = match settings.as_object_mut() {
+            Some(o) => o,
+            None => return 0,
+        };
+        let hooks_val = settings_obj
+            .entry("hooks".to_string())
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        let hooks_obj = match hooks_val.as_object_mut() {
+            Some(o) => o,
+            None => {
+                *hooks_val = Value::Object(serde_json::Map::new());
+                hooks_val.as_object_mut().expect("just replaced with object")
+            }
+        };
+
+        let Some(incoming) = hoangsa_hooks.as_object() else {
+            return 0;
+        };
+
+        for (event, new_entries) in incoming {
+            let Some(new_arr) = new_entries.as_array() else {
+                continue;
+            };
+
+            // Grab existing array for this event (or start fresh), drop our old entries.
+            let existing_arr = hooks_obj
+                .remove(event)
+                .and_then(|v| v.as_array().cloned())
+                .unwrap_or_default();
+            let mut preserved: Vec<Value> = existing_arr
+                .into_iter()
+                .filter(|e| !is_hoangsa_entry(e))
+                .collect();
+
+            // Track the dedupe keys already present in `preserved` so we don't
+            // duplicate a user's hook that happens to mirror ours.
+            let mut seen: std::collections::HashSet<String> =
+                preserved.iter().map(entry_dedupe_key).collect();
+
+            for entry in new_arr {
+                let key = entry_dedupe_key(entry);
+                if seen.insert(key) {
+                    preserved.push(entry.clone());
+                    added += 1;
+                }
+            }
+
+            hooks_obj.insert(event.clone(), Value::Array(preserved));
+        }
+
+        added
+    }
+
+    /// Set `settings["statusLine"]` only if the user hasn't already configured
+    /// one. Returns `true` iff we wrote a value (for the merge report).
+    pub fn apply_statusline(settings: &mut Value, statusline_spec: &Value) -> bool {
+        let Some(obj) = settings.as_object_mut() else {
+            return false;
+        };
+        if obj.get("statusLine").map(|v| !v.is_null()).unwrap_or(false) {
+            // Preserve any user-authored statusLine — even a partial one.
+            return false;
+        }
+        obj.insert("statusLine".into(), statusline_spec.clone());
+        true
+    }
+
+    /// Remove any legacy `thoth*` top-level keys and any hook entries whose
+    /// command references the retired `thoth-cli` binary. Returns the total
+    /// number of items stripped (keys + entries).
+    pub fn cleanup_legacy_keys(settings: &mut Value) -> usize {
+        let mut removed = 0usize;
+
+        let Some(obj) = settings.as_object_mut() else {
+            return 0;
+        };
+
+        // Strip any top-level key starting with "thoth".
+        let legacy_top: Vec<String> = obj
+            .keys()
+            .filter(|k| k.starts_with("thoth"))
+            .cloned()
+            .collect();
+        for k in legacy_top {
+            obj.remove(&k);
+            removed += 1;
+        }
+
+        // Strip statusLine if it points at the legacy binary.
+        if let Some(sl) = obj.get("statusLine")
+            && let Some(cmd) = sl.get("command").and_then(|c| c.as_str())
+            && cmd.contains("thoth-cli")
+        {
+            obj.remove("statusLine");
+            removed += 1;
+        }
+
+        // Strip any hook entries whose first command mentions thoth-cli.
+        if let Some(hooks) = obj.get_mut("hooks").and_then(|h| h.as_object_mut()) {
+            let events: Vec<String> = hooks.keys().cloned().collect();
+            for event in events {
+                let Some(arr) = hooks.get_mut(&event).and_then(|v| v.as_array_mut()) else {
+                    continue;
+                };
+                let before = arr.len();
+                arr.retain(|entry| {
+                    let Some(list) = entry.get("hooks").and_then(|h| h.as_array()) else {
+                        return true;
+                    };
+                    !list.iter().any(|h| {
+                        h.get("command")
+                            .and_then(|c| c.as_str())
+                            .is_some_and(|c| c.contains("thoth-cli"))
+                    })
+                });
+                removed += before - arr.len();
+                if arr.is_empty() {
+                    hooks.remove(&event);
+                }
+            }
+        }
+
+        removed
+    }
+
+    /// Default statusLine spec — points at our own `hook statusline` subcommand
+    /// (the CLI handler for which lives in a later task; we only wire it here).
+    pub fn default_statusline(target_dir: &Path) -> Value {
+        let cli = target_dir
+            .join("hoangsa")
+            .join("bin")
+            .join("hoangsa-cli")
+            .display()
+            .to_string();
+        json!({
+            "type": "command",
+            "command": format!("{cli} hook statusline"),
+            "padding": 0,
+        })
+    }
+
+    /// Write a timestamped backup of `path` next to the original before any
+    /// in-place rewrite. A missing source file is a no-op (fresh install).
+    pub fn backup_settings(path: &Path) -> io::Result<Option<PathBuf>> {
+        if !path.exists() {
+            return Ok(None);
+        }
+        let stamp = OffsetDateTime::now_utc()
+            .format(format_description!(
+                "[year][month][day]-[hour][minute][second]"
+            ))
+            .unwrap_or_else(|_| String::from("00000000-000000"));
+        let file_name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "settings.json".to_string());
+        let backup = path.with_file_name(format!("{file_name}.bak-{stamp}"));
+        fs::copy(path, &backup)?;
+        Ok(Some(backup))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        //! Unit tests for the settings.json merge + statusline + legacy
+        //! cleanup pipeline. Every test uses `tempfile::tempdir()` — never
+        //! touch the real `~/.claude/settings.json`.
+
+        use super::*;
+        use serde_json::json;
+        use tempfile::tempdir;
+
+        fn fresh_settings() -> Value {
+            Value::Object(serde_json::Map::new())
+        }
+
+        #[test]
+        fn merge_empty_settings() {
+            let tmp = tempdir().expect("tempdir");
+            let target = tmp.path().join(".claude");
+            let mut settings = fresh_settings();
+            let added =
+                merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks(&target));
+            // 1 Stop + 1 PostToolUse + 2 PreToolUse + 1 PreCompact + 1 SessionEnd = 6
+            assert_eq!(added, 6, "fresh merge lands every managed entry");
+            let hooks = settings.get("hooks").and_then(|h| h.as_object()).expect("hooks present");
+            assert!(hooks.contains_key("Stop"));
+            assert!(hooks.contains_key("PreToolUse"));
+            let pre = hooks.get("PreToolUse").and_then(|v| v.as_array()).expect("PreToolUse array");
+            assert_eq!(pre.len(), 2);
+        }
+
+        #[test]
+        fn preserve_user_hooks() {
+            let tmp = tempdir().expect("tempdir");
+            let target = tmp.path().join(".claude");
+
+            // Seed a user-authored PreToolUse hook that has nothing to do with us.
+            let mut settings = json!({
+                "hooks": {
+                    "PreToolUse": [{
+                        "matcher": "Bash",
+                        "hooks": [{ "type": "command", "command": "/usr/local/bin/custom-guard" }]
+                    }]
+                }
+            });
+
+            merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks(&target));
+
+            let pre = settings["hooks"]["PreToolUse"]
+                .as_array()
+                .expect("PreToolUse array");
+            // 1 user entry + 2 HOANGSA entries
+            assert_eq!(pre.len(), 3, "user entry preserved alongside ours");
+            let user_present = pre.iter().any(|e| {
+                e.get("hooks")
+                    .and_then(|h| h.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|h0| h0.get("command"))
+                    .and_then(|c| c.as_str())
+                    == Some("/usr/local/bin/custom-guard")
+            });
+            assert!(user_present, "user hook must survive merge");
+        }
+
+        #[test]
+        fn dedupe_on_rerun() {
+            let tmp = tempdir().expect("tempdir");
+            let target = tmp.path().join(".claude");
+            let mut settings = fresh_settings();
+
+            let first = merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks(&target));
+            let second = merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks(&target));
+
+            assert_eq!(first, 6);
+            assert_eq!(second, 6, "re-merge re-adds the same set (replacing ours)");
+
+            // Total entries across events stays at 6 — never doubles.
+            let hooks = settings.get("hooks").and_then(|h| h.as_object()).expect("hooks");
+            let total: usize = hooks
+                .values()
+                .filter_map(|v| v.as_array())
+                .map(|a| a.len())
+                .sum();
+            assert_eq!(total, 6, "rerunning must not duplicate HOANGSA entries");
+        }
+
+        #[test]
+        fn cleanup_thoth_keys() {
+            let mut settings = json!({
+                "thothLegacy": { "foo": 1 },
+                "thoth_mode": "v0",
+                "unrelated": true,
+                "statusLine": { "type": "command", "command": "thoth-cli statusline" },
+                "hooks": {
+                    "PreToolUse": [
+                        { "_hoangsa_managed": true, "matcher": "Edit",
+                          "hooks": [{ "type": "command", "command": "/x/thoth-cli hook x" }] },
+                        { "matcher": "Bash",
+                          "hooks": [{ "type": "command", "command": "/usr/local/bin/keeper" }] }
+                    ]
+                }
+            });
+
+            let removed = cleanup_legacy_keys(&mut settings);
+            // 2 top-level thoth keys + 1 legacy statusline + 1 legacy hook entry
+            assert_eq!(removed, 4);
+
+            let obj = settings.as_object().expect("object");
+            assert!(!obj.contains_key("thothLegacy"));
+            assert!(!obj.contains_key("thoth_mode"));
+            assert!(obj.contains_key("unrelated"));
+            assert!(!obj.contains_key("statusLine"));
+
+            let pre = settings["hooks"]["PreToolUse"].as_array().expect("array");
+            assert_eq!(pre.len(), 1, "only the non-legacy entry survives");
+            assert_eq!(
+                pre[0]["hooks"][0]["command"].as_str(),
+                Some("/usr/local/bin/keeper")
+            );
+        }
+
+        #[test]
+        fn statusline_preserves_user_custom() {
+            let tmp = tempdir().expect("tempdir");
+            let target = tmp.path().join(".claude");
+
+            let mut settings = json!({
+                "statusLine": { "type": "command", "command": "/my/custom/bar" }
+            });
+            let wrote = apply_statusline(&mut settings, &default_statusline(&target));
+            assert!(!wrote, "user statusLine must be preserved");
+            assert_eq!(
+                settings["statusLine"]["command"].as_str(),
+                Some("/my/custom/bar")
+            );
+
+            // Empty settings → we write the default.
+            let mut empty = fresh_settings();
+            let wrote2 = apply_statusline(&mut empty, &default_statusline(&target));
+            assert!(wrote2, "default statusLine applied on empty settings");
+            assert!(empty["statusLine"]["command"].is_string());
+        }
+
+        #[test]
+        fn load_missing_returns_empty_object() {
+            let tmp = tempdir().expect("tempdir");
+            let v = load_settings(&tmp.path().join("nope.json")).expect("load");
+            assert!(v.is_object());
+            assert!(v.as_object().expect("object").is_empty());
+        }
+
+        #[test]
+        fn save_roundtrip_preserves_two_space_indent() {
+            let tmp = tempdir().expect("tempdir");
+            let p = tmp.path().join("settings.json");
+            let v = json!({ "a": { "b": 1 } });
+            save_settings(&p, &v).expect("save");
+            let raw = std::fs::read_to_string(&p).expect("read");
+            assert!(raw.contains("  \"a\""), "expected 2-space indent, got: {raw}");
+            assert!(raw.ends_with('\n'), "expected trailing newline");
+            let back = load_settings(&p).expect("load back");
+            assert_eq!(back, v);
+        }
+
+        #[test]
+        fn backup_skips_missing_source() {
+            let tmp = tempdir().expect("tempdir");
+            let result = backup_settings(&tmp.path().join("absent.json")).expect("backup");
+            assert!(result.is_none(), "missing source must not create a backup");
+        }
+    }
+}
+
 /// Destination tree for the installed templates, derived from mode + cwd.
 /// `global` → `~/.claude/hoangsa/`, `local` → `<cwd>/.claude/hoangsa/`.
 fn install_dst_dir(mode: &str, cwd: &Path) -> Result<PathBuf, String> {
@@ -461,6 +951,34 @@ pub fn cmd_install(args: &[&str]) {
                 }
                 (Err(e), _) => warnings.push(e),
                 (_, Err(e)) => warnings.push(e),
+            }
+
+            // Plan for the settings.json merge too — T-04 owns this leg.
+            match hooks::settings_path(mode, &cwd) {
+                Ok(settings_file) => {
+                    // Dry-run shouldn't read `HOME` for real; still, we load the
+                    // existing settings (safe, read-only) so we can preview the
+                    // delta honestly.
+                    let mut preview_settings =
+                        hooks::load_settings(&settings_file).unwrap_or(Value::Object(serde_json::Map::new()));
+                    let legacy_removed = hooks::cleanup_legacy_keys(&mut preview_settings);
+                    let target_dir = settings_file
+                        .parent()
+                        .map(Path::to_path_buf)
+                        .unwrap_or_else(|| PathBuf::from(".claude"));
+                    let hooks_payload = hooks::build_hoangsa_hooks(&target_dir);
+                    let hooks_added = hooks::merge_hoangsa_hooks(&mut preview_settings, &hooks_payload);
+                    let statusline_set =
+                        hooks::apply_statusline(&mut preview_settings, &hooks::default_statusline(&target_dir));
+                    actions_json.push(json!({
+                        "action": "merge_settings",
+                        "path": settings_file,
+                        "hooks_added": hooks_added,
+                        "legacy_removed": legacy_removed,
+                        "statusline_set": statusline_set,
+                    }));
+                }
+                Err(e) => warnings.push(e),
             }
         }
 
@@ -535,6 +1053,43 @@ pub fn cmd_install(args: &[&str]) {
         std::process::exit(1);
     }
 
+    // T-04: settings.json merge + statusline + legacy cleanup.
+    // `dst` is `.claude/hoangsa/`; its parent is the `.claude/` dir we need.
+    let target_dir = dst
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| dst.clone());
+    let settings_file = match hooks::settings_path(mode, &cwd) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("install: {e}");
+            std::process::exit(1);
+        }
+    };
+    let mut settings = match hooks::load_settings(&settings_file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("install: load_settings failed: {e}");
+            std::process::exit(1);
+        }
+    };
+    let settings_backup = match hooks::backup_settings(&settings_file) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("install: backup_settings failed: {e}");
+            std::process::exit(1);
+        }
+    };
+    let legacy_removed = hooks::cleanup_legacy_keys(&mut settings);
+    let hoangsa_hooks = hooks::build_hoangsa_hooks(&target_dir);
+    let hooks_added = hooks::merge_hoangsa_hooks(&mut settings, &hoangsa_hooks);
+    let statusline_set =
+        hooks::apply_statusline(&mut settings, &hooks::default_statusline(&target_dir));
+    if let Err(e) = hooks::save_settings(&settings_file, &settings) {
+        eprintln!("install: save_settings failed: {e}");
+        std::process::exit(1);
+    }
+
     helpers::out(&json!({
         "status": "ok",
         "mode": mode,
@@ -544,7 +1099,12 @@ pub fn cmd_install(args: &[&str]) {
         "copied": report.copied.len(),
         "backups": report.patched_backups.len(),
         "skipped": report.skipped.len(),
-        "backups_paths": report.patched_backups
+        "backups_paths": report.patched_backups,
+        "settings": settings_file,
+        "settings_backup": settings_backup,
+        "hooks_added": hooks_added,
+        "legacy_removed": legacy_removed,
+        "statusline_set": statusline_set,
     }));
 }
 
