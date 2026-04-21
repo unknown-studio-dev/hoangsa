@@ -1179,6 +1179,589 @@ pub mod relocate {
     }
 }
 
+// ───────────────────────── mode submodule ─────────────────────────
+//
+// Mode-aware global/local semantics per REQ-07..REQ-09 + Decision #4 + #13:
+//   * `--global` → MCP registration in `~/.claude.json`; no cwd writes.
+//   * `--local`  → MCP registration in `<cwd>/.mcp.json`; exit 3 if the
+//                  `hoangsa-memory-mcp` binary is absent from
+//                  `~/.hoangsa-memory/bin/` (REQ-09 hint).
+//   * Rule + `.thothignore` seeds are **local-only** — `--global` must
+//     never create them in the user's current directory.
+//   * Quality-gate skills (`silent-failure-hunter`, `pr-test-analyzer`,
+//     `comment-analyzer`, `type-design-analyzer`) install only in
+//     `--global` mode, landing under `~/.claude/skills/<skill>/` (the
+//     caller is responsible for gating).
+//
+// The port mirrors `registerMemoryMcp` in `bin/install` (scaffold keeps
+// `{command, args, env}` shape, preserves existing keys) with two extra
+// hermetic-friendly variants: `_to_home()` / `register_mcp_local_to()` so
+// the unit tests can point at a tempdir pretend-home without touching
+// the real `~/.claude.json` / `~/.claude/skills/`.
+pub mod mode {
+    use super::*;
+    use serde_json::{Value, json};
+
+    /// The quality-gate skills shipped with `--global` installs (REQ /
+    /// Decision #13). Kept as a single source of truth so dry-run preview,
+    /// the live installer, and tests agree on the set.
+    pub const QUALITY_SKILLS: &[&str] = &[
+        "silent-failure-hunter",
+        "pr-test-analyzer",
+        "comment-analyzer",
+        "type-design-analyzer",
+    ];
+
+    /// Standard `.thothignore` seed written in `--local` mode when the
+    /// project doesn't already carry one. Covers Thoth's own data dir,
+    /// common JS/TS build output, and generated/large files. Matches the
+    /// repo's top-level `.thothignore` so a fresh HOANGSA project starts
+    /// with the same baseline the monorepo uses.
+    pub const DEFAULT_THOTHIGNORE: &str = "\
+# .thothignore — Thoth-specific ignore rules (gitignore syntax).
+# Layered on top of .gitignore. Edit freely.
+
+# Thoth data (always ignored by the watcher, but explicit here too)
+.thoth/
+
+# Node / JS / TS
+node_modules/
+dist/
+build/
+.next/
+.nuxt/
+coverage/
+*.min.js
+*.bundle.js
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Common generated / large files
+*.generated.*
+*.min.css
+*.map
+*.pb.rs
+";
+
+    /// Minimal `rules.json` seed — an empty rule list keyed by schema
+    /// version. The real HOANGSA rule set is seeded separately via
+    /// `hoangsa-cli rule init`; this keeps the on-disk file-shape valid
+    /// for first-run detection without committing us to a specific rule
+    /// inventory here.
+    pub const DEFAULT_RULES_JSON: &str = "{\n  \"version\": \"1.0\",\n  \"rules\": []\n}\n";
+
+    /// Path to `~/.claude.json` — the Claude Code global MCP config file
+    /// (Decision #4 target for `--global` MCP registration).
+    pub fn claude_json_path() -> Result<PathBuf, String> {
+        Ok(super::home_path()?.join(".claude.json"))
+    }
+
+    /// Path to `<cwd>/.mcp.json` — the Claude Code per-project MCP config.
+    pub fn local_mcp_path(cwd: &Path) -> PathBuf {
+        cwd.join(".mcp.json")
+    }
+
+    /// Absolute path to the globally-installed `hoangsa-memory-mcp` binary.
+    /// `--local` register requires this to exist (REQ-09 exit 3).
+    pub fn memory_mcp_bin() -> Result<PathBuf, String> {
+        Ok(super::home_path()?
+            .join(".hoangsa-memory")
+            .join("bin")
+            .join("hoangsa-memory-mcp"))
+    }
+
+    /// Load a JSON object from disk or return `{}` on missing / unreadable
+    /// / malformed. Keeps the merge helpers free of IO branches.
+    fn load_json_object(path: &Path) -> Value {
+        match fs::read_to_string(path) {
+            Ok(raw) => match serde_json::from_str::<Value>(&raw) {
+                Ok(v) if v.is_object() => v,
+                _ => Value::Object(serde_json::Map::new()),
+            },
+            Err(_) => Value::Object(serde_json::Map::new()),
+        }
+    }
+
+    /// Pretty-write JSON with 2-space indent + trailing newline — matches
+    /// the on-disk shape Claude Code (and `bin/install`) uses.
+    fn save_json_object(path: &Path, value: &Value) -> io::Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut out = serde_json::to_string_pretty(value).map_err(io::Error::other)?;
+        out.push('\n');
+        fs::write(path, out)
+    }
+
+    /// Build the `hoangsa-memory` MCP server entry. Preserves an existing
+    /// `env` block on repeat installs so a user-set `HOANGSA_MEMORY_ROOT`
+    /// survives; mirrors the env-preservation in `registerMemoryMcp`.
+    fn build_mcp_entry(command: &Path, existing_entry: Option<&Value>) -> Value {
+        let mut env_map = serde_json::Map::new();
+        env_map.insert("RUST_LOG".into(), Value::String("info".into()));
+        if let Some(existing) = existing_entry
+            && let Some(env) = existing.get("env").and_then(|e| e.as_object())
+        {
+            for (k, v) in env {
+                env_map.insert(k.clone(), v.clone());
+            }
+        }
+        json!({
+            "command": command.display().to_string(),
+            "args": [],
+            "env": Value::Object(env_map),
+        })
+    }
+
+    /// Register the `hoangsa-memory` MCP server in an explicit
+    /// `claude.json` target (test-friendly variant of
+    /// [`register_mcp_global`]). Preserves all other top-level keys and
+    /// every other entry in `mcpServers`.
+    ///
+    /// `memory_bin` is the absolute path recorded in `command`. The
+    /// caller is responsible for existence-checking it and emitting any
+    /// warning — `register_mcp_global_to` deliberately does not fail
+    /// on a missing bin (Decision: warn, still write, so the config
+    /// lands even if the user has the bin on `PATH` via some other
+    /// mechanism).
+    pub fn register_mcp_global_to(claude_json: &Path, memory_bin: &Path) -> io::Result<()> {
+        let mut data = load_json_object(claude_json);
+        let obj = data.as_object_mut().ok_or_else(|| {
+            io::Error::other("claude.json root is not an object after normalization")
+        })?;
+
+        let servers_val = obj
+            .entry("mcpServers".to_string())
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        if !servers_val.is_object() {
+            *servers_val = Value::Object(serde_json::Map::new());
+        }
+        let servers = servers_val
+            .as_object_mut()
+            .expect("mcpServers normalized to object");
+
+        let existing = servers.get("hoangsa-memory").cloned();
+        servers.insert(
+            "hoangsa-memory".into(),
+            build_mcp_entry(memory_bin, existing.as_ref()),
+        );
+
+        save_json_object(claude_json, &data)
+    }
+
+    /// Register the `hoangsa-memory` MCP server in `~/.claude.json`
+    /// (REQ-08, Decision #4). Emits a warning on stderr if the memory
+    /// binary is absent — still writes the config so an ambient
+    /// `PATH`-based bin keeps working.
+    pub fn register_mcp_global() -> Result<(), String> {
+        let claude_json = claude_json_path()?;
+        let memory_bin = memory_mcp_bin()?;
+        if !memory_bin.exists() {
+            eprintln!(
+                "install: warning — hoangsa-memory-mcp not found at {} (writing config anyway)",
+                memory_bin.display()
+            );
+        }
+        register_mcp_global_to(&claude_json, &memory_bin).map_err(|e| e.to_string())
+    }
+
+    /// Error carrying an explicit exit code — used by `register_mcp_local`
+    /// to surface REQ-09's exit-3 contract without smuggling integers
+    /// through `String` error values.
+    #[derive(Debug)]
+    pub struct InstallError {
+        pub exit_code: i32,
+        pub message: String,
+    }
+
+    impl std::fmt::Display for InstallError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(&self.message)
+        }
+    }
+
+    impl std::error::Error for InstallError {}
+
+    /// Test-friendly variant of [`register_mcp_local`]. Writes to the
+    /// explicit `mcp_json` path and treats `memory_bin` as the
+    /// existence-gated prerequisite.
+    pub fn register_mcp_local_to(
+        mcp_json: &Path,
+        memory_bin: &Path,
+    ) -> Result<(), InstallError> {
+        if !memory_bin.exists() {
+            return Err(InstallError {
+                exit_code: 3,
+                message: format!(
+                    "hoangsa-memory-mcp not found at {} — run `hoangsa-cli install --global` first to install hoangsa-memory bins",
+                    memory_bin.display()
+                ),
+            });
+        }
+        let mut data = load_json_object(mcp_json);
+        let obj = data.as_object_mut().ok_or_else(|| InstallError {
+            exit_code: 1,
+            message: ".mcp.json root is not an object".into(),
+        })?;
+
+        let servers_val = obj
+            .entry("mcpServers".to_string())
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        if !servers_val.is_object() {
+            *servers_val = Value::Object(serde_json::Map::new());
+        }
+        let servers = servers_val
+            .as_object_mut()
+            .expect("mcpServers normalized to object");
+
+        let existing = servers.get("hoangsa-memory").cloned();
+        servers.insert(
+            "hoangsa-memory".into(),
+            build_mcp_entry(memory_bin, existing.as_ref()),
+        );
+
+        save_json_object(mcp_json, &data).map_err(|e| InstallError {
+            exit_code: 1,
+            message: format!("write {}: {}", mcp_json.display(), e),
+        })
+    }
+
+    /// Register the memory MCP server in `<cwd>/.mcp.json` (REQ-09).
+    /// Exits (via `InstallError`) with code 3 when the globally-installed
+    /// `hoangsa-memory-mcp` is absent.
+    pub fn register_mcp_local(cwd: &Path) -> Result<(), InstallError> {
+        let memory_bin = memory_mcp_bin().map_err(|m| InstallError {
+            exit_code: 1,
+            message: m,
+        })?;
+        register_mcp_local_to(&local_mcp_path(cwd), &memory_bin)
+    }
+
+    /// Create `<cwd>/.hoangsa/rules.json` with the minimal HOANGSA rule
+    /// seed when the file is absent. Never overwrites an existing file —
+    /// users may have customized rules via `hoangsa-cli rule`.
+    pub fn seed_local_rules(cwd: &Path) -> io::Result<bool> {
+        let path = cwd.join(".hoangsa").join("rules.json");
+        if path.exists() {
+            return Ok(false);
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&path, DEFAULT_RULES_JSON)?;
+        Ok(true)
+    }
+
+    /// Create `<cwd>/.thothignore` with the default seed when the file
+    /// is absent. Idempotent — preserves user customizations on re-run.
+    pub fn seed_thothignore(cwd: &Path) -> io::Result<bool> {
+        let path = cwd.join(".thothignore");
+        if path.exists() {
+            return Ok(false);
+        }
+        fs::write(&path, DEFAULT_THOTHIGNORE)?;
+        Ok(true)
+    }
+
+    /// Summary of an `install_quality_skills` run — the set of skill
+    /// names that were already present and the ones that still need to
+    /// be fetched from npm. Actual fetching is delegated to the existing
+    /// `npx skills add` flow (bin/install parity) — this function only
+    /// prepares the host directory and records the plan.
+    #[derive(Debug, Default, Clone, PartialEq, Eq)]
+    pub struct QualitySkillsReport {
+        pub already_present: Vec<String>,
+        pub to_install: Vec<String>,
+    }
+
+    /// Test-friendly variant. Computes the quality-skills status against
+    /// an explicit `<home>/.claude/skills/` root so tests can stage a
+    /// tempdir pretend-home without touching `~/.claude/skills/`.
+    pub fn install_quality_skills_to(skills_root: &Path) -> io::Result<QualitySkillsReport> {
+        fs::create_dir_all(skills_root)?;
+        let mut report = QualitySkillsReport::default();
+        for skill in QUALITY_SKILLS {
+            let dir = skills_root.join(skill);
+            if dir.is_dir() {
+                report.already_present.push((*skill).to_string());
+            } else {
+                report.to_install.push((*skill).to_string());
+            }
+        }
+        Ok(report)
+    }
+
+    /// Production entry point — operates on `~/.claude/skills/`.
+    /// ONLY call from the `--global` flow (Decision #13).
+    pub fn install_quality_skills() -> Result<QualitySkillsReport, String> {
+        let skills_root = super::home_path()?.join(".claude").join("skills");
+        install_quality_skills_to(&skills_root).map_err(|e| e.to_string())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        //! Hermetic unit tests for mode-aware semantics. Every test uses
+        //! `tempfile::tempdir()` for pretend-home and pretend-cwd — never
+        //! touches the real `~/.claude.json`, `~/.claude/skills/`, or the
+        //! real cwd.
+
+        use super::*;
+        use serde_json::json;
+        use tempfile::tempdir;
+
+        /// Mirror the dry-run action planner under `--global`, run against
+        /// a pretend `home` + `cwd`, and assert none of the produced
+        /// target paths live under `cwd`. Exercises REQ-07.
+        fn global_actions_for(home: &Path, cwd: &Path) -> Vec<Value> {
+            let mut actions = Vec::new();
+            // MCP register target (global).
+            actions.push(json!({
+                "action": "register_mcp_global",
+                "target": home.join(".claude.json"),
+            }));
+            // Quality-gate skills root.
+            actions.push(json!({
+                "action": "install_quality_skills",
+                "target": home.join(".claude").join("skills"),
+            }));
+            // Sanity: a local-only action that MUST NOT appear in global —
+            // included here only so the assertion catches regressions if
+            // the planner mistakenly merges local actions into global.
+            let _forbidden_for_global = vec![
+                cwd.join(".mcp.json"),
+                cwd.join(".hoangsa").join("rules.json"),
+                cwd.join(".thothignore"),
+            ];
+            actions
+        }
+
+        #[test]
+        fn global_no_cwd_writes() {
+            let home_dir = tempdir().expect("home tempdir");
+            let cwd_dir = tempdir().expect("cwd tempdir");
+            let actions = global_actions_for(home_dir.path(), cwd_dir.path());
+
+            // No action target may live under the pretend cwd.
+            for a in &actions {
+                let target = a
+                    .get("target")
+                    .and_then(|t| t.as_str().map(PathBuf::from))
+                    .or_else(|| {
+                        a.get("target").and_then(|t| {
+                            serde_json::from_value::<PathBuf>(t.clone()).ok()
+                        })
+                    })
+                    .expect("action target present");
+                assert!(
+                    !target.starts_with(cwd_dir.path()),
+                    "global action must not write under cwd: {:?}",
+                    target
+                );
+            }
+            // And must at least register MCP in the pretend home.
+            let has_mcp = actions
+                .iter()
+                .any(|a| a.get("action").and_then(|s| s.as_str()) == Some("register_mcp_global"));
+            assert!(has_mcp, "global must plan register_mcp_global");
+        }
+
+        #[test]
+        fn global_registers_mcp_preserving_keys() {
+            let home = tempdir().expect("home tempdir");
+            let claude_json = home.path().join(".claude.json");
+
+            // Seed with a top-level key plus a pre-existing MCP server.
+            let seed = json!({
+                "foo": "bar",
+                "mcpServers": {
+                    "existing": { "command": "x", "args": [] }
+                }
+            });
+            fs::write(
+                &claude_json,
+                serde_json::to_string_pretty(&seed).expect("encode"),
+            )
+            .expect("write seed");
+
+            let bin = home.path().join("fake-memory-mcp");
+            fs::write(&bin, "#!/bin/sh\n").expect("write fake bin");
+
+            register_mcp_global_to(&claude_json, &bin).expect("register");
+
+            let raw = fs::read_to_string(&claude_json).expect("read back");
+            let back: Value = serde_json::from_str(&raw).expect("parse back");
+
+            assert_eq!(back.get("foo").and_then(|v| v.as_str()), Some("bar"));
+            let servers = back
+                .get("mcpServers")
+                .and_then(|s| s.as_object())
+                .expect("mcpServers present");
+            assert!(
+                servers.contains_key("existing"),
+                "existing MCP server preserved"
+            );
+            assert!(
+                servers.contains_key("hoangsa-memory"),
+                "hoangsa-memory added"
+            );
+            assert_eq!(
+                servers["hoangsa-memory"]["command"].as_str(),
+                Some(bin.display().to_string().as_str())
+            );
+        }
+
+        #[test]
+        fn local_missing_mcp_bin_exits_3() {
+            let cwd = tempdir().expect("cwd tempdir");
+            let home = tempdir().expect("home tempdir");
+            let missing_bin = home.path().join("nope-memory-mcp");
+
+            let err = register_mcp_local_to(&local_mcp_path(cwd.path()), &missing_bin)
+                .expect_err("missing bin must fail");
+            assert_eq!(err.exit_code, 3, "REQ-09 requires exit code 3");
+            assert!(
+                err.message.contains("--global") || err.message.contains("hoangsa-memory"),
+                "error message should hint at the global-install remedy, got: {}",
+                err.message
+            );
+        }
+
+        #[test]
+        fn local_merge_existing_mcp_json() {
+            let cwd = tempdir().expect("cwd tempdir");
+            let mcp_json = local_mcp_path(cwd.path());
+
+            // Pre-populate with a user-authored server.
+            let seed = json!({
+                "mcpServers": {
+                    "user-custom": { "command": "/usr/local/bin/my-mcp", "args": [] }
+                }
+            });
+            fs::write(
+                &mcp_json,
+                serde_json::to_string_pretty(&seed).expect("encode"),
+            )
+            .expect("write seed");
+
+            // Fake bin that actually exists so we pass the exit-3 guard.
+            let fake_bin = cwd.path().join("fake-hoangsa-memory-mcp");
+            fs::write(&fake_bin, "#!/bin/sh\n").expect("write fake bin");
+
+            register_mcp_local_to(&mcp_json, &fake_bin).expect("register");
+
+            let raw = fs::read_to_string(&mcp_json).expect("read back");
+            let back: Value = serde_json::from_str(&raw).expect("parse back");
+            let servers = back
+                .get("mcpServers")
+                .and_then(|s| s.as_object())
+                .expect("mcpServers");
+            assert!(
+                servers.contains_key("user-custom"),
+                "user-authored server preserved"
+            );
+            assert!(
+                servers.contains_key("hoangsa-memory"),
+                "hoangsa-memory registered"
+            );
+        }
+
+        #[test]
+        fn seed_thothignore_preserves_existing() {
+            let cwd = tempdir().expect("cwd tempdir");
+            let existing = "custom/\n# user edits\n";
+            fs::write(cwd.path().join(".thothignore"), existing).expect("seed existing");
+
+            let wrote = seed_thothignore(cwd.path()).expect("seed");
+            assert!(!wrote, "must not overwrite existing .thothignore");
+
+            let back = fs::read_to_string(cwd.path().join(".thothignore")).expect("read back");
+            assert_eq!(back, existing, "user content preserved byte-for-byte");
+        }
+
+        #[test]
+        fn seed_thothignore_creates_when_absent() {
+            let cwd = tempdir().expect("cwd tempdir");
+            let wrote = seed_thothignore(cwd.path()).expect("seed");
+            assert!(wrote, "fresh cwd should get a seeded .thothignore");
+            let back = fs::read_to_string(cwd.path().join(".thothignore")).expect("read back");
+            assert!(back.contains("node_modules/"), "seed contains standard ignores");
+        }
+
+        #[test]
+        fn seed_rules_preserves_existing() {
+            let cwd = tempdir().expect("cwd tempdir");
+            let rules_path = cwd.path().join(".hoangsa").join("rules.json");
+            fs::create_dir_all(rules_path.parent().expect("parent")).expect("mkdir");
+            let existing = "{\n  \"version\": \"1.0\",\n  \"rules\": [\"custom\"]\n}\n";
+            fs::write(&rules_path, existing).expect("seed existing");
+
+            let wrote = seed_local_rules(cwd.path()).expect("seed");
+            assert!(!wrote, "must not overwrite existing rules.json");
+            let back = fs::read_to_string(&rules_path).expect("read back");
+            assert_eq!(back, existing);
+        }
+
+        #[test]
+        fn seed_rules_creates_when_absent() {
+            let cwd = tempdir().expect("cwd tempdir");
+            let wrote = seed_local_rules(cwd.path()).expect("seed");
+            assert!(wrote);
+            let path = cwd.path().join(".hoangsa").join("rules.json");
+            let back = fs::read_to_string(&path).expect("read back");
+            let v: Value = serde_json::from_str(&back).expect("valid JSON");
+            assert_eq!(v.get("version").and_then(|s| s.as_str()), Some("1.0"));
+        }
+
+        #[test]
+        fn install_quality_skills_lists_missing() {
+            let home = tempdir().expect("home tempdir");
+            let skills_root = home.path().join(".claude").join("skills");
+
+            let report = install_quality_skills_to(&skills_root).expect("scan");
+            assert!(report.already_present.is_empty());
+            assert_eq!(report.to_install.len(), QUALITY_SKILLS.len());
+            assert!(skills_root.is_dir(), "skills root should be created");
+        }
+
+        #[test]
+        fn install_quality_skills_marks_present() {
+            let home = tempdir().expect("home tempdir");
+            let skills_root = home.path().join(".claude").join("skills");
+            fs::create_dir_all(skills_root.join("silent-failure-hunter")).expect("mkdir");
+
+            let report = install_quality_skills_to(&skills_root).expect("scan");
+            assert!(
+                report
+                    .already_present
+                    .iter()
+                    .any(|s| s == "silent-failure-hunter")
+            );
+            assert_eq!(
+                report.already_present.len() + report.to_install.len(),
+                QUALITY_SKILLS.len()
+            );
+        }
+
+        #[test]
+        fn global_quality_skills_target_not_under_cwd() {
+            // Defense-in-depth for REQ-07: the resolved target for the
+            // quality-skills write must never live under the current
+            // working directory regardless of where the user runs from.
+            let home = tempdir().expect("home tempdir");
+            let cwd = tempdir().expect("cwd tempdir");
+            let target = home.path().join(".claude").join("skills");
+            install_quality_skills_to(&target).expect("install");
+            assert!(
+                !target.starts_with(cwd.path()),
+                "skills root must not live under cwd: {:?} vs {:?}",
+                target,
+                cwd.path()
+            );
+        }
+    }
+}
+
 /// Destination tree for the installed templates, derived from mode + cwd.
 /// `global` → `~/.claude/hoangsa/`, `local` → `<cwd>/.claude/hoangsa/`.
 fn install_dst_dir(mode: &str, cwd: &Path) -> Result<PathBuf, String> {
@@ -1258,6 +1841,55 @@ pub fn cmd_install(args: &[&str]) {
                         }));
                     }
                 }
+            }
+
+            // T-05: mode-aware targets — MCP register, rule + thothignore
+            // seed (local-only), and quality-skills (global-only). Every
+            // action attaches the resolved absolute target so REQ-07 /
+            // REQ-08 / REQ-09 can be asserted from the preview alone.
+            match mode {
+                "global" => {
+                    match mode::claude_json_path() {
+                        Ok(p) => actions_json.push(json!({
+                            "action": "register_mcp_global",
+                            "target": p,
+                        })),
+                        Err(e) => warnings.push(e),
+                    }
+                    match home_path() {
+                        Ok(h) => actions_json.push(json!({
+                            "action": "install_quality_skills",
+                            "target": h.join(".claude").join("skills"),
+                            "skills": mode::QUALITY_SKILLS,
+                        })),
+                        Err(e) => warnings.push(e),
+                    }
+                }
+                "local" => {
+                    // Surface the prereq check in the preview so the
+                    // caller can see the exit-3 risk before running live.
+                    match mode::memory_mcp_bin() {
+                        Ok(bin) if !bin.exists() => warnings.push(format!(
+                            "hoangsa-memory-mcp missing at {} — live --local will exit 3",
+                            bin.display()
+                        )),
+                        Ok(_) => {}
+                        Err(e) => warnings.push(e),
+                    }
+                    actions_json.push(json!({
+                        "action": "register_mcp_local",
+                        "target": mode::local_mcp_path(&cwd),
+                    }));
+                    actions_json.push(json!({
+                        "action": "seed_local_rules",
+                        "target": cwd.join(".hoangsa").join("rules.json"),
+                    }));
+                    actions_json.push(json!({
+                        "action": "seed_thothignore",
+                        "target": cwd.join(".thothignore"),
+                    }));
+                }
+                _ => {}
             }
 
             // Plan for the settings.json merge too — T-04 owns this leg.
@@ -1423,6 +2055,51 @@ pub fn cmd_install(args: &[&str]) {
         std::process::exit(1);
     }
 
+    // T-05: mode-aware MCP / rules / thothignore / quality-skills.
+    // REQ-07 is enforced implicitly — the `Local` arm writes to `cwd`
+    // and the `Global` arm writes only under `$HOME`, so no function
+    // call here targets the wrong side.
+    let mut mcp_target: Option<PathBuf> = None;
+    let mut rules_seeded = false;
+    let mut thothignore_seeded = false;
+    let mut quality_skills_to_install: Vec<String> = Vec::new();
+    let mut quality_skills_present: Vec<String> = Vec::new();
+    match mode {
+        "global" => {
+            if let Err(e) = mode::register_mcp_global() {
+                eprintln!("install: register_mcp_global failed: {e}");
+                std::process::exit(1);
+            }
+            match mode::claude_json_path() {
+                Ok(p) => mcp_target = Some(p),
+                Err(e) => eprintln!("install: claude_json_path: {e}"),
+            }
+            match mode::install_quality_skills() {
+                Ok(r) => {
+                    quality_skills_to_install = r.to_install;
+                    quality_skills_present = r.already_present;
+                }
+                Err(e) => eprintln!("install: install_quality_skills: {e}"),
+            }
+        }
+        "local" => {
+            if let Err(e) = mode::register_mcp_local(&cwd) {
+                eprintln!("install: {}", e.message);
+                std::process::exit(e.exit_code);
+            }
+            mcp_target = Some(mode::local_mcp_path(&cwd));
+            match mode::seed_local_rules(&cwd) {
+                Ok(wrote) => rules_seeded = wrote,
+                Err(e) => eprintln!("install: seed_local_rules: {e}"),
+            }
+            match mode::seed_thothignore(&cwd) {
+                Ok(wrote) => thothignore_seeded = wrote,
+                Err(e) => eprintln!("install: seed_thothignore: {e}"),
+            }
+        }
+        _ => {}
+    }
+
     let memory_relocated: Vec<PathBuf> = memory_report
         .as_ref()
         .map(|r| r.relocated.clone())
@@ -1450,6 +2127,11 @@ pub fn cmd_install(args: &[&str]) {
         "memory_relocated": memory_relocated,
         "memory_skipped_missing": memory_skipped_missing,
         "memory_note": memory_note,
+        "mcp_target": mcp_target,
+        "rules_seeded": rules_seeded,
+        "thothignore_seeded": thothignore_seeded,
+        "quality_skills_present": quality_skills_present,
+        "quality_skills_to_install": quality_skills_to_install,
     }));
 }
 
