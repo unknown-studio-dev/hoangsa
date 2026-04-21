@@ -701,27 +701,11 @@ function ensureHoangsaHooks(settings, targetDir) {
     `  ${green}✓${reset} Installed Stop hook (workflow completion guard)`,
   );
 
-  // --- PostToolUse auto-compact hook (periodic thoth compact of MEMORY + LESSONS) ---
+  // --- PostToolUse post-enforce hook (records thoth events to enforcement log) ---
   if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
   settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter(
     (entry) => !entry._hoangsa_managed,
   );
-  settings.hooks.PostToolUse.push({
-    _hoangsa_managed: true,
-    hooks: [
-      {
-        type: "command",
-        command: `${cli} hook compact-check`,
-        timeout: 5,
-      },
-    ],
-    matcher: "Bash|Write|Edit|NotebookEdit",
-  });
-  console.log(
-    `  ${green}✓${reset} Installed auto-compact hook (periodic thoth compact)`,
-  );
-
-  // --- PostToolUse post-enforce hook (records thoth events to enforcement log) ---
   settings.hooks.PostToolUse.push({
     _hoangsa_managed: true,
     hooks: [
