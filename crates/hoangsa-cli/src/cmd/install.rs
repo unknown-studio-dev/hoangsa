@@ -21,6 +21,21 @@ fn home_path() -> Result<PathBuf, String> {
         .ok_or_else(|| "cannot resolve $HOME".to_string())
 }
 
+/// Root directory for the installed `hoangsa-memory` tree (bins + manifest).
+/// Honors the `HOANGSA_INSTALL_DIR` env var (set by `scripts/install.sh`) so
+/// a user who points the installer at a non-default location still gets MCP
+/// entries whose `command` field matches where the bins actually landed.
+/// Falls back to `$HOME/.hoangsa-memory` when the env var is unset or empty.
+fn memory_install_dir() -> Result<PathBuf, String> {
+    if let Some(raw) = std::env::var_os("HOANGSA_INSTALL_DIR") {
+        let s = raw.to_string_lossy().into_owned();
+        if !s.is_empty() {
+            return Ok(PathBuf::from(s));
+        }
+    }
+    Ok(home_path()?.join(".hoangsa-memory"))
+}
+
 /// Compact `YYYYMMDD-HHMMSS` UTC stamp used as a suffix for both template
 /// patch backups and `settings.json` backups. A single formatter keeps the
 /// two backup naming schemes in sync.
@@ -222,11 +237,19 @@ pub mod templates {
         s
     }
 
-    /// Best-effort manifest loader. Returns `None` if the file is missing or
-    /// unreadable/corrupt — callers treat that the same way (fresh install).
-    pub fn load_manifest(path: &Path) -> Option<Manifest> {
-        let raw = fs::read_to_string(path).ok()?;
-        serde_json::from_str::<Manifest>(&raw).ok()
+    /// Manifest loader that distinguishes "missing" (Ok(None) — fresh install)
+    /// from corruption (Err — abort so we never overwrite user edits without
+    /// the patch-backup gate). Other I/O errors also surface as Err so a
+    /// permission issue doesn't silently masquerade as a fresh install.
+    pub fn load_manifest(path: &Path) -> Result<Option<Manifest>, String> {
+        match fs::read_to_string(path) {
+            Ok(raw) => match serde_json::from_str::<Manifest>(&raw) {
+                Ok(m) => Ok(Some(m)),
+                Err(e) => Err(format!("parse manifest at {}: {e}", path.display())),
+            },
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(format!("read manifest at {}: {e}", path.display())),
+        }
     }
 
     /// Write manifest as pretty JSON, creating parent dirs as needed.
@@ -399,7 +422,7 @@ pub mod templates {
     /// Per Decision #11 the real install writes to `~/.hoangsa-memory/manifest.json`,
     /// but tests pass a tempdir — so the caller computes it.
     pub fn default_manifest_path() -> Result<PathBuf, String> {
-        Ok(super::home_path()?.join(".hoangsa-memory").join("manifest.json"))
+        Ok(super::memory_install_dir()?.join("manifest.json"))
     }
 }
 
@@ -438,14 +461,24 @@ pub mod hooks {
         }
     }
 
-    /// Read existing `settings.json`, returning an empty object on missing /
-    /// unreadable / malformed files. Matches the Node installer semantics so
-    /// a first-time install still produces a fully-formed file.
+    /// Read existing `settings.json`. Returns an empty object when the file
+    /// is missing (fresh install), surfaces a parse failure as an error so
+    /// the caller aborts rather than overwriting a corrupt-but-recoverable
+    /// config with an empty shell. Other I/O errors bubble up unchanged.
+    ///
+    /// A JSON value that parses but isn't an object (e.g. `null`, array,
+    /// scalar) is treated as "not a settings file" and converted to an
+    /// empty object — preserves the prior lenient behavior for that one
+    /// edge case while still failing hard on actual JSON corruption.
     pub fn load_settings(path: &Path) -> io::Result<Value> {
         match fs::read_to_string(path) {
             Ok(raw) => match serde_json::from_str::<Value>(&raw) {
                 Ok(v) if v.is_object() => Ok(v),
-                _ => Ok(Value::Object(serde_json::Map::new())),
+                Ok(_) => Ok(Value::Object(serde_json::Map::new())),
+                Err(e) => Err(io::Error::other(format!(
+                    "parse settings.json at {}: {e}",
+                    path.display()
+                ))),
             },
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Value::Object(serde_json::Map::new())),
             Err(e) => Err(e),
@@ -863,6 +896,21 @@ pub mod hooks {
         }
 
         #[test]
+        fn load_settings_corrupt_returns_err() {
+            let tmp = tempdir().expect("tempdir");
+            let path = tmp.path().join("settings.json");
+            // Invalid JSON — previously this silently became `{}` and the
+            // installer wrote HOANGSA hooks on top of the empty shell,
+            // effectively nuking the (uninspected) user config.
+            std::fs::write(&path, "{ broken: true,").expect("write corrupt");
+            let err = load_settings(&path).expect_err("corrupt settings must error");
+            assert!(
+                err.to_string().contains("parse settings.json"),
+                "error should mention parse failure; got: {err}"
+            );
+        }
+
+        #[test]
         fn save_roundtrip_preserves_two_space_indent() {
             let tmp = tempdir().expect("tempdir");
             let p = tmp.path().join("settings.json");
@@ -917,10 +965,12 @@ pub mod relocate {
         pub skipped_missing: Vec<String>,
     }
 
-    /// Production destination: `~/.hoangsa-memory/bin/`. Resolves `$HOME` via
-    /// the shared [`super::home_path`] helper (no `dirs` crate dependency).
+    /// Production destination: `<HOANGSA_INSTALL_DIR>/bin/`, which defaults to
+    /// `~/.hoangsa-memory/bin/` when the env var is unset. Resolves via the
+    /// shared [`super::memory_install_dir`] helper so the Rust installer and
+    /// `scripts/install.sh` agree on where bins land.
     pub fn memory_bin_dir() -> Result<PathBuf, String> {
-        Ok(super::home_path()?.join(".hoangsa-memory").join("bin"))
+        Ok(super::memory_install_dir()?.join("bin"))
     }
 
     /// Resolve the staging directory the CLI should pull memory bins from.
@@ -1263,10 +1313,12 @@ pnpm-lock.yaml
     }
 
     /// Absolute path to the globally-installed `hoangsa-memory-mcp` binary.
+    /// Resolves under `$HOANGSA_INSTALL_DIR` (default `~/.hoangsa-memory`) so
+    /// a user who overrode the install dir in `scripts/install.sh` still gets
+    /// an MCP `command` field pointing at the real bin location.
     /// `--local` register requires this to exist (REQ-09 exit 3).
     pub fn memory_mcp_bin() -> Result<PathBuf, String> {
-        Ok(super::home_path()?
-            .join(".hoangsa-memory")
+        Ok(super::memory_install_dir()?
             .join("bin")
             .join("hoangsa-memory-mcp"))
     }
@@ -1453,14 +1505,16 @@ pnpm-lock.yaml
     }
 
     /// Summary of an `install_quality_skills` run — the set of skill
-    /// names that were already present and the ones that still need to
-    /// be fetched from npm. Actual fetching is delegated to the existing
-    /// `npx skills add` flow (bin/install parity) — this function only
-    /// prepares the host directory and records the plan.
+    /// names that were already present and the ones that are still
+    /// outstanding. This function only prepares the host directory and
+    /// reports state; the Rust installer does not ship with a built-in
+    /// `npx skills add` equivalent, so `pending` is reflected as a
+    /// top-level install warning (status = "partial") rather than
+    /// silently being reported as a successful install.
     #[derive(Debug, Default, Clone, PartialEq, Eq)]
     pub struct QualitySkillsReport {
         pub already_present: Vec<String>,
-        pub to_install: Vec<String>,
+        pub pending: Vec<String>,
     }
 
     /// Test-friendly variant. Computes the quality-skills status against
@@ -1474,7 +1528,7 @@ pnpm-lock.yaml
             if dir.is_dir() {
                 report.already_present.push((*skill).to_string());
             } else {
-                report.to_install.push((*skill).to_string());
+                report.pending.push((*skill).to_string());
             }
         }
         Ok(report)
@@ -1708,7 +1762,7 @@ pnpm-lock.yaml
 
             let report = install_quality_skills_to(&skills_root).expect("scan");
             assert!(report.already_present.is_empty());
-            assert_eq!(report.to_install.len(), QUALITY_SKILLS.len());
+            assert_eq!(report.pending.len(), QUALITY_SKILLS.len());
             assert!(skills_root.is_dir(), "skills root should be created");
         }
 
@@ -1726,8 +1780,61 @@ pnpm-lock.yaml
                     .any(|s| s == "silent-failure-hunter")
             );
             assert_eq!(
-                report.already_present.len() + report.to_install.len(),
+                report.already_present.len() + report.pending.len(),
                 QUALITY_SKILLS.len()
+            );
+        }
+
+        #[test]
+        fn register_mcp_global_honors_install_dir_env() {
+            // Bug A regression: `memory_mcp_bin()` used to hardcode
+            // `$HOME/.hoangsa-memory/bin/hoangsa-memory-mcp`, ignoring the
+            // `HOANGSA_INSTALL_DIR` override from `scripts/install.sh`.
+            // With the fix, setting the env var must be reflected in the
+            // `command` field written into `claude.json`.
+            let custom = tempdir().expect("custom install tempdir");
+            let home = tempdir().expect("home tempdir");
+            let claude_json = home.path().join(".claude.json");
+
+            // Scope the env var change to this test — reset on drop even if
+            // the assertions below panic.
+            struct EnvGuard(&'static str, Option<std::ffi::OsString>);
+            impl Drop for EnvGuard {
+                fn drop(&mut self) {
+                    match self.1.take() {
+                        Some(v) => unsafe { std::env::set_var(self.0, v) },
+                        None => unsafe { std::env::remove_var(self.0) },
+                    }
+                }
+            }
+            let _guard = EnvGuard("HOANGSA_INSTALL_DIR", std::env::var_os("HOANGSA_INSTALL_DIR"));
+            unsafe {
+                std::env::set_var("HOANGSA_INSTALL_DIR", custom.path());
+            }
+
+            // Resolve the bin path through the same helper the production
+            // `register_mcp_global` uses — must land inside `custom`.
+            let bin = memory_mcp_bin().expect("memory_mcp_bin");
+            assert!(
+                bin.starts_with(custom.path()),
+                "memory_mcp_bin must honor HOANGSA_INSTALL_DIR: {:?} not under {:?}",
+                bin,
+                custom.path()
+            );
+
+            // Persist a fake bin so `register_mcp_global_to` doesn't complain,
+            // then exercise the merge directly with the resolved path.
+            register_mcp_global_to(&claude_json, &bin).expect("register");
+
+            let raw = fs::read_to_string(&claude_json).expect("read back");
+            let back: Value = serde_json::from_str(&raw).expect("parse");
+            let command = back["mcpServers"]["hoangsa-memory"]["command"]
+                .as_str()
+                .expect("command field present");
+            assert!(
+                command.starts_with(custom.path().to_string_lossy().as_ref()),
+                "MCP command must point inside HOANGSA_INSTALL_DIR override: got {command}, expected prefix {:?}",
+                custom.path()
             );
         }
 
@@ -1793,9 +1900,17 @@ pub fn cmd_install(args: &[&str]) {
             ) {
                 (Ok(src), Ok(dst)) => {
                     let manifest_path = templates::default_manifest_path().ok();
-                    let prev = manifest_path
+                    let prev = match manifest_path
                         .as_ref()
-                        .and_then(|p| templates::load_manifest(p));
+                        .map(|p| templates::load_manifest(p))
+                    {
+                        Some(Ok(m)) => m,
+                        Some(Err(e)) => {
+                            warnings.push(format!("load_manifest: {e}"));
+                            None
+                        }
+                        None => None,
+                    };
                     match templates::plan_actions(&src, &dst, &prev) {
                         Ok(acts) => {
                             for a in acts {
@@ -1885,9 +2000,15 @@ pub fn cmd_install(args: &[&str]) {
                 Ok(settings_file) => {
                     // Dry-run shouldn't read `HOME` for real; still, we load the
                     // existing settings (safe, read-only) so we can preview the
-                    // delta honestly.
-                    let mut preview_settings =
-                        hooks::load_settings(&settings_file).unwrap_or(Value::Object(serde_json::Map::new()));
+                    // delta honestly. A corrupt file becomes a preview warning
+                    // (not fatal) so the user still sees a plan they can act on.
+                    let mut preview_settings = match hooks::load_settings(&settings_file) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            warnings.push(format!("load_settings: {e}"));
+                            Value::Object(serde_json::Map::new())
+                        }
+                    };
                     let legacy_removed = hooks::cleanup_legacy_keys(&mut preview_settings);
                     let target_dir = settings_file
                         .parent()
@@ -1933,16 +2054,24 @@ pub fn cmd_install(args: &[&str]) {
         return;
     }
 
-    // Live path for global/local installs. Uninstall + install-chroma-only flows
-    // land in later tasks; emit a scaffold ack so the outer pipeline doesn't break.
+    // Live path for global/local installs. `--uninstall` is still a REQ-06
+    // drift — emit a structured error with exit code 4 so callers (and
+    // shells) see the stub state rather than a silent no-op success.
     if flags.uninstall {
         helpers::out(&json!({
-            "status": "ok",
+            "status": "error",
+            "code": 4,
+            "message": "--uninstall is not implemented yet; remove files manually",
             "mode": mode,
-            "note": "uninstall pending T-06"
         }));
-        return;
+        std::process::exit(4);
     }
+
+    // Warnings collector for the live flow. Non-fatal per-step errors
+    // (optional seeds, quality-skills, etc.) accumulate here and surface
+    // in the final JSON so the top-level `status` can switch to
+    // `"partial"` instead of the misleading `"ok"` it used to emit.
+    let mut warnings: Vec<String> = Vec::new();
 
     let src = match templates::templates_source_dir(mode, &cwd) {
         Ok(p) => p,
@@ -1966,7 +2095,13 @@ pub fn cmd_install(args: &[&str]) {
         }
     };
 
-    let prev = templates::load_manifest(&manifest_path);
+    let prev = match templates::load_manifest(&manifest_path) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("install: {e}");
+            std::process::exit(1);
+        }
+    };
     let (report, new_manifest) = match templates::copy_templates(&src, &dst, &prev) {
         Ok(r) => r,
         Err(e) => {
@@ -2050,24 +2185,41 @@ pub fn cmd_install(args: &[&str]) {
     let mut mcp_target: Option<PathBuf> = None;
     let mut rules_seeded = false;
     let mut thothignore_seeded = false;
-    let mut quality_skills_to_install: Vec<String> = Vec::new();
+    let mut quality_skills_pending: Vec<String> = Vec::new();
     let mut quality_skills_present: Vec<String> = Vec::new();
     match mode {
         "global" => {
+            // MCP register is a fatal step — if we can't wire memory, there's
+            // no point calling the install successful.
             if let Err(e) = mode::register_mcp_global() {
                 eprintln!("install: register_mcp_global failed: {e}");
                 std::process::exit(1);
             }
             match mode::claude_json_path() {
                 Ok(p) => mcp_target = Some(p),
-                Err(e) => eprintln!("install: claude_json_path: {e}"),
+                Err(e) => {
+                    eprintln!("install: claude_json_path: {e}");
+                    warnings.push(format!("claude_json_path: {e}"));
+                }
             }
+            // Quality-skills scan is optional — never block the install,
+            // but feed both the pending set and any IO failure into
+            // `warnings` so the top-level status reflects reality.
             match mode::install_quality_skills() {
                 Ok(r) => {
-                    quality_skills_to_install = r.to_install;
+                    if !r.pending.is_empty() {
+                        warnings.push(format!(
+                            "quality_skills pending (not auto-installed): {}",
+                            r.pending.join(", ")
+                        ));
+                    }
+                    quality_skills_pending = r.pending;
                     quality_skills_present = r.already_present;
                 }
-                Err(e) => eprintln!("install: install_quality_skills: {e}"),
+                Err(e) => {
+                    eprintln!("install: install_quality_skills: {e}");
+                    warnings.push(format!("install_quality_skills: {e}"));
+                }
             }
         }
         "local" => {
@@ -2076,13 +2228,21 @@ pub fn cmd_install(args: &[&str]) {
                 std::process::exit(e.exit_code);
             }
             mcp_target = Some(mode::local_mcp_path(&cwd));
+            // Seed steps are optional; a failing seed must not abort the
+            // install but MUST surface via `warnings` + status=partial.
             match mode::seed_local_rules(&cwd) {
                 Ok(wrote) => rules_seeded = wrote,
-                Err(e) => eprintln!("install: seed_local_rules: {e}"),
+                Err(e) => {
+                    eprintln!("install: seed_local_rules: {e}");
+                    warnings.push(format!("seed_local_rules: {e}"));
+                }
             }
             match mode::seed_thothignore(&cwd) {
                 Ok(wrote) => thothignore_seeded = wrote,
-                Err(e) => eprintln!("install: seed_thothignore: {e}"),
+                Err(e) => {
+                    eprintln!("install: seed_thothignore: {e}");
+                    warnings.push(format!("seed_thothignore: {e}"));
+                }
             }
         }
         _ => {}
@@ -2097,8 +2257,14 @@ pub fn cmd_install(args: &[&str]) {
         .map(|r| r.skipped_missing.clone())
         .unwrap_or_default();
 
+    // Status flips to `"partial"` whenever any non-fatal step contributed
+    // a warning. Fatal steps already exited above, so reaching this point
+    // with an empty `warnings` vec means a clean `"ok"`.
+    let status = if warnings.is_empty() { "ok" } else { "partial" };
+
     helpers::out(&json!({
-        "status": "ok",
+        "status": status,
+        "warnings": warnings,
         "mode": mode,
         "src": src,
         "dst": dst,
@@ -2119,7 +2285,7 @@ pub fn cmd_install(args: &[&str]) {
         "rules_seeded": rules_seeded,
         "thothignore_seeded": thothignore_seeded,
         "quality_skills_present": quality_skills_present,
-        "quality_skills_to_install": quality_skills_to_install,
+        "quality_skills_pending": quality_skills_pending,
     }));
 }
 
@@ -2259,7 +2425,7 @@ mod templates_tests {
         save_manifest(&manifest_path, &manifest).expect("save manifest");
 
         // Second run: prev manifest loaded, no user edit → skip path.
-        let prev = load_manifest(&manifest_path);
+        let prev = load_manifest(&manifest_path).expect("load_manifest ok");
         assert!(prev.is_some(), "manifest should roundtrip");
         let (report, _m2) = copy_templates(&src, &dst, &prev).expect("copy 2");
 
@@ -2294,7 +2460,7 @@ mod templates_tests {
         write(&src.join("workflow.md"), "# upstream v2");
 
         // Run 2 — should detect drift, back up the user's version, then overwrite.
-        let prev = load_manifest(&manifest_path);
+        let prev = load_manifest(&manifest_path).expect("load_manifest ok");
         let (report, _m2) = copy_templates(&src, &dst, &prev).expect("copy v2");
 
         assert_eq!(report.patched_backups.len(), 1, "one backup expected");
@@ -2331,14 +2497,30 @@ mod templates_tests {
         m.files.insert("a/b.md".into(), "deadbeef".into());
         m.files.insert("c.md".into(), "cafebabe".into());
         save_manifest(&path, &m).expect("save");
-        let loaded = load_manifest(&path).expect("load");
+        let loaded = load_manifest(&path).expect("load ok").expect("some");
         assert_eq!(loaded, m);
     }
 
     #[test]
     fn load_manifest_missing_returns_none() {
         let tmp = tempdir().expect("tempdir");
-        assert!(load_manifest(&tmp.path().join("nope.json")).is_none());
+        let res = load_manifest(&tmp.path().join("nope.json")).expect("missing is Ok");
+        assert!(res.is_none());
+    }
+
+    #[test]
+    fn load_manifest_corrupt_returns_err() {
+        let tmp = tempdir().expect("tempdir");
+        let path = tmp.path().join("manifest.json");
+        // Write bytes that are not valid JSON for a Manifest — `load_manifest`
+        // must NOT collapse this to `None` (which would look like a fresh
+        // install and bypass the patch-backup gate on subsequent copies).
+        std::fs::write(&path, "{ not valid json").expect("write corrupt");
+        let err = load_manifest(&path).expect_err("corrupt manifest must error");
+        assert!(
+            err.contains("parse manifest"),
+            "error should mention parse failure; got: {err}"
+        );
     }
 
     #[test]

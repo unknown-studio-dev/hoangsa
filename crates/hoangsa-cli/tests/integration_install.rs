@@ -409,6 +409,86 @@ fn task_manager_flag_accepted_space_and_equals() {
     );
 }
 
+// ─── 12c. live --local seed failure surfaces as warning + partial ────────
+
+#[test]
+fn seed_failure_reported_as_warning_not_ok() {
+    let (home, cwd) = tmp_home_cwd();
+    let staging = tempfile::tempdir().expect("staging tempdir");
+    let templates = seed_templates(staging.path());
+
+    // Stage a fake hoangsa-memory-mcp bin under HOANGSA_INSTALL_DIR so the
+    // --local path gets past the REQ-09 exit-3 guard and reaches the seed
+    // steps. `install_cmd` explicitly scrubs this env var, so we restore
+    // it only for this test.
+    let install_dir = tempfile::tempdir().expect("install_dir tempdir");
+    let bin_dir = install_dir.path().join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    let fake_bin = bin_dir.join("hoangsa-memory-mcp");
+    fs::write(&fake_bin, "#!/bin/sh\n").expect("write fake bin");
+
+    // Pre-create `.hoangsa` as a FILE so `seed_local_rules` fails when it
+    // tries to `create_dir_all(".hoangsa/")`. This exercises the Bug E
+    // path: a non-fatal step failing must bubble into `warnings` and flip
+    // the top-level `status` away from `"ok"`.
+    fs::write(cwd.path().join(".hoangsa"), "conflicting file\n")
+        .expect("seed conflicting .hoangsa file");
+
+    let out = run(install_cmd(home.path(), cwd.path())
+        .env("HOANGSA_TEMPLATES_DIR", &templates)
+        .env("HOANGSA_INSTALL_DIR", install_dir.path())
+        .args(["--local", "--no-memory"]));
+
+    assert!(
+        out.status.success(),
+        "install must still succeed even when optional seed fails; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v = parse_stdout(&out);
+    assert_ne!(
+        v["status"], "ok",
+        "Bug E: a seed failure must flip status off \"ok\"; got: {v}"
+    );
+    let warnings = v["warnings"]
+        .as_array()
+        .expect("warnings array must be present");
+    let has_seed_warning = warnings
+        .iter()
+        .any(|w| w.as_str().is_some_and(|s| s.contains("seed_local_rules")));
+    assert!(
+        has_seed_warning,
+        "warnings must mention the failing step name; got: {v}"
+    );
+}
+
+// ─── 12b. live --uninstall returns exit 4 "not implemented" (REQ-06) ─────
+
+#[test]
+fn uninstall_returns_not_implemented_exit_4() {
+    let (home, cwd) = tmp_home_cwd();
+
+    // Live (non-dry-run) uninstall: the subcommand is still a spec drift
+    // against REQ-06. Instead of silently reporting `status=ok` with a
+    // "pending" note, it must fail fast with exit code 4 and a structured
+    // JSON error so callers don't mistake the stub for a real uninstall.
+    let out = run(install_cmd(home.path(), cwd.path()).args(["--uninstall", "--global"]));
+    assert_eq!(
+        exit_code(&out),
+        4,
+        "live --uninstall must exit 4 until implemented; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v = parse_stdout(&out);
+    assert_eq!(v["status"], "error", "status must be error; got: {v}");
+    assert_eq!(v["code"], 4, "code must be 4; got: {v}");
+    assert!(
+        v["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("not implemented")),
+        "message must flag not-implemented; got: {v}"
+    );
+}
+
 // ─── 12. --no-memory skips the relocate action ───────────────────────────
 
 #[test]
