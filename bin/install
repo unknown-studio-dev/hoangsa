@@ -190,6 +190,43 @@ function writeMcpJson(mcpJsonPath, data) {
   fs.writeFileSync(mcpJsonPath, JSON.stringify(data, null, 2) + "\n");
 }
 
+/** Register thoth MCP server in cwd/.mcp.json, pointing at the binary we
+ *  just copied into targetDir. Preserves existing env so prior THOTH_ROOT
+ *  wiring (from a pre-monorepo install) continues to resolve the same
+ *  on-disk memory. */
+function registerThothMcp(targetDir) {
+  const exeExt = process.platform === "win32" ? ".exe" : "";
+  const thothMcpBin = path.join(
+    targetDir,
+    "hoangsa",
+    "bin",
+    `thoth-mcp${exeExt}`,
+  );
+  if (!fs.existsSync(thothMcpBin)) {
+    console.log(
+      `  ${yellow}⚠${reset} thoth-mcp binary missing — skipping .mcp.json registration. Run 'npm run build:thoth' then re-install.`,
+    );
+    return;
+  }
+
+  const mcpJsonPath = path.join(process.cwd(), ".mcp.json");
+  const mcpData = readMcpJson(mcpJsonPath);
+  if (!mcpData.mcpServers) mcpData.mcpServers = {};
+
+  const existing = mcpData.mcpServers.thoth || {};
+  const env = { RUST_LOG: "info", ...(existing.env || {}) };
+
+  mcpData.mcpServers.thoth = {
+    command: thothMcpBin,
+    args: [],
+    env,
+  };
+  writeMcpJson(mcpJsonPath, mcpData);
+  console.log(
+    `  ${green}✓${reset} Registered thoth MCP server in .mcp.json`,
+  );
+}
+
 /** Get commit attribution from global settings: null=remove, undefined=default, string=custom. */
 function getCommitAttribution() {
   const { attribution } = readSettings(
@@ -578,8 +615,8 @@ function copyAllFiles(src, targetDir, attribution, wantMedia = false) {
   // Copy compiled binary — prefer platform package, fall back to dev build
   const binDestDir = path.join(hoangsaDestDir, "bin");
   fs.mkdirSync(binDestDir, { recursive: true });
-  const binaryDestName =
-    process.platform === "win32" ? "hoangsa-cli.exe" : "hoangsa-cli";
+  const exeExt = process.platform === "win32" ? ".exe" : "";
+  const binaryDestName = `hoangsa-cli${exeExt}`;
   const binaryDest = path.join(binDestDir, binaryDestName);
   const resolvedBinary = resolvePlatformBinary(wantMedia);
   if (resolvedBinary) {
@@ -588,9 +625,31 @@ function copyAllFiles(src, targetDir, attribution, wantMedia = false) {
     console.log(`  ${green}✓${reset} Installed hoangsa-cli binary`);
   } else {
     console.log(
-      `  ${yellow}⚠${reset} Binary not found — run 'npm run build:rust' first or install a platform package`,
+      `  ${yellow}⚠${reset} Binary not found — run 'npm run build' first or install a platform package`,
     );
     failures.push("hoangsa-cli binary");
+  }
+
+  // Copy thoth binaries (memory indexer + MCP server) from target/release.
+  // Platform packages don't bundle these yet — dev build required.
+  for (const name of ["thoth", "thoth-mcp"]) {
+    const srcPath = path.join(
+      __dirname,
+      "..",
+      "target",
+      "release",
+      `${name}${exeExt}`,
+    );
+    const destPath = path.join(binDestDir, `${name}${exeExt}`);
+    if (fs.existsSync(srcPath)) {
+      fs.copyFileSync(srcPath, destPath);
+      fs.chmodSync(destPath, 0o755);
+      console.log(`  ${green}✓${reset} Installed ${name} binary`);
+    } else {
+      console.log(
+        `  ${yellow}⚠${reset} ${name} binary not found — run 'npm run build:thoth' to build`,
+      );
+    }
   }
 
   // Copy CHANGELOG.md (optional — skip silently if not present in package)
@@ -809,19 +868,10 @@ function install(isGlobal) {
   const settings = readSettings(settingsPath);
   ensureHoangsaHooks(settings, targetDir);
 
-  // Thoth binaries (thoth + thoth-mcp) now live in this monorepo.
-  // Build them once: `cargo build --release -p thoth-cli -p thoth-mcp`.
-  // The MCP file-watcher handles indexing automatically — no explicit
-  // `thoth index` step needed.
-  const thothBin = path.join(__dirname, "..", "target", "release",
-    process.platform === "win32" ? "thoth.exe" : "thoth");
-  if (fs.existsSync(thothBin)) {
-    console.log(`  ${green}✓${reset} Thoth binary available at ${thothBin}`);
-  } else {
-    console.log(
-      `  ${yellow}⚠${reset} Thoth binary not built yet. Run: cargo build --release -p thoth-cli -p thoth-mcp`,
-    );
-  }
+  // Register thoth MCP server in cwd/.mcp.json so Claude Code spawns the
+  // locally-installed thoth-mcp binary on demand. Idempotent — preserves
+  // any existing THOTH_ROOT env setting so prior memory state stays wired.
+  registerThothMcp(targetDir);
 
   // Seed default rules.json if missing (idempotent — does nothing if file exists)
   const cliBin = path.join(targetDir, "hoangsa", "bin",
