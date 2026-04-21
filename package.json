@@ -27,11 +27,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/pirumu/hoangsa.git"
+    "url": "git+https://github.com/unknown-studio-dev/hoangsa.git"
   },
-  "homepage": "https://github.com/pirumu/hoangsa",
+  "homepage": "https://github.com/unknown-studio-dev/hoangsa",
   "bugs": {
-    "url": "https://github.com/pirumu/hoangsa/issues"
+    "url": "https://github.com/unknown-studio-dev/hoangsa/issues"
   },
   "scripts": {
     "build": "cargo build --release -p hoangsa-cli",
