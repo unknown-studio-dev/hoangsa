@@ -183,8 +183,8 @@ detect_triple() {
         die 2 "unsupported platform: $triple (supported: $SUPPORTED_TRIPLES)"
     fi
 
-    printf 'triple=%s\n' "$triple"
     TRIPLE="$triple"
+    info "detected platform: $TRIPLE"
 }
 
 # ---------------------------------------------------------------------------
@@ -303,12 +303,10 @@ main() {
         | head -n 1 \
         | awk '{print $1}')
     if [ -z "$expected" ]; then
-        rm -f "$TMP/$TARBALL_NAME"
         die 1 "no SHA256 entry for $TARBALL_NAME in SHA256SUMS"
     fi
     actual=$(cd "$TMP" && $SHA256 "$TARBALL_NAME" | awk '{print $1}')
     if [ "$expected" != "$actual" ]; then
-        rm -f "$TMP/$TARBALL_NAME"
         die 1 "checksum mismatch for $TARBALL_NAME (expected $expected, got $actual)"
     fi
     info "checksum OK"
