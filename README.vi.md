@@ -16,6 +16,18 @@ HOANGSA là hệ thống context engineering cho [Claude Code](https://docs.anth
 
 ---
 
+## Cài đặt
+
+```sh
+curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh | sh
+```
+
+Lệnh này cài `hoangsa-cli` vào `~/.hoangsa/bin/` và `hoangsa-memory` + `hoangsa-memory-mcp` vào `~/.hoangsa-memory/bin/`.
+
+Phương án khác dành cho người dùng Node: `npx hoangsa-cc --global` (cần Node ≥14).
+
+---
+
 ## Bắt đầu nhanh
 
 Yêu cầu: **Node.js 14.18+** và **[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)**
