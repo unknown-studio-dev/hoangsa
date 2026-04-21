@@ -242,14 +242,26 @@ fetch_stdout() {
 # PATH rc-file edit (managed markers, TTY-gated, HOANGSA_NO_PATH_EDIT aware)
 # ---------------------------------------------------------------------------
 
+# Single source of truth for the PATH export line written into rc files and
+# printed to the user as a manual fallback. Both consumers MUST go through
+# this helper so the two copies cannot drift.
+#
+# Emits a literal `$PATH` so the user's shell (or the rc file) expands it at
+# source time, not our installer. `$HOANGSA_INSTALL_DIR` and `$HOANGSA_CLI_DIR`
+# ARE expanded here — we bake the absolute paths into the rc file so relocating
+# the installer state does not silently break the rc snippet.
+managed_export_line() {
+    # shellcheck disable=SC2016  # `$PATH` intentionally literal.
+    printf 'export PATH="%s/bin:%s:$PATH"\n' \
+        "$HOANGSA_INSTALL_DIR" "$HOANGSA_CLI_DIR"
+}
+
 # Print the manual export instructions. Used as a fallback whenever the rc
 # edit is skipped for any reason (env flag, non-TTY, user declined, no rc).
 print_manual_export() {
     info "add the following line to your ~/.zshrc or ~/.bashrc:"
-    # shellcheck disable=SC2016  # `$PATH` is intentionally literal — it is
-    # what the user pastes into their rc file, not what we expand here.
-    printf '    export PATH="%s/bin:%s:$PATH"\n' \
-        "$HOANGSA_INSTALL_DIR" "$HOANGSA_CLI_DIR"
+    printf '    '
+    managed_export_line
 }
 
 # Managed-block markers. Used by both the awk strip pass and the append pass
@@ -287,10 +299,7 @@ rewrite_managed_block() {
 
     {
         printf '%s\n' "$HOANGSA_MARK_START"
-        # shellcheck disable=SC2016  # `$HOME` / `$PATH` are intentionally
-        # literal — we write them verbatim into the rc file so the user's
-        # shell expands them at source time, not our installer.
-        printf 'export PATH="$HOME/.hoangsa-memory/bin:$HOME/.hoangsa/bin:$PATH"\n'
+        managed_export_line
         printf '%s\n' "$HOANGSA_MARK_END"
     } >> "$_tmp"
 
@@ -359,9 +368,22 @@ resolve_tag() {
 
     info "resolving latest release tag from github.com/$HOANGSA_REPO"
     _api="https://api.github.com/repos/$HOANGSA_REPO/releases/latest"
-    _json=$(fetch_stdout "$_api" || true)
+
+    # Surface network / HTTP failures explicitly instead of masking them with
+    # `|| true` (which let grep pick a bogus tag out of rate-limit JSON or an
+    # HTML error page). On failure we abort with a clear error.
+    _json=$(fetch_stdout "$_api") \
+        || die 1 "fetching release metadata from $_api failed (network or GitHub rate limit)"
+
     if [ -z "$_json" ]; then
-        die 1 "failed to fetch release metadata from $_api"
+        die 1 "failed to fetch release metadata from $_api (empty response)"
+    fi
+
+    # Rate-limit bodies are HTTP 200 from curl's POV (or 403 with a JSON body
+    # from wget's); detect the marker string explicitly to give a useful
+    # error instead of "could not parse tag_name".
+    if printf '%s' "$_json" | grep -q '"message"[[:space:]]*:[[:space:]]*"API rate limit exceeded'; then
+        die 1 "GitHub API rate limit exceeded for $_api — set HOANGSA_VERSION=<tag> to skip resolution, or retry later / authenticate"
     fi
 
     # Parse tag_name without jq. Keep it strict: the first tag_name line wins.
@@ -371,7 +393,7 @@ resolve_tag() {
         | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
 
     if [ -z "$TAG" ]; then
-        die 1 "could not parse tag_name from release metadata"
+        die 1 "could not parse tag_name from release metadata at $_api"
     fi
 }
 
@@ -464,21 +486,69 @@ main() {
     install_bin "$PKG_DIR/bin/hoangsa-memory" "$HOANGSA_INSTALL_DIR/bin/hoangsa-memory"
     install_bin "$PKG_DIR/bin/hoangsa-memory-mcp" "$HOANGSA_INSTALL_DIR/bin/hoangsa-memory-mcp"
 
-    # Stage templates alongside the CLI so `hoangsa-cli install` can find them
-    # via its $EXE_DIR/../templates/ convention. We leave them in the temp pkg
-    # dir and point HOANGSA_TEMPLATES_DIR at it so the Rust subcommand can pick
-    # them up without requiring a separate hand-off.
+    # PATH rc-file append with managed markers + TTY gating. Skipped only when
+    # BOTH the memory-bin dir AND the CLI dir are already on $PATH — otherwise
+    # either `hoangsa-memory*` or `hoangsa-cli` stays unreachable from new
+    # shells. (Bug H: previously only the memory-bin dir was checked, so a
+    # second install with the memory dir already on PATH left the CLI dir
+    # unlinked.)
+    _need_path_edit=1
+    case ":$PATH:" in
+        *":$HOANGSA_INSTALL_DIR/bin:"*)
+            case ":$PATH:" in
+                *":$HOANGSA_CLI_DIR:"*) _need_path_edit=0 ;;
+            esac
+            ;;
+    esac
+    if [ "$_need_path_edit" -eq 1 ]; then
+        edit_path_in_rc
+    fi
+
+    # Stage templates + memory bins in a persistent directory OUTSIDE $TMP so
+    # the exec'd CLI can read them after the shell-exit trap fires. (Bug G:
+    # `exec` replaces this shell with the Rust CLI; the EXIT trap fires right
+    # before the exec completes and races against the CLI's reads of
+    # HOANGSA_TEMPLATES_DIR / HOANGSA_STAGING_DIR.)
+    #
+    # Layout after staging (matches relocate::staging_dir_from_env's contract):
+    #     $STAGING/templates/   <- HOANGSA_TEMPLATES_DIR
+    #     $STAGING/bin/         <- hoangsa-memory, hoangsa-memory-mcp
+    #
+    # Cleanup is the CLI's responsibility. On systems with `/tmp` cleanup
+    # (macOS, systemd-tmpfiles on Linux) a leaked staging dir is benign.
+    STAGING=$(mktemp -d "${TMPDIR:-/tmp}/hoangsa-staging.XXXXXX" 2>/dev/null \
+        || mktemp -d -t hoangsa-staging)
+    if [ -z "$STAGING" ] || [ ! -d "$STAGING" ]; then
+        die 1 "failed to create staging directory"
+    fi
+
     if [ -d "$PKG_DIR/templates" ]; then
-        HOANGSA_TEMPLATES_DIR="$PKG_DIR/templates"
+        mkdir -p "$STAGING"
+        mv "$PKG_DIR/templates" "$STAGING/templates" \
+            || die 1 "failed to stage templates into $STAGING/templates"
+        HOANGSA_TEMPLATES_DIR="$STAGING/templates"
         export HOANGSA_TEMPLATES_DIR
     fi
 
-    # PATH rc-file append with managed markers + TTY gating. Skipped entirely
-    # when the memory bin dir is already on $PATH.
-    case ":$PATH:" in
-        *":$HOANGSA_INSTALL_DIR/bin:"*) ;;
-        *) edit_path_in_rc ;;
-    esac
+    # Move memory bins into $STAGING/bin so relocate::source_memory_bins can
+    # find them via the staging/bin/ convention. Only move what's present —
+    # install_bin earlier just warns for missing bins.
+    mkdir -p "$STAGING/bin"
+    for _bin in hoangsa-memory hoangsa-memory-mcp; do
+        if [ -f "$PKG_DIR/bin/$_bin" ]; then
+            mv "$PKG_DIR/bin/$_bin" "$STAGING/bin/$_bin" \
+                || die 1 "failed to stage $_bin into $STAGING/bin"
+        fi
+    done
+
+    HOANGSA_STAGING_DIR="$STAGING"
+    export HOANGSA_STAGING_DIR
+
+    # Clear the cleanup trap before `exec`. $TMP still gets rm'd here because
+    # we drop the trap only after consuming everything we needed from it; the
+    # tarball + checksums are no longer referenced.
+    rm -rf "$TMP"
+    trap - EXIT INT TERM
 
     # Hand off to the CLI for the real install work. Use eval to re-expand the
     # quoted PASSTHROUGH string built during arg parse.
