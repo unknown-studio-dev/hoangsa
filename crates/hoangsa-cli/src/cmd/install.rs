@@ -544,10 +544,23 @@ pub mod hooks {
     /// `$HOANGSA_INSTALL_DIR/bin` resolves to), not under the project-scoped
     /// template tree, so the hook command points at that global launcher.
     /// Mirrors `ensureHoangsaHooks` in `bin/install`.
+    /// Marker embedded in the hsp PreToolUse hook command so either
+    /// `hsp uninit` (which looks for this string) or a subsequent
+    /// `hoangsa-cli install` (via `is_hoangsa_entry`) can identify and
+    /// remove the entry. Must match `hoangsa_proxy::init::HSP_MARKER`.
+    pub const HSP_MARKER: &str = "# __hsp";
+
     pub fn build_hoangsa_hooks(_target_dir: &Path) -> Value {
-        let cli = super::memory_install_dir()
+        build_hoangsa_hooks_inner(super::memory_install_dir().ok().as_deref())
+    }
+
+    /// Core payload builder. `install_root` is `~/.hoangsa/` (or
+    /// `$HOANGSA_INSTALL_DIR`) — tests inject a sandboxed path so the hsp
+    /// presence check is deterministic instead of reading the caller's env.
+    pub fn build_hoangsa_hooks_inner(install_root: Option<&Path>) -> Value {
+        let cli = install_root
             .map(|d| d.join("bin").join("hoangsa-cli"))
-            .unwrap_or_else(|_| PathBuf::from("hoangsa-cli"))
+            .unwrap_or_else(|| PathBuf::from("hoangsa-cli"))
             .display()
             .to_string();
 
@@ -568,17 +581,35 @@ pub mod hooks {
             Value::Object(obj)
         };
 
+        let mut pre_tool_use = vec![
+            managed_entry(format!("{cli} hook lesson-guard"), 10, Some("Edit|Write")),
+            managed_entry(format!("{cli} hook enforce"), 10, Some("Edit|Write|Bash|NotebookEdit")),
+        ];
+
+        // hsp ships alongside hoangsa-cli in local-dev installs but is absent
+        // from release tarballs — register the rewrite hook only when the
+        // binary is actually present, so we never leave a dangling command
+        // pointing at a missing executable.
+        if let Some(hsp) = install_root
+            .map(|d| d.join("bin").join("hsp"))
+            .filter(|p| p.exists())
+        {
+            pre_tool_use.push(managed_entry(
+                format!("{} hook rewrite {HSP_MARKER}", hsp.display()),
+                10,
+                Some("Bash"),
+            ));
+        }
+
         json!({
+            "SessionStart": [managed_entry(format!("{cli} hook state-clear"), 5, None)],
             "Stop": [managed_entry(format!("{cli} hook stop-check"), 5, None)],
             "PostToolUse": [managed_entry(
                 format!("{cli} hook post-enforce"),
                 5,
                 Some("mcp__hoangsa-memory__memory_impact|mcp__hoangsa-memory__memory_detect_changes|mcp__hoangsa-memory__memory_recall|Edit|Write|MultiEdit"),
             )],
-            "PreToolUse": [
-                managed_entry(format!("{cli} hook lesson-guard"), 10, Some("Edit|Write")),
-                managed_entry(format!("{cli} hook enforce"), 10, Some("Edit|Write|Bash|NotebookEdit")),
-            ],
+            "PreToolUse": pre_tool_use,
             "PreCompact": [managed_entry(format!("{cli} hook session-archive"), 5, None)],
             "SessionEnd": [managed_entry(format!("{cli} hook session-archive"), 5, None)],
         })
@@ -596,7 +627,7 @@ pub mod hooks {
         if let Some(hooks) = obj.get("hooks").and_then(|h| h.as_array()) {
             for h in hooks {
                 if let Some(cmd) = h.get("command").and_then(|c| c.as_str())
-                    && cmd.contains("hoangsa-cli")
+                    && (cmd.contains("hoangsa-cli") || cmd.contains(HSP_MARKER))
                 {
                     return true;
                 }
@@ -744,16 +775,25 @@ pub mod hooks {
             Value::Object(serde_json::Map::new())
         }
 
+        /// Test-only install root with no `bin/hsp` inside — keeps hsp
+        /// detection deterministic regardless of the developer's `$HOME`.
+        fn sandbox_root(tmp: &std::path::Path) -> std::path::PathBuf {
+            let root = tmp.join("hoangsa-root");
+            std::fs::create_dir_all(root.join("bin")).expect("mkdir root/bin");
+            root
+        }
+
         #[test]
         fn merge_empty_settings() {
             let tmp = tempdir().expect("tempdir");
-            let target = tmp.path().join(".claude");
+            let root = sandbox_root(tmp.path());
             let mut settings = fresh_settings();
             let added =
-                merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks(&target));
-            // 1 Stop + 1 PostToolUse + 2 PreToolUse + 1 PreCompact + 1 SessionEnd = 6
-            assert_eq!(added, 6, "fresh merge lands every managed entry");
+                merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks_inner(Some(&root)));
+            // 1 SessionStart + 1 Stop + 1 PostToolUse + 2 PreToolUse + 1 PreCompact + 1 SessionEnd = 7
+            assert_eq!(added, 7, "fresh merge lands every managed entry");
             let hooks = settings.get("hooks").and_then(|h| h.as_object()).expect("hooks present");
+            assert!(hooks.contains_key("SessionStart"));
             assert!(hooks.contains_key("Stop"));
             assert!(hooks.contains_key("PreToolUse"));
             let pre = hooks.get("PreToolUse").and_then(|v| v.as_array()).expect("PreToolUse array");
@@ -763,7 +803,7 @@ pub mod hooks {
         #[test]
         fn preserve_user_hooks() {
             let tmp = tempdir().expect("tempdir");
-            let target = tmp.path().join(".claude");
+            let root = sandbox_root(tmp.path());
 
             // Seed a user-authored PreToolUse hook that has nothing to do with us.
             let mut settings = json!({
@@ -775,7 +815,7 @@ pub mod hooks {
                 }
             });
 
-            merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks(&target));
+            merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks_inner(Some(&root)));
 
             let pre = settings["hooks"]["PreToolUse"]
                 .as_array()
@@ -796,23 +836,78 @@ pub mod hooks {
         #[test]
         fn dedupe_on_rerun() {
             let tmp = tempdir().expect("tempdir");
-            let target = tmp.path().join(".claude");
+            let root = sandbox_root(tmp.path());
             let mut settings = fresh_settings();
 
-            let first = merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks(&target));
-            let second = merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks(&target));
+            let first = merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks_inner(Some(&root)));
+            let second = merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks_inner(Some(&root)));
 
-            assert_eq!(first, 6);
-            assert_eq!(second, 6, "re-merge re-adds the same set (replacing ours)");
+            assert_eq!(first, 7);
+            assert_eq!(second, 7, "re-merge re-adds the same set (replacing ours)");
 
-            // Total entries across events stays at 6 — never doubles.
+            // Total entries across events stays at 7 — never doubles.
             let hooks = settings.get("hooks").and_then(|h| h.as_object()).expect("hooks");
             let total: usize = hooks
                 .values()
                 .filter_map(|v| v.as_array())
                 .map(|a| a.len())
                 .sum();
-            assert_eq!(total, 6, "rerunning must not duplicate HOANGSA entries");
+            assert_eq!(total, 7, "rerunning must not duplicate HOANGSA entries");
+        }
+
+        #[test]
+        fn registers_hsp_hook_when_binary_present() {
+            let tmp = tempdir().expect("tempdir");
+            let root = sandbox_root(tmp.path());
+            // Plant a fake hsp binary so build_hoangsa_hooks_inner detects it.
+            std::fs::write(root.join("bin").join("hsp"), b"#!/bin/sh\n").expect("write hsp");
+
+            let payload = build_hoangsa_hooks_inner(Some(&root));
+            let pre = payload["PreToolUse"].as_array().expect("PreToolUse array");
+            assert_eq!(pre.len(), 3, "lesson-guard + enforce + hsp rewrite");
+
+            let hsp_entry = pre.iter().find(|e| {
+                e["hooks"][0]["command"]
+                    .as_str()
+                    .is_some_and(|c| c.contains(HSP_MARKER))
+            });
+            assert!(hsp_entry.is_some(), "hsp rewrite entry must be registered");
+            assert_eq!(hsp_entry.unwrap()["matcher"], "Bash");
+        }
+
+        #[test]
+        fn strips_standalone_hsp_entry_on_merge() {
+            let tmp = tempdir().expect("tempdir");
+            let root = sandbox_root(tmp.path());
+            // No hsp binary inside root — builder will NOT emit its own entry.
+
+            // Seed settings with the entry `hsp init` would leave behind.
+            let mut settings = json!({
+                "hooks": {
+                    "PreToolUse": [{
+                        "matcher": "Bash",
+                        "hooks": [{
+                            "type": "command",
+                            "command": format!("hsp hook rewrite {HSP_MARKER}")
+                        }]
+                    }]
+                }
+            });
+
+            merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks_inner(Some(&root)));
+
+            let pre = settings["hooks"]["PreToolUse"]
+                .as_array()
+                .expect("PreToolUse array");
+            // Only our 2 PreToolUse hooks survive — prior hsp entry was claimed
+            // as hoangsa-managed (via HSP_MARKER) and stripped.
+            assert_eq!(pre.len(), 2, "standalone hsp entry must be stripped");
+            let leftover_hsp = pre.iter().any(|e| {
+                e["hooks"][0]["command"]
+                    .as_str()
+                    .is_some_and(|c| c.contains(HSP_MARKER))
+            });
+            assert!(!leftover_hsp, "no hsp marker should remain");
         }
 
         #[test]
