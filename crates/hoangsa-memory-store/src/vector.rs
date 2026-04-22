@@ -260,6 +260,65 @@ const EMBED_DIM: usize = 384;
 /// the MCP server process.
 const DEFAULT_MODEL: EmbeddingModel = EmbeddingModel::MultilingualE5Small;
 
+/// Resolve the directory fastembed should use to cache ONNX weights.
+///
+/// Resolution order:
+///   1. `FASTEMBED_CACHE_DIR` — explicit user override, honored verbatim.
+///   2. `HOANGSA_INSTALL_DIR/cache/fastembed` — when the env is set (the
+///      installer scripts export it).
+///   3. `$HOME/.hoangsa/cache/fastembed` — default on Unix / macOS.
+///   4. `./.fastembed_cache` — last-resort, matches fastembed's own
+///      default so behavior degrades gracefully on exotic setups.
+///
+/// Pinning the cache to a single shared directory is the difference
+/// between "every project re-downloads 118 MB" and "download once per
+/// user". fastembed's own default (`.fastembed_cache`) is relative to
+/// CWD, which is the wrong shape for a multi-project CLI.
+pub fn fastembed_cache_dir() -> PathBuf {
+    if let Some(p) = std::env::var_os("FASTEMBED_CACHE_DIR") {
+        return PathBuf::from(p);
+    }
+    if let Some(root) = std::env::var_os("HOANGSA_INSTALL_DIR") {
+        return PathBuf::from(root).join("cache").join("fastembed");
+    }
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        return PathBuf::from(home)
+            .join(".hoangsa")
+            .join("cache")
+            .join("fastembed");
+    }
+    PathBuf::from(".fastembed_cache")
+}
+
+/// Build the `InitOptions` we use everywhere the embedder is
+/// constructed. Centralising this keeps the `prefetch` command and the
+/// runtime `open` path in lockstep — otherwise they'd download into
+/// different directories and the prefetch would do nothing.
+fn default_init_options() -> InitOptions {
+    InitOptions::new(DEFAULT_MODEL)
+        .with_cache_dir(fastembed_cache_dir())
+        .with_show_download_progress(true)
+}
+
+/// Download the default embedding model into the shared cache dir
+/// without opening a SQLite file. Used by `hoangsa-memory prefetch-embed`
+/// from the installer so the first real invocation doesn't stall for
+/// 30–60 s on the HuggingFace fetch.
+pub async fn prefetch_model() -> Result<()> {
+    let cache_dir = fastembed_cache_dir();
+    if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+        return Err(Error::Store(format!(
+            "create fastembed cache dir {}: {e}",
+            cache_dir.display()
+        )));
+    }
+    tokio::task::spawn_blocking(|| TextEmbedding::try_new(default_init_options()))
+        .await
+        .map_err(|e| Error::Store(format!("prefetch join: {e}")))?
+        .map_err(|e| Error::Store(format!("prefetch embedder init: {e}")))?;
+    Ok(())
+}
+
 /// The concrete [`VectorStore`] backed by fastembed + SQLite.
 pub struct EmbeddedVectorStore {
     inner: Arc<StoreInner>,
@@ -294,14 +353,10 @@ impl EmbeddedVectorStore {
             .await
             .map_err(|e| Error::Store(format!("vector sqlite join: {e}")))??;
 
-        let embedder = tokio::task::spawn_blocking(|| {
-            TextEmbedding::try_new(
-                InitOptions::new(DEFAULT_MODEL).with_show_download_progress(true),
-            )
-        })
-        .await
-        .map_err(|e| Error::Store(format!("embedder init join: {e}")))?
-        .map_err(|e| Error::Store(format!("embedder init: {e}")))?;
+        let embedder = tokio::task::spawn_blocking(|| TextEmbedding::try_new(default_init_options()))
+            .await
+            .map_err(|e| Error::Store(format!("embedder init join: {e}")))?
+            .map_err(|e| Error::Store(format!("embedder init: {e}")))?;
 
         Ok(Self {
             inner: Arc::new(StoreInner {

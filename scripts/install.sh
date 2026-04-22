@@ -524,19 +524,29 @@ resolve_tag() {
 }
 
 # ---------------------------------------------------------------------------
-# Vector store bootstrap (no-op)
+# Vector store bootstrap
 # ---------------------------------------------------------------------------
 #
 # As of Phase 2 of `fix/memory-4bugs` the semantic vector store runs
 # in-process via `fastembed`. There is no Python sidecar to provision.
-# Weights for `multilingual-e5-small` (~118 MB) are downloaded lazily
-# on first use into the fastembed cache.
 #
-# The old `install_chroma_venv` function is retained only as a no-op so
-# existing shell wrappers that call it don't break. `--install-chroma`
-# / `--no-chroma` flags are accepted silently for backward compat.
+# We pre-download the `multilingual-e5-small` weights (~118 MB) into
+# `$HOANGSA_INSTALL_DIR/cache/fastembed` so the first real `index` /
+# `query` / `archive ingest` call doesn't stall 30–60 s on a
+# HuggingFace fetch. Failure is non-fatal — the weights will be fetched
+# lazily on first use instead.
+#
+# The old `install_chroma_venv` function name is preserved so existing
+# shell wrappers that call it don't break.
 install_chroma_venv() {
-    info "vector store: fastembed (in-process) — model weights download on first use"
+    _bin="$HOANGSA_INSTALL_DIR/bin/hoangsa-memory"
+    if [ ! -x "$_bin" ]; then
+        info "vector store: hoangsa-memory not found at $_bin — skipping prefetch"
+        return 0
+    fi
+    info "pre-downloading fastembed model (~118 MB) into $HOANGSA_INSTALL_DIR/cache/fastembed"
+    HOANGSA_INSTALL_DIR="$HOANGSA_INSTALL_DIR" "$_bin" prefetch-embed \
+        || info "prefetch failed — weights will download on first use"
 }
 
 # ---------------------------------------------------------------------------

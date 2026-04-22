@@ -118,10 +118,11 @@ const DEFAULT_CONFIG_TOML: &str = r#"# hoangsa-memory config. All fields are opt
 
 [vector_store]
 # Enable the in-process semantic vector store (fastembed + SQLite BLOBs).
-# Default: false while Phase 2 is shaking out. Flip to `true` after the
-# first run has successfully downloaded the `multilingual-e5-small`
-# ONNX weights (~118 MB). Legacy `[chroma]` table is still accepted.
-# enabled = false
+# Default: true — the installer pre-downloads the
+# `multilingual-e5-small` ONNX weights (~118 MB) so there is no
+# first-call stall. Set `enabled = false` to disable semantic retrieval
+# (BM25 + graph still work). Legacy `[chroma]` table is still accepted.
+# enabled = true
 
 # Custom path for the vectors SQLite file. When unset, falls back to
 # `StoreRoot::vectors_path()` under the memory root.

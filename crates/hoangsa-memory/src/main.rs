@@ -6,7 +6,9 @@ use std::sync::Arc;
 use clap::{Parser, Subcommand};
 use hoangsa_memory_core::Synthesizer;
 use hoangsa_memory_retrieve::VectorStoreConfig;
-use hoangsa_memory_store::{EmbeddedVectorStore, StoreRoot, VectorCol, VectorStore};
+use hoangsa_memory_store::{
+    fastembed_cache_dir, prefetch_model, EmbeddedVectorStore, StoreRoot, VectorCol, VectorStore,
+};
 
 mod archive_cmd;
 mod daemon;
@@ -138,6 +140,12 @@ enum Cmd {
         depth: usize,
     },
 
+    /// Download the default embedding model into the shared fastembed
+    /// cache dir. Used by the installer so the first `index` / `query` /
+    /// `archive ingest` call doesn't stall on a 118 MB HuggingFace fetch.
+    /// No-op on subsequent runs (fastembed short-circuits when the
+    /// weights are already present).
+    PrefetchEmbed,
 }
 
 // --------------------------------------------------------------------- entry
@@ -195,6 +203,15 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Changes { from, depth } => {
             daemon_cmd::cmd_changes(&root, from.as_deref(), depth, cli.json).await?
+        }
+        Cmd::PrefetchEmbed => {
+            let cache = fastembed_cache_dir();
+            eprintln!(
+                "hoangsa-memory: prefetching `multilingual-e5-small` into {}",
+                cache.display()
+            );
+            prefetch_model().await?;
+            eprintln!("hoangsa-memory: prefetch complete");
         }
         Cmd::Archive { cmd } => match cmd {
             archive_cmd::ArchiveCmd::Ingest {

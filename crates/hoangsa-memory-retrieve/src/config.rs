@@ -273,9 +273,11 @@ impl WatchConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct VectorStoreConfig {
-    /// Enable the in-process vector store. Default `false` while Phase 2
-    /// is shaking out; flip to `true` in your project `config.toml`
-    /// once the first fastembed model download completes successfully.
+    /// Enable the in-process vector store. Default `true` — the
+    /// installer pre-downloads the `multilingual-e5-small` weights into
+    /// the shared fastembed cache, so there's no first-call stall to
+    /// guard against. Set to `false` to disable semantic retrieval
+    /// (BM25 + graph still work).
     pub enabled: bool,
     /// Override the on-disk location of `vectors.sqlite`. When `None`,
     /// falls back to `StoreRoot::vectors_path()`.
@@ -285,7 +287,7 @@ pub struct VectorStoreConfig {
 impl Default for VectorStoreConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             data_path: None,
         }
     }

@@ -53,7 +53,8 @@ pub use fts::{ChunkDoc, FtsHit, FtsIndex};
 pub use kv::{BfsDir, EdgeRow, KvStore, NodeRow, SymbolRow};
 pub use markdown::MarkdownStore;
 pub use vector::{
-    vectors_path, CollectionInfo, EmbeddedVectorStore, VectorCol, VectorHit, VectorStore,
+    fastembed_cache_dir, prefetch_model, vectors_path, CollectionInfo, EmbeddedVectorStore,
+    VectorCol, VectorHit, VectorStore,
 };
 
 /// Root handle bundling every backend living under a `.hoangsa/memory/` dir.

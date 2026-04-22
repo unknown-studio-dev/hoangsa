@@ -13,6 +13,8 @@
 #   4. hoangsa-memory entry from mcpServers in ~/.claude.json or <cwd>/.mcp.json
 #   5. Managed PATH block in ~/.zshrc / .bashrc / .bash_profile / config.fish
 #      (between `# hoangsa:managed start` / `# hoangsa:managed end` markers)
+#   6. fastembed model cache at $HOANGSA_INSTALL_DIR/cache/fastembed
+#      (global mode only; ~118 MB of ONNX weights the installer downloaded)
 #
 # What gets preserved by default (user data):
 #   * ~/.hoangsa/memory/     — long-term memory store
@@ -188,6 +190,30 @@ remove_binaries() {
     rm_if_exists "$HOANGSA_CLI_DIR/hsp"
     rm_if_exists "$HOANGSA_INSTALL_DIR/bin/hoangsa-memory"
     rm_if_exists "$HOANGSA_INSTALL_DIR/bin/hoangsa-memory-mcp"
+}
+
+# --- fastembed model cache --------------------------------------------------
+#
+# The installer pre-downloads `multilingual-e5-small` (~118 MB of ONNX
+# weights) into $HOANGSA_INSTALL_DIR/cache/fastembed. We remove it here
+# so an uninstall doesn't leave orphan GB-scale junk behind. FASTEMBED_CACHE_DIR
+# is honored only if the user set it for *this* shell; we never
+# speculatively recurse into unknown paths.
+
+remove_fastembed_cache() {
+    _cache="${FASTEMBED_CACHE_DIR:-$HOANGSA_INSTALL_DIR/cache/fastembed}"
+    if [ ! -d "$_cache" ]; then
+        info "no fastembed cache at $_cache"
+        return 0
+    fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+        info "dry-run: would rm -rf $_cache"
+        return 0
+    fi
+    info "removing fastembed cache $_cache"
+    rm -rf "$_cache"
+    # Clean up the now-likely-empty $HOANGSA_INSTALL_DIR/cache parent.
+    rmdir_if_empty "$HOANGSA_INSTALL_DIR/cache"
 }
 
 # --- 2. templates via manifest ---------------------------------------------
@@ -431,6 +457,7 @@ main() {
     strip_managed_hooks "$_settings"
     strip_mcp_entry "$_mcp"
     remove_binaries
+    [ "$MODE" = "global" ] && remove_fastembed_cache
     [ "$MODE" = "global" ] && strip_all_rc_files
 
     # Clean up now-empty bin dirs. $HOANGSA_CLI_DIR and $HOANGSA_INSTALL_DIR/bin

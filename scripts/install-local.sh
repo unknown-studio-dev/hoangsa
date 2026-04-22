@@ -440,8 +440,31 @@ trap - EXIT INT TERM
 # The fastembed-powered vector store runs entirely in-process; no Python
 # venv bootstrap is needed any more. `--no-chroma` / `--install-chroma`
 # flags are accepted silently for backward compatibility.
+#
+# We pre-download the `multilingual-e5-small` weights (~118 MB) into
+# `$HOANGSA_INSTALL_DIR/cache/fastembed` so the first real `index` /
+# `query` / `archive ingest` call doesn't stall 30–60 s on a
+# HuggingFace fetch. Failure is non-fatal — the weights will be fetched
+# lazily on first use instead.
+prefetch_embed_model() {
+    _bin="$BIN_DIR/hoangsa-memory"
+    if [ "$DRY_RUN" -eq 1 ]; then
+        info "dry-run: would run $_bin prefetch-embed"
+        return 0
+    fi
+    if [ ! -x "$_bin" ]; then
+        info "skipping prefetch: $_bin not found"
+        return 0
+    fi
+    info "pre-downloading fastembed model (~118 MB)"
+    HOANGSA_INSTALL_DIR="$HOANGSA_INSTALL_DIR" "$_bin" prefetch-embed \
+        || info "prefetch failed — weights will download on first use"
+}
+
 if [ "$SKIP_CHROMA" -eq 0 ]; then
-    info "vector store: fastembed (in-process) — model weights download on first use"
+    prefetch_embed_model
+else
+    info "--no-chroma — skipping fastembed model pre-download"
 fi
 
 # --- Hand off to the CLI ----------------------------------------------------
