@@ -1,11 +1,6 @@
-//! Token-set helpers shared by cluster detection and dedup paths.
+//! Token-set helpers for lesson matching and dedup.
 //!
-//! Both [`crate::lesson_clusters`] (find similar triggers) and
-//! [`crate::background_review`] (skip near-duplicate LLM-generated
-//! facts/lessons) need the same primitives: tokenise a short string,
-//! drop glue words, compare sets with Jaccard. Keeping the rules in one
-//! place means the dedup threshold stays calibrated against the same
-//! tokenisation the clusterer uses.
+//! Tokenise a short string, drop glue words, compare sets with Jaccard.
 
 use std::collections::HashSet;
 

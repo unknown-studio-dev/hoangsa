@@ -61,7 +61,6 @@ pub struct TopicSummary {
 #[derive(Clone)]
 pub struct ArchiveTracker {
     conn: Arc<Mutex<Connection>>,
-    #[allow(dead_code)]
     path: PathBuf,
 }
 

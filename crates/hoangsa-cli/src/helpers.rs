@@ -111,7 +111,6 @@ pub fn count_tokens(text: &str) -> u64 {
 
 /// Estimate tokens using content-type ratio (fast, no tiktoken).
 /// Used in cook phase for real-time tracking.
-#[allow(dead_code)]
 pub fn estimate_tokens_by_ratio(text: &str, content_type: &str) -> u64 {
     let ratio: f64 = match content_type {
         "english" => 4.0,

@@ -76,7 +76,6 @@ pub struct FtsIndex {
     reader: IndexReader,
     writer: Arc<Mutex<IndexWriter>>,
     fields: Arc<Fields>,
-    #[allow(dead_code)]
     path: PathBuf,
 }
 

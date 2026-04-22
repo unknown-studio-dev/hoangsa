@@ -112,7 +112,6 @@ pub fn project_slug(path: &Path) -> String {
 /// Legacy 12-char hex slug (blake3 hash). No longer consulted by
 /// [`resolve_root`] — kept only so the `projects migrate-slugs` command
 /// can still locate pre-rename data directories on disk.
-#[allow(dead_code)]
 pub fn legacy_project_slug(path: &Path) -> String {
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let hash = blake3::hash(canonical.to_string_lossy().as_bytes());

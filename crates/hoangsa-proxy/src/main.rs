@@ -767,7 +767,6 @@ fn direct_exec(cmd: &str, args: &[String]) -> i32 {
 
 // Silence the `_ = handlers;` — needed so `handlers` module stays wired in
 // through main crate references even if the optimiser would drop it.
-#[allow(dead_code)]
 fn _keep_modules_linked() {
     let _ = handlers::git::register;
     let _: &[BuiltinHandler] = &[];

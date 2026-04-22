@@ -87,7 +87,6 @@ pub struct Turn {
 #[derive(Clone)]
 pub struct EpisodeLog {
     conn: Arc<Mutex<Connection>>,
-    #[allow(dead_code)]
     path: PathBuf,
 }
 

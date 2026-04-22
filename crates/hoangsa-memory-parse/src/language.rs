@@ -34,7 +34,6 @@ enum LanguageKind {
     #[cfg(feature = "lang-go")]
     Go,
     // Kept to ensure the enum is non-empty even with every feature disabled.
-    #[allow(dead_code)]
     _Unreachable,
 }
 

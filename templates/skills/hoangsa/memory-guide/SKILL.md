@@ -107,26 +107,21 @@ Fetch via `prompts/get { name, arguments }`:
 
 - **`memory.nudge { intent }`** — surfaces LESSONS.md entries whose
   trigger plausibly applies, and forces you to restate the plan naming
-  each lesson you're honouring. Expand before Write/Edit when
-  `gate_require_nudge = true`.
+  each lesson you're honouring.
 - **`memory.reflect { summary, outcome? }`** — end-of-step reflection.
   Drives the fact/lesson decision.
 - **`memory.grounding_check { claim }`** — verify a factual claim
-  against the indexed graph before asserting it.
+  against the indexed graph before asserting it. Only advertised when
+  `[curation] grounding_check = true` (legacy alias: `[discipline]`).
 
-## Discipline modes
+## Enforcement
 
-From `<root>/config.toml` `[discipline]`:
-
-- `mode = "off"` — no enforcement.
-- `mode = "nudge"` (default) — warn the user if a step was skipped.
-- `mode = "strict"` — PreToolUse gate blocks Write/Edit/Bash unless a
-  `memory_recall` was logged within `gate_window_short_secs` (default
-  180s) and scored ≥ `gate_relevance_threshold` against the upcoming
-  tool's args.
-
-If the gate blocks, the stderr message tells you what to do. Call
-`memory_recall` with a query matching the intended action, then retry.
+PreToolUse gating lives in `hoangsa-cli hook enforce`, not in this
+crate. It reads `.hoangsa/rules.json` plus
+`.hoangsa/state/enforcement.events` — see the `hoangsa-cli rule` docs.
+If the gate blocks, the stderr message tells you which prerequisite
+(e.g. `memory_recall`, `memory_impact`) is missing — call it, then
+retry.
 
 ## CLI parity
 

@@ -514,7 +514,6 @@ pub fn chunk_exchanges(turns: &[Turn]) -> Vec<ExchangeChunk> {
 pub struct Turn {
     pub role: String,
     pub text: String,
-    #[allow(dead_code)]
     pub timestamp: Option<i64>,
 }
 

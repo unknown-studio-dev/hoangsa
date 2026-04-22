@@ -108,7 +108,6 @@ impl BfsDir {
 #[derive(Clone)]
 pub struct KvStore {
     db: Arc<Database>,
-    #[allow(dead_code)]
     path: PathBuf,
 }
 

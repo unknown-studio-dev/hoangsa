@@ -6,7 +6,7 @@ use hoangsa_memory_store::episodes::EpisodeLog;
 use hoangsa_memory_store::markdown::MarkdownStore;
 use time::{Duration, OffsetDateTime};
 
-use crate::config::{DisciplineConfig, MemoryConfig};
+use crate::config::{CurationConfig, MemoryConfig};
 use crate::effective_retention_score;
 
 /// Stats produced by a forgetting pass.
@@ -109,8 +109,8 @@ impl MemoryManager {
         let lessons_dropped = self.drop_low_confidence_lessons().await?;
 
         // Auto-quarantine: lessons whose failure ratio blew past the
-        // discipline threshold. Different from `drop_low_confidence_lessons`
-        // in two ways: it's opt-in via `DisciplineConfig`, and it preserves
+        // curation threshold. Different from `drop_low_confidence_lessons`
+        // in two ways: it's opt-in via `CurationConfig`, and it preserves
         // the offending lesson in `LESSONS.quarantined.md` so a human can
         // review and restore it later.
         let lessons_quarantined = self.auto_quarantine_lessons().await?;
@@ -136,11 +136,11 @@ impl MemoryManager {
 
     /// Move every lesson whose failure ratio has tripped the configured
     /// threshold into `LESSONS.quarantined.md`. Threshold knobs live in
-    /// [`DisciplineConfig::quarantine_failure_ratio`] and
-    /// [`DisciplineConfig::quarantine_min_attempts`].
+    /// [`CurationConfig::quarantine_failure_ratio`] and
+    /// [`CurationConfig::quarantine_min_attempts`].
     async fn auto_quarantine_lessons(&self) -> Result<u64> {
         let root = self.md.root.clone();
-        let dcfg = DisciplineConfig::load_or_default(&root).await;
+        let dcfg = CurationConfig::load_or_default(&root).await;
         if dcfg.quarantine_failure_ratio <= 0.0 || dcfg.quarantine_min_attempts == 0 {
             return Ok(0);
         }

@@ -87,7 +87,7 @@ async fn memory_call_returns_structured_tool_output() {
     // The result IS the ToolOutput — no `content` wrapper.
     let result = &resp["result"];
     assert_eq!(result["isError"], false);
-    // In the default (auto) discipline config the fact commits straight to
+    // In the default (auto) curation config the fact commits straight to
     // MEMORY.md; in review mode it would say "staged (review mode)". Both
     // carry the fact text.
     assert!(

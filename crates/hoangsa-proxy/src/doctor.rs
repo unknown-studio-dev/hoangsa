@@ -293,7 +293,6 @@ pub fn print_and_exit_code(cwd: &Path) -> i32 {
 
 // Keep unused-import lint happy when PathBuf isn't referenced above after
 // refactors.
-#[allow(dead_code)]
 fn _use_pathbuf(_: PathBuf) {}
 
 #[cfg(test)]

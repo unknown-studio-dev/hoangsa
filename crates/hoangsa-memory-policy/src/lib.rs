@@ -33,9 +33,7 @@ pub use cap::{
     CapExceededError, ContentPolicyError, GuardedAppendError, MarkdownStoreMemoryExt,
     MemoryEntryPreview, MemoryKind, check_content_policy,
 };
-pub use config::{
-    ActorPolicyConfig, DisciplineConfig, EnforcementConfig, MemoryConfig, gate_defaults,
-};
+pub use config::{CurationConfig, MemoryConfig};
 pub use manager::{ForgetReport, MemoryManager};
 pub use working::{WorkingMemory, WorkingNote};
 

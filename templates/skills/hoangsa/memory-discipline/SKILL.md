@@ -145,20 +145,16 @@ saves hours of rework.
 
 ## Configuration
 
-The enforcement level comes from `<root>/config.toml` under
-`[discipline]` and `[memory]`:
+Live knobs in `<root>/config.toml`:
 
-- `mode = "nudge"` (default) — warn the user if you skip a step.
-- `mode = "strict"` — a PreToolUse gate hook will **block** every `Write`,
-  `Edit`, `NotebookEdit`, and `Bash` tool call unless a `memory_recall` was
-  logged within the gate window. The block response tells you exactly
-  what to do: run `memory_recall`, then retry.
-- `gate_window_short_secs = 60` — recency shortcut; any recall within
-  this window passes without a relevance check.
-- `gate_window_long_secs = 1800` — relevance pool; the gate looks this
-  far back for a topically-matching recall when recency alone fails.
-- `gate_relevance_threshold = 0.30` — containment-based match threshold.
+`[curation]` (legacy alias: `[discipline]`):
 - `memory_mode = "auto"` (default) or `"review"`. See below.
+- `grounding_check = false` — opt-in; adds the `memory.grounding_check`
+  prompt to the MCP catalog.
+- `quarantine_failure_ratio = 0.66` / `quarantine_min_attempts = 5` —
+  thresholds the forget pass uses to quarantine bad lessons.
+
+`[memory]`:
 - `cap_memory_bytes = 16384` — hard cap for MEMORY.md.
 - `cap_user_bytes = 4096` — hard cap for USER.md.
 - `cap_lessons_bytes = 16384` — hard cap for LESSONS.md.
@@ -166,10 +162,9 @@ The enforcement level comes from `<root>/config.toml` under
   (session-handoff prose, bare SHAs, date-only entries) are rejected at
   the `remember_*` entry point instead of just warning.
 
-If the project has no `.hoangsa-memory/` directory and `global_fallback = true`
-(the default), fall back to `~/.hoangsa-memory/` memory. If neither exists, the
-gate falls open (approves) with a warning and asks you to run
-`hoangsa-memory index .` — it never bricks the editor.
+PreToolUse gating is handled by `hoangsa-cli hook enforce` against
+`.hoangsa/rules.json` and `.hoangsa/state/enforcement.events` — see the
+`hoangsa-cli rule` docs, not this file.
 
 ## Memory modes: `auto` vs `review`
 
@@ -216,20 +211,12 @@ Drafts are NOT auto-installed — a human must review before a proposed
 skill starts shaping future sessions. This is the main guardrail against
 runaway self-modification.
 
-## Why the strict gate exists
+## Why the gate exists
 
 Prompts alone are bypassable — a self-confident agent can talk itself
-into skipping the recall step. Strict mode trips a **ground-truth** check
-against `<root>/episodes.db`: every `memory_recall` call writes a
-`query_issued` event, and the `hoangsa-cli enforce` binary (a small Rust executable
-shipped alongside `hoangsa-memory-mcp`) queries SQLite directly. If no recent event
-exists, the tool call is blocked at the hook level — the agent never gets
-to rationalise its way past it. You see:
-
-```json
-{"decision": "block",
- "reason": "hoangsa-memory discipline: no `memory_recall` has been logged ..."}
-```
-
-Treat that as non-negotiable: call `memory_recall`, read the chunks, then
-retry the original tool call.
+into skipping the recall step. The gate is implemented by
+`hoangsa-cli hook enforce`: it reads `.hoangsa/rules.json` (block / warn
+rules) plus `.hoangsa/state/enforcement.events` (stateful checks such as
+`require-memory-impact`) and replies `{"decision": "block", ...}` when a
+mutation tool call is missing a prerequisite. The block response tells
+you exactly what to call first — obey it instead of retrying blind.

@@ -213,7 +213,6 @@ fn unknown_flag_passes_through_to_child() {
 
 /// Builder helper for use in streaming tests later.
 #[cfg(unix)]
-#[allow(dead_code)]
 fn run_via_hsp_stdin(shell_snippet: &str, stdin_data: &str) -> (String, String, i32) {
     let mut child = Command::new(hsp_bin())
         .args(["run", "sh", "-c", shell_snippet])

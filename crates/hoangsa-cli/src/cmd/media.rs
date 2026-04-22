@@ -22,7 +22,6 @@ pub struct VideoInfo {
 }
 
 #[derive(Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct FrameExtractResult {
     pub video: String,
     pub frames_dir: String,
@@ -41,7 +40,6 @@ pub struct MontageResult {
 }
 
 #[derive(Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct FfmpegStatus {
     pub available: bool,
     pub path: String,
@@ -857,7 +855,6 @@ pub fn cmd_diff(args: &[&str]) {
 
 /// Compute a diff overlay between two RGBA images.
 /// Returns a new RgbaImage where changed pixels are red-tinted and unchanged pixels are dimmed.
-#[allow(dead_code)]
 pub(crate) fn compute_diff_overlay(a: &RgbaImage, b: &RgbaImage) -> RgbaImage {
     let w = a.width().min(b.width());
     let h = a.height().min(b.height());

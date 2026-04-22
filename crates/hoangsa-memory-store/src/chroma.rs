@@ -127,7 +127,6 @@ impl ChromaStore {
     }
 
     /// Check sidecar liveness (protocol ping only, no process check).
-    #[allow(dead_code)]
     pub async fn health(&self) -> Result<bool> {
         match self.call("health", None, json!({})).await {
             Ok(v) => Ok(v.get("healthy").and_then(|v| v.as_bool()).unwrap_or(false)),

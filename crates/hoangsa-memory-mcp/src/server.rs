@@ -12,7 +12,7 @@ use hoangsa_memory_core::{
     Enforcement, Event, Fact, FactScope, Lesson, LessonTrigger, MemoryKind, MemoryMeta, Query,
 };
 use hoangsa_memory_policy::{
-    CapExceededError, DisciplineConfig, GuardedAppendError, MarkdownStoreMemoryExt, MemoryConfig,
+    CapExceededError, CurationConfig, GuardedAppendError, MarkdownStoreMemoryExt, MemoryConfig,
     MemoryKind as MdKind,
 };
 use hoangsa_memory_parse::LanguageRegistry;
@@ -585,7 +585,7 @@ impl Server {
                 _ => FactScope::Always,
             },
         };
-        let cfg = DisciplineConfig::load_or_default(&self.inner.root).await;
+        let cfg = CurationConfig::load_or_default(&self.inner.root).await;
         let mem_cfg = MemoryConfig::load_or_default(&self.inner.root).await;
         let staged = stage || cfg.requires_review();
         if staged {
@@ -687,7 +687,7 @@ impl Server {
             suggested_enforcement: suggested_enforcement.clone(),
             block_message: block_message.clone(),
         };
-        let cfg = DisciplineConfig::load_or_default(&self.inner.root).await;
+        let cfg = CurationConfig::load_or_default(&self.inner.root).await;
         let mem_cfg = MemoryConfig::load_or_default(&self.inner.root).await;
         let staged = stage || cfg.requires_review();
 
@@ -1165,7 +1165,7 @@ impl Server {
     // ---- prompts ----------------------------------------------------------
 
     fn prompts_list(&self) -> Value {
-        let disc = DisciplineConfig::load_or_default_sync(&self.inner.root);
+        let disc = CurationConfig::load_or_default_sync(&self.inner.root);
         json!({ "prompts": prompts_catalog(disc.grounding_check) })
     }
 
