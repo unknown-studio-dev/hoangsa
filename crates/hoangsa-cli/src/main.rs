@@ -141,6 +141,9 @@ fn main() {
         ("hook", "state-clear") => {
             cmd::hook::cmd_state_clear(&cwd);
         }
+        ("hook", "statusline") => {
+            cmd::statusline::cmd_statusline();
+        }
         ("enforce", "override") => {
             cmd::hook::cmd_enforce_override(&cwd, &rest);
         }

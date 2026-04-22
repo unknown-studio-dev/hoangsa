@@ -15,6 +15,7 @@ pub mod rule;
 pub mod session;
 pub mod stats;
 pub mod state;
+pub mod statusline;
 pub mod trust;
 pub mod validate;
 pub mod verify;
