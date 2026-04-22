@@ -21,6 +21,49 @@ fn home_path() -> Result<PathBuf, String> {
         .ok_or_else(|| "cannot resolve $HOME".to_string())
 }
 
+/// Resolve the Claude Code config directory — the parent of
+/// `skills/`, `commands/`, `agents/`, `hoangsa/`, and `settings.json`.
+///
+/// Honors `CLAUDE_CONFIG_DIR` (respected by upstream Claude Code; typically
+/// set via a shell alias like `zclaude='CLAUDE_CONFIG_DIR=~/.zclaude claude'`)
+/// so that installs aimed at an alternate Claude profile actually land there.
+/// Falls back to `$HOME/.claude` when the env var is unset or empty.
+///
+/// Tilde-expansion: we accept a leading `~/` because a verbatim forwarded env
+/// value (e.g. `CLAUDE_CONFIG_DIR=~/.zclaude` written in an alias that then
+/// gets re-exported) may arrive unexpanded. POSIX shells only tilde-expand
+/// assignments made as standalone statements, not ones propagated through
+/// nested invocations.
+fn claude_config_dir() -> Result<PathBuf, String> {
+    if let Some(raw) = std::env::var_os("CLAUDE_CONFIG_DIR") {
+        let s = raw.to_string_lossy().into_owned();
+        if !s.is_empty() {
+            if s == "~" {
+                return home_path();
+            }
+            if let Some(rest) = s.strip_prefix("~/") {
+                return Ok(home_path()?.join(rest));
+            }
+            return Ok(PathBuf::from(s));
+        }
+    }
+    Ok(home_path()?.join(".claude"))
+}
+
+/// Path to the Claude Code global MCP config file (`.claude.json`).
+///
+/// Upstream layout: without `CLAUDE_CONFIG_DIR`, the file sits at `$HOME/.claude.json`
+/// (NOT inside `$HOME/.claude/`). When `CLAUDE_CONFIG_DIR` is set, the file
+/// moves inside that dir — `$CLAUDE_CONFIG_DIR/.claude.json`. We match that
+/// shape so zclaude-style installs write to the same path the zclaude session
+/// reads.
+fn claude_json_path() -> Result<PathBuf, String> {
+    match std::env::var_os("CLAUDE_CONFIG_DIR") {
+        Some(raw) if !raw.is_empty() => Ok(claude_config_dir()?.join(".claude.json")),
+        _ => Ok(home_path()?.join(".claude.json")),
+    }
+}
+
 /// Root directory for the installed `hoangsa-memory` tree (bins + manifest).
 /// Honors the `HOANGSA_INSTALL_DIR` env var (set by `scripts/install.sh`) so
 /// a user who points the installer at a non-default location still gets MCP
@@ -495,10 +538,11 @@ pub mod hooks {
     pub const MANAGED_SENTINEL: &str = "_hoangsa_managed";
 
     /// Resolve the `settings.json` path for the given install mode.
-    /// `global` → `~/.claude/settings.json`; otherwise `<cwd>/.claude/settings.json`.
+    /// `global` → `$CLAUDE_CONFIG_DIR/settings.json` (fallback `~/.claude/settings.json`);
+    /// `local`  → `<cwd>/.claude/settings.json`.
     pub fn settings_path(mode: &str, cwd: &Path) -> Result<PathBuf, String> {
         match mode {
-            "global" => Ok(super::home_path()?.join(".claude").join("settings.json")),
+            "global" => Ok(super::claude_config_dir()?.join("settings.json")),
             _ => Ok(cwd.join(".claude").join("settings.json")),
         }
     }
@@ -716,18 +760,53 @@ pub mod hooks {
         added
     }
 
-    /// Set `settings["statusLine"]` only if the user hasn't already configured
-    /// one. Returns `true` iff we wrote a value (for the merge report).
+    /// Set `settings["statusLine"]` to `statusline_spec`.
+    ///
+    /// Preserves a *user-authored* statusLine, but heals a *hoangsa-managed*
+    /// one whose binary path no longer exists on disk — the previous "preserve
+    /// anything non-null" rule turned tmp-dir test installs into permanently
+    /// broken statuslines, since later normal installs couldn't overwrite.
+    ///
+    /// A statusLine is considered hoangsa-managed when its `command` invokes
+    /// our `hook statusline` subcommand (signature match — we own that
+    /// argument shape). If the binary in front of `hook statusline` is
+    /// missing, overwrite. Otherwise preserve.
+    ///
+    /// Returns `true` iff we wrote a new value.
     pub fn apply_statusline(settings: &mut Value, statusline_spec: &Value) -> bool {
         let Some(obj) = settings.as_object_mut() else {
             return false;
         };
-        if obj.get("statusLine").map(|v| !v.is_null()).unwrap_or(false) {
-            // Preserve any user-authored statusLine — even a partial one.
-            return false;
+        match obj.get("statusLine") {
+            Some(v) if !v.is_null() => {
+                if !is_stale_managed_statusline(v) {
+                    return false;
+                }
+                // Stale managed entry — fall through and overwrite.
+            }
+            _ => {}
         }
         obj.insert("statusLine".into(), statusline_spec.clone());
         true
+    }
+
+    /// `true` when a statusLine value points at our `hook statusline` handler
+    /// but the binary in front of it is missing on disk.
+    fn is_stale_managed_statusline(v: &Value) -> bool {
+        let cmd = match v.get("command").and_then(|c| c.as_str()) {
+            Some(s) => s,
+            None => return false,
+        };
+        // Signature: ".../hoangsa-cli hook statusline" (any leading binary
+        // path, ours or not, as long as the subcommand is `hook statusline`).
+        let bin = match cmd.split(" hook statusline").next() {
+            Some(b) if b != cmd => b.trim(),
+            _ => return false,
+        };
+        if bin.is_empty() {
+            return false;
+        }
+        !Path::new(bin).exists()
     }
 
     /// Default statusLine spec — points at our own `hook statusline` subcommand
@@ -930,6 +1009,68 @@ pub mod hooks {
             let wrote2 = apply_statusline(&mut empty, &default_statusline(&target));
             assert!(wrote2, "default statusLine applied on empty settings");
             assert!(empty["statusLine"]["command"].is_string());
+        }
+
+        #[test]
+        fn statusline_overwrites_stale_managed_path() {
+            // Simulates the regression: a previous install with a temp-dir
+            // HOANGSA_INSTALL_DIR wrote `/tmp/.../hoangsa-cli hook statusline`,
+            // tmp dir was cleaned, later installs preserved the broken value
+            // and CC silently rendered nothing.
+            let tmp = tempdir().expect("tempdir");
+            let target = tmp.path().join(".claude");
+            let bogus = tmp.path().join("vanished").join("hoangsa-cli");
+            assert!(!bogus.exists());
+
+            let mut settings = json!({
+                "statusLine": {
+                    "type": "command",
+                    "command": format!("{} hook statusline", bogus.display()),
+                    "padding": 0,
+                }
+            });
+            let wrote = apply_statusline(&mut settings, &default_statusline(&target));
+            assert!(wrote, "stale managed statusLine must be overwritten");
+            assert_ne!(
+                settings["statusLine"]["command"].as_str(),
+                Some(format!("{} hook statusline", bogus.display()).as_str()),
+                "command should no longer point to the vanished bin"
+            );
+        }
+
+        #[test]
+        fn statusline_keeps_managed_when_binary_present() {
+            // Same signature as ours, but the binary path is real — preserve it.
+            let tmp = tempdir().expect("tempdir");
+            let target = tmp.path().join(".claude");
+            let real_bin = tmp.path().join("hoangsa-cli");
+            std::fs::write(&real_bin, b"#!/bin/sh\n").expect("write fake bin");
+
+            let cmd = format!("{} hook statusline", real_bin.display());
+            let mut settings = json!({
+                "statusLine": { "type": "command", "command": cmd.clone(), "padding": 0 }
+            });
+            let wrote = apply_statusline(&mut settings, &default_statusline(&target));
+            assert!(!wrote, "valid managed statusLine must be preserved");
+            assert_eq!(settings["statusLine"]["command"].as_str(), Some(cmd.as_str()));
+        }
+
+        #[test]
+        fn statusline_does_not_touch_non_managed_even_if_path_missing() {
+            // User pointed at a custom script that doesn't exist yet — we
+            // must NOT silently rewrite a foreign command.
+            let tmp = tempdir().expect("tempdir");
+            let target = tmp.path().join(".claude");
+
+            let mut settings = json!({
+                "statusLine": { "type": "command", "command": "/nope/custom-bar.sh" }
+            });
+            let wrote = apply_statusline(&mut settings, &default_statusline(&target));
+            assert!(!wrote, "non-managed statusLine must be preserved unconditionally");
+            assert_eq!(
+                settings["statusLine"]["command"].as_str(),
+                Some("/nope/custom-bar.sh")
+            );
         }
 
         #[test]
@@ -1346,10 +1487,11 @@ pnpm-lock.yaml
     /// inventory here.
     pub const DEFAULT_RULES_JSON: &str = "{\n  \"version\": \"1.0\",\n  \"rules\": []\n}\n";
 
-    /// Path to `~/.claude.json` — the Claude Code global MCP config file
-    /// (Decision #4 target for `--global` MCP registration).
+    /// Path to Claude Code's global MCP config file (`.claude.json`).
+    /// Delegates to the crate-level `claude_json_path` helper so the same
+    /// `$CLAUDE_CONFIG_DIR` resolution drives both settings and MCP writes.
     pub fn claude_json_path() -> Result<PathBuf, String> {
-        Ok(super::home_path()?.join(".claude.json"))
+        super::claude_json_path()
     }
 
     /// Path to `<cwd>/.mcp.json` — the Claude Code per-project MCP config.
@@ -1579,10 +1721,11 @@ pnpm-lock.yaml
         Ok(report)
     }
 
-    /// Production entry point — operates on `~/.claude/skills/`.
-    /// ONLY call from the `--global` flow (Decision #13).
+    /// Production entry point — operates on `$CLAUDE_CONFIG_DIR/skills/`
+    /// (fallback `~/.claude/skills/`). ONLY call from the `--global` flow
+    /// (Decision #13).
     pub fn install_quality_skills() -> Result<QualitySkillsReport, String> {
-        let skills_root = super::home_path()?.join(".claude").join("skills");
+        let skills_root = super::claude_config_dir()?.join("skills");
         install_quality_skills_to(&skills_root).map_err(|e| e.to_string())
     }
 
@@ -1901,15 +2044,16 @@ pnpm-lock.yaml
 }
 
 /// Destination tree for the installed templates, derived from mode + cwd.
-/// `global` → `~/.claude/`, `local` → `<cwd>/.claude/`. The `templates`
-/// module's `route_rel` fans each template subdir (`commands/`, `skills/`,
-/// `agents/`, `workflows/`) into the right spot under this root so Claude
-/// Code's discovery (which only scans `.claude/{commands,skills,agents}/`)
-/// actually finds them. The hoangsa-internal `workflows/` tree lives at
-/// `.claude/hoangsa/workflows/`, matching what each slash command resolves.
+/// `global` → `$CLAUDE_CONFIG_DIR` (fallback `~/.claude/`); `local` →
+/// `<cwd>/.claude/`. The `templates` module's `route_rel` fans each template
+/// subdir (`commands/`, `skills/`, `agents/`, `workflows/`) into the right
+/// spot under this root so Claude Code's discovery (which only scans
+/// `{commands,skills,agents}/` inside the config dir) actually finds them.
+/// The hoangsa-internal `workflows/` tree lives at `<dst>/hoangsa/workflows/`,
+/// matching what each slash command resolves.
 fn install_dst_dir(mode: &str, cwd: &Path) -> Result<PathBuf, String> {
     match mode {
-        "global" => Ok(home_path()?.join(".claude")),
+        "global" => claude_config_dir(),
         _ => Ok(cwd.join(".claude")),
     }
 }
@@ -2006,10 +2150,10 @@ pub fn cmd_install(args: &[&str]) {
                         })),
                         Err(e) => warnings.push(e),
                     }
-                    match home_path() {
-                        Ok(h) => actions_json.push(json!({
+                    match claude_config_dir() {
+                        Ok(d) => actions_json.push(json!({
                             "action": "install_quality_skills",
-                            "target": h.join(".claude").join("skills"),
+                            "target": d.join("skills"),
                             "skills": mode::QUALITY_SKILLS,
                         })),
                         Err(e) => warnings.push(e),

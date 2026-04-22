@@ -31,6 +31,12 @@ use std::process::{Command, Output};
 /// home + cwd, and scrubs every HOANGSA_* env var the caller hasn't
 /// explicitly set. Prevents leakage from the ambient shell (CI runners
 /// sometimes carry HOANGSA_TEMPLATES_DIR from an earlier step).
+///
+/// Also scrubs `CLAUDE_CONFIG_DIR` — the installer honors it to support
+/// alternate Claude profiles (e.g. `zclaude='CLAUDE_CONFIG_DIR=~/.zclaude claude'`),
+/// but these tests model the default `$HOME/.claude` layout. Leaving it set
+/// in the test harness would route every write to the ambient profile dir
+/// outside the tempdir.
 fn install_cmd(home: &Path, cwd: &Path) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_hoangsa-cli"));
     cmd.arg("install")
@@ -39,6 +45,7 @@ fn install_cmd(home: &Path, cwd: &Path) -> Command {
         .env_remove("HOANGSA_STAGING_DIR")
         .env_remove("HOANGSA_INSTALL_DIR")
         .env_remove("HOANGSA_NO_PATH_EDIT")
+        .env_remove("CLAUDE_CONFIG_DIR")
         .current_dir(cwd);
     cmd
 }
@@ -193,6 +200,52 @@ fn dry_run_global_no_cwd_writes() {
             "REQ-07: global action path must not live under cwd: {:?} (cwd={:?})",
             p,
             cwd.path()
+        );
+    }
+}
+
+// ─── 6b. $CLAUDE_CONFIG_DIR routes --global writes outside $HOME/.claude ─
+//
+// Regression guard for the zclaude profile case: `zclaude` is a Claude Code
+// wrapper alias that sets `CLAUDE_CONFIG_DIR` so the session reads skills,
+// agents, commands, settings, and `.claude.json` from an alternate dir. The
+// installer must honor the same env var — otherwise `--global` writes land
+// in `~/.claude/` but the zclaude session looks at `~/.zclaude/`, leaving
+// hoangsa skills and the hoangsa-memory MCP invisible.
+
+#[test]
+fn dry_run_global_respects_claude_config_dir() {
+    let (home, cwd) = tmp_home_cwd();
+    let alt = tempfile::tempdir().expect("alt config dir");
+
+    let out = run(install_cmd(home.path(), cwd.path())
+        .env("CLAUDE_CONFIG_DIR", alt.path())
+        .args(["--global", "--dry-run"]));
+    let v = expect_success_json(&out, "dry-run global with CLAUDE_CONFIG_DIR");
+    let actions = v["actions"].as_array().expect("actions array").clone();
+
+    // Compare raw paths (not canonicalized) — the action paths are dry-run
+    // plans for files that don't exist yet, so `canonicalize` on `p` would
+    // fail and the /var vs /private/var symlink mismatch on macOS yields
+    // false negatives. Both `alt.path()` and the action paths flow through
+    // PathBuf::join from the same non-canonical root, so prefix comparison
+    // is consistent without normalization.
+    let alt_raw = alt.path();
+    let home_claude_raw = home.path().join(".claude");
+
+    let paths = collect_action_paths(&actions);
+    let under_alt = paths.iter().any(|p| p.starts_with(alt_raw));
+    assert!(
+        under_alt,
+        "expected at least one global action under CLAUDE_CONFIG_DIR={:?}; got paths {:?}",
+        alt_raw, paths
+    );
+
+    for p in &paths {
+        assert!(
+            !p.starts_with(&home_claude_raw),
+            "CLAUDE_CONFIG_DIR set, but action still routed under $HOME/.claude: {:?}",
+            p
         );
     }
 }
