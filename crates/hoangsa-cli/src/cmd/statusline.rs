@@ -68,14 +68,14 @@ struct Glyphs {
 }
 
 const NERD: Glyphs = Glyphs {
-    phase: "\u{23FB}",     // ⏻
-    git: "\u{239A}",       // ⎚
-    model: "\u{F2DB}",     // nf-fa-microchip
-    folder: "\u{F07B}",    // nf-fa-folder
-    warn: "\u{26A0}",      // ⚠
-    ahead: "\u{2191}",     // ↑
-    behind: "\u{2193}",    // ↓
-    dirty: "*",
+    phase: "🏷️",     // ⏻
+    git: "🌿",       // ⎚
+    model: "🤖",     // nf-fa-microchip
+    folder: "🗂️",    // nf-fa-folder
+    warn: "⚠️",      // ⚠
+    ahead: "⬆",     // ↑
+    behind: "⬇",    // ↓
+    dirty: "🔥",
 };
 
 const ASCII: Glyphs = Glyphs {
