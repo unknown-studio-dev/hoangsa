@@ -456,7 +456,7 @@ prefetch_embed_model() {
         info "skipping prefetch: $_bin not found"
         return 0
     fi
-    info "pre-downloading fastembed model (~118 MB)"
+    info "pre-downloading fastembed model (~4xx MB)"
     HOANGSA_INSTALL_DIR="$HOANGSA_INSTALL_DIR" "$_bin" prefetch-embed \
         || info "prefetch failed — weights will download on first use"
 }

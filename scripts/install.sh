@@ -544,7 +544,7 @@ install_chroma_venv() {
         info "vector store: hoangsa-memory not found at $_bin — skipping prefetch"
         return 0
     fi
-    info "pre-downloading fastembed model (~118 MB) into $HOANGSA_INSTALL_DIR/cache/fastembed"
+    info "pre-downloading fastembed model (~4xx MB) into $HOANGSA_INSTALL_DIR/cache/fastembed"
     HOANGSA_INSTALL_DIR="$HOANGSA_INSTALL_DIR" "$_bin" prefetch-embed \
         || info "prefetch failed — weights will download on first use"
 }
