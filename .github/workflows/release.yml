@@ -18,22 +18,14 @@ jobs:
           - triple: linux-x64
             target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
-            use_cross: true
 
           - triple: linux-arm64
             target: aarch64-unknown-linux-gnu
-            os: ubuntu-22.04
-            use_cross: true
-
-          - triple: linux-x64-musl
-            target: x86_64-unknown-linux-musl
-            os: ubuntu-22.04
-            use_cross: true
+            os: ubuntu-22.04-arm
 
           - triple: darwin-arm64
             target: aarch64-apple-darwin
             os: macos-14
-            use_cross: false
 
     steps:
       - name: Checkout code
@@ -47,22 +39,15 @@ jobs:
       # rust-toolchain.toml pins a specific channel (currently 1.91), so
       # cargo ignores whatever `targets` dtolnay installed onto `stable` and
       # uses the pinned toolchain instead. Add the target to that pinned
-      # toolchain explicitly so macOS builds find `core`. Not needed for
-      # `use_cross: true` entries — cross runs inside Docker images that
-      # ship their own target.
+      # toolchain explicitly so macOS + linux-arm64 cross-arch builds find
+      # `core`.
       - name: Install target for pinned toolchain
-        if: ${{ !matrix.use_cross }}
         run: rustup target add ${{ matrix.target }}
-
-      - name: Install cross
-        if: matrix.use_cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
 
       - name: Build binaries
         shell: bash
         run: |
-          builder=$([ "${{ matrix.use_cross }}" = "true" ] && echo cross || echo cargo)
-          $builder build --release --locked --target ${{ matrix.target }} \
+          cargo build --release --locked --target ${{ matrix.target }} \
             -p hoangsa-cli -p hoangsa-memory -p hoangsa-memory-mcp
 
       - name: Stage binaries
@@ -112,7 +97,7 @@ jobs:
           chmod 0755 dist/install.sh
           sh -n dist/install.sh
 
-          for triple in darwin-arm64 linux-x64 linux-arm64 linux-x64-musl; do
+          for triple in darwin-arm64 linux-x64 linux-arm64; do
             stage="stage/$triple"
             mkdir -p "$stage/bin"
 

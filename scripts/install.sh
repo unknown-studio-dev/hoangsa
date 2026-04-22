@@ -37,7 +37,7 @@ HOANGSA_INSTALL_DIR="${HOANGSA_INSTALL_DIR:-$HOME/.hoangsa}"
 HOANGSA_CLI_DIR="${HOANGSA_CLI_DIR:-$HOANGSA_INSTALL_DIR/bin}"
 HOANGSA_NO_PATH_EDIT="${HOANGSA_NO_PATH_EDIT:-}"
 
-SUPPORTED_TRIPLES="darwin-arm64 linux-x64 linux-arm64 linux-x64-musl"
+SUPPORTED_TRIPLES="darwin-arm64 linux-x64 linux-arm64"
 
 # ---------------------------------------------------------------------------
 # Helpers (info/warn/err are provided by lib/ui.sh)
@@ -164,17 +164,24 @@ detect_triple() {
 
     triple="$os-$arch"
 
-    # musl detection (Linux x64 only — Alpine et al.)
-    if [ "$os" = linux ] && [ "$arch" = x64 ]; then
+    # musl detection (Alpine et al.). The release tarballs use glibc-linked
+    # ONNX Runtime binaries (via `ort`) which do not run on musl, so we bail
+    # out early with a clear error instead of handing the user a binary that
+    # fails to start.
+    if [ "$os" = linux ]; then
+        _is_musl=0
         if have ldd && ldd --version 2>&1 | grep -qi musl; then
-            triple="linux-x64-musl"
+            _is_musl=1
         else
-            for f in /lib/ld-musl-x86_64.so.1 /lib/ld-musl-i386.so.1; do
+            for f in /lib/ld-musl-x86_64.so.1 /lib/ld-musl-aarch64.so.1; do
                 if [ -f "$f" ]; then
-                    triple="linux-x64-musl"
+                    _is_musl=1
                     break
                 fi
             done
+        fi
+        if [ "$_is_musl" -eq 1 ]; then
+            die 2 "musl libc detected (Alpine?) — hoangsa releases link glibc ONNX Runtime and will not run on musl. Build from source via scripts/install-local.sh from a checkout."
         fi
     fi
 

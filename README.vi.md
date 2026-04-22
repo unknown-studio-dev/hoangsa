@@ -25,7 +25,7 @@ Installer tải sẵn binary native — **không cần Node, không cần `npm`,
 - `hoangsa-cli` → `~/.hoangsa/bin/`
 - `hoangsa-memory`, `hoangsa-memory-mcp` → `~/.hoangsa/bin/`
 
-Nền tảng hỗ trợ: `darwin-arm64` (Apple Silicon), `linux-x64`, `linux-arm64`, `linux-x64-musl`.
+Nền tảng hỗ trợ: `darwin-arm64` (Apple Silicon), `linux-x64`, `linux-arm64`.
 
 Flags: `--global` (mặc định), `--local`, `--dry-run`, `--no-embed` (bỏ qua pre-download weights fastembed; sẽ tải lazy khi dùng lần đầu).
 
