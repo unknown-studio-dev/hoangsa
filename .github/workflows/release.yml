@@ -49,6 +49,16 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # rust-toolchain.toml pins a specific channel (currently 1.91), so cargo
+      # ignores whatever `targets` dtolnay installed onto `stable` and uses the
+      # pinned toolchain instead. Add the target to that pinned toolchain so
+      # cross-arch macOS builds (darwin-x64 on arm64 runners) actually have
+      # std available. Not needed for `use_cross: true` entries — cross runs
+      # inside Docker images that ship their own target.
+      - name: Install target for pinned toolchain
+        if: ${{ !matrix.use_cross }}
+        run: rustup target add ${{ matrix.target }}
+
       - name: Install cross
         if: matrix.use_cross
         run: cargo install cross --git https://github.com/cross-rs/cross

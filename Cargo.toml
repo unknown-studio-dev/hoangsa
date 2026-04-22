@@ -66,8 +66,14 @@ rusqlite     = { version = "0.39.0", features = ["bundled"] }
 
 # Embeddings (replaces Python ChromaDB sidecar).
 # `fastembed` runs ONNX in-process via `ort`; we pin to the multilingual
-# model family so Vietnamese retrieval quality matches English.
-fastembed    = "5"
+# model family so Vietnamese retrieval quality matches English. Defaults
+# pull `native-tls` (OpenSSL) which breaks the cross-docker CI images —
+# swap to rustls so the release workflow doesn't need libssl-dev.
+fastembed    = { version = "5", default-features = false, features = [
+    "hf-hub-rustls-tls",
+    "ort-download-binaries-rustls-tls",
+    "image-models",
+] }
 
 # HTTP (provider adapters; rustls so no OpenSSL headers on CI boxes)
 reqwest      = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip"] }
