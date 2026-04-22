@@ -203,6 +203,7 @@ impl Indexer {
     ///    instead of one per file.
     /// 4. Commit the BM25 writer so fresh docs become searchable.
     pub async fn index_path(&self, root: impl AsRef<Path>) -> Result<IndexStats> {
+        self.check_parser_schema_version().await?;
         let root = root.as_ref().to_path_buf();
         let files = walk_sources(&root, &self.registry, &self.walk_opts);
         let total = files.len();
@@ -459,6 +460,56 @@ impl Indexer {
     /// searchable. Safe to call repeatedly.
     pub async fn commit(&self) -> Result<()> {
         self.store.fts.commit().await
+    }
+
+    /// Verify the on-disk index was produced by the current parser
+    /// schema version. Called once at the top of [`Self::index_path`].
+    ///
+    /// When the two versions disagree, bumping
+    /// [`PARSER_SCHEMA_VERSION`] invalidates every `hash<VER>:<path>`
+    /// sentinel, so the next index run reparses every file and
+    /// re-embeds every chunk. That's desirable when the operator asks
+    /// for it, catastrophic when it fires unannounced from a hook
+    /// (the pattern that preceded the 164GB disk-fill). We refuse the
+    /// implicit rebuild unless `HOANGSA_ALLOW_SCHEMA_REBUILD=1` is set
+    /// in the environment, and stamp the new version on success so a
+    /// subsequent run finds a matching sentinel.
+    async fn check_parser_schema_version(&self) -> Result<()> {
+        use hoangsa_memory_core::Error;
+        let current = PARSER_SCHEMA_VERSION;
+        let stored = self
+            .store
+            .kv
+            .get_meta(PARSER_SCHEMA_META_KEY)
+            .await?
+            .and_then(|b| std::str::from_utf8(&b).ok().map(str::to_string))
+            .and_then(|s| s.parse::<u32>().ok());
+
+        match stored {
+            None => {
+                // Fresh store (or one that pre-dates the version marker).
+                // Stamp current so later runs can detect drift.
+            }
+            Some(v) if v == current => return Ok(()),
+            Some(v) => {
+                let allow = std::env::var("HOANGSA_ALLOW_SCHEMA_REBUILD")
+                    .map(|s| s != "0" && !s.is_empty())
+                    .unwrap_or(false);
+                if !allow {
+                    return Err(Error::Store(format!(
+                        "parser schema version mismatch: index was built at v{v}, binary is v{current}. \
+                         A full reparse + re-embed is required. \
+                         Re-run with HOANGSA_ALLOW_SCHEMA_REBUILD=1 to proceed."
+                    )));
+                }
+            }
+        }
+
+        self.store
+            .kv
+            .put_meta(PARSER_SCHEMA_META_KEY, current.to_string().as_bytes())
+            .await?;
+        Ok(())
     }
 
     /// Internal: parse + write chunks/symbols/edges for one file, returning
@@ -767,6 +818,15 @@ fn symbol_kind_tag(k: SymbolKind) -> &'static str {
 // of the bare `main`), fixing the cross-crate collision where every
 // workspace member's `main.rs` shared the same graph key.
 const PARSER_SCHEMA_VERSION: u32 = 7;
+
+/// KV meta key holding the most recent [`PARSER_SCHEMA_VERSION`] this
+/// store was indexed against. When the constant bumps ahead of the
+/// stored value, [`Indexer::index_path`] refuses to auto-reparse
+/// everything unless `HOANGSA_ALLOW_SCHEMA_REBUILD=1` is set —
+/// unguarded bumps were what funnelled the whole workspace back
+/// through embed on every hook fire during the 164GB incident
+/// (see RESEARCH.md).
+const PARSER_SCHEMA_META_KEY: &str = "parser_schema_version";
 
 /// Meta key under which we store the blake3 hash of the last-indexed bytes
 /// of `path`. Kept private to the indexer — callers shouldn't need to read

@@ -8,7 +8,7 @@
 //! stdout formatting.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(clap::Subcommand, Debug)]
 pub enum ArchiveCmd {
@@ -102,19 +102,21 @@ pub async fn cmd_archive_ingest(
 ) -> Result<()> {
     // Advisory flock — PreCompact/SessionEnd hooks fire-and-forget a detached
     // ingest subprocess, and each one spins up its own ChromaDB Python sidecar
-    // (~500 MB RSS per process). Without serialisation, two concurrent Claude
-    // Code sessions (or a compact event while a previous ingest still runs)
-    // pile up sidecars and exhaust memory. If the lock is held we exit
-    // cleanly — the running ingest will pick up any new turns on its next
-    // pass anyway, so there's nothing to retry.
-    let _lock: Option<std::fs::File> = match acquire_ingest_lock() {
+    // (~500 MB RSS per process). The lock is shared with `index` and `watch`
+    // (see `crate::acquire_chroma_lock`) so any one chroma-using command
+    // blocks the others and we never have two sidecars alive at once. If the
+    // lock is held we exit cleanly — the running command will pick up any new
+    // turns on its next pass anyway, so there's nothing to retry.
+    let _lock: Option<std::fs::File> = match crate::acquire_chroma_lock() {
         Ok(Some(l)) => Some(l),
         Ok(None) => {
-            eprintln!("hoangsa-memory: another archive ingest is running; skipping.");
+            eprintln!(
+                "hoangsa-memory: another chroma-using command is running; skipping archive ingest."
+            );
             return Ok(());
         }
         Err(e) => {
-            tracing::warn!(error = %e, "failed to acquire archive ingest lock; proceeding anyway");
+            tracing::warn!(error = %e, "failed to acquire chroma lock; proceeding anyway");
             None
         }
     };
@@ -431,37 +433,6 @@ pub async fn cmd_archive_purge(
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
-
-/// Try to acquire the process-wide archive-ingest advisory lock at
-/// `~/.hoangsa/memory/archive-ingest.lock`. Returns `Ok(Some(file))` when
-/// the lock is held by this process (caller keeps the handle alive until
-/// ingest finishes), `Ok(None)` when another process already holds it, and
-/// `Err` when the lockfile itself can't be opened.
-fn acquire_ingest_lock() -> Result<Option<std::fs::File>> {
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .context("cannot determine home directory for archive-ingest lock")?;
-    let dir = PathBuf::from(home).join(".hoangsa").join("memory");
-    std::fs::create_dir_all(&dir)
-        .with_context(|| format!("create {} for ingest lock", dir.display()))?;
-    let path = dir.join("archive-ingest.lock");
-
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .open(&path)
-        .with_context(|| format!("open ingest lock {}", path.display()))?;
-
-    // `try_lock` returns `Err(TryLockError::WouldBlock)` when contended and
-    // `Err(TryLockError::Error(_))` on a real I/O failure. We collapse both
-    // into `Ok(None)` — at worst we skip this ingest run, which is safe:
-    // the next PreCompact/SessionEnd hook will retry.
-    match file.try_lock() {
-        Ok(()) => Ok(Some(file)),
-        Err(_) => Ok(None),
-    }
-}
 
 async fn open_tracker(root: &Path) -> Result<ArchiveTracker> {
     let path = StoreRoot::archive_path(root);

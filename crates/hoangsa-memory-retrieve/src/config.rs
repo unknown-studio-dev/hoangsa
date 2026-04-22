@@ -281,7 +281,7 @@ pub struct ChromaConfig {
 impl Default for ChromaConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             data_path: None,
         }
     }

@@ -346,18 +346,83 @@ fn find_memory_bin() -> Option<String> {
 /// concurrent Claude Code sessions would pile them up and OOM the
 /// machine. Forwarding to the running daemon keeps the sidecar count
 /// at one.
+///
+/// Rate-limit: `~/.hoangsa/memory/archive-ingest.last` is touched after
+/// every dispatch; if the previous stamp is younger than
+/// `INGEST_COOLDOWN_SECS` we skip entirely. A single Claude Code
+/// session can fire PreCompact + SessionEnd within seconds of each
+/// other, and multiple concurrent sessions amplify that — without this
+/// cooldown, dispatches pile up faster than the daemon or advisory
+/// flock can drain them. That pile-up is what preceded the 164GB
+/// disk-fill incident recorded in RESEARCH.md.
+const INGEST_COOLDOWN_SECS: u64 = 60;
+
 fn spawn_archive_ingest() {
-    if try_forward_to_daemon() {
+    if !cooldown_elapsed() {
         return;
     }
+    let dispatched = if try_forward_to_daemon() {
+        true
+    } else {
+        spawn_detached_ingest()
+    };
+    if dispatched {
+        touch_cooldown_stamp();
+    }
+}
+
+fn spawn_detached_ingest() -> bool {
     use std::process::{Command, Stdio};
-    let Some(bin) = find_memory_bin() else { return };
-    let _ = Command::new(bin)
+    let Some(bin) = find_memory_bin() else {
+        return false;
+    };
+    Command::new(bin)
         .args(["archive", "ingest", "--refresh"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn();
+        .spawn()
+        .is_ok()
+}
+
+fn cooldown_stamp_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    Some(
+        std::path::PathBuf::from(home)
+            .join(".hoangsa")
+            .join("memory")
+            .join("archive-ingest.last"),
+    )
+}
+
+fn cooldown_elapsed() -> bool {
+    let Some(path) = cooldown_stamp_path() else {
+        return true;
+    };
+    let Ok(meta) = std::fs::metadata(&path) else {
+        return true;
+    };
+    let Ok(mtime) = meta.modified() else {
+        return true;
+    };
+    match mtime.elapsed() {
+        Ok(dur) => dur.as_secs() >= INGEST_COOLDOWN_SECS,
+        Err(_) => true,
+    }
+}
+
+fn touch_cooldown_stamp() {
+    let Some(path) = cooldown_stamp_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&path);
 }
 
 /// Try to send a `memory_archive_ingest` request to a running MCP

@@ -10,11 +10,18 @@
 //!     session_id  TEXT PRIMARY KEY,
 //!     project     TEXT NOT NULL DEFAULT '',
 //!     topic       TEXT NOT NULL DEFAULT '',
-//!     ingested_at INTEGER NOT NULL,
-//!     turn_count  INTEGER NOT NULL DEFAULT 0,
-//!     curated     INTEGER NOT NULL DEFAULT 0
+//!     ingested_at  INTEGER NOT NULL,
+//!     turn_count   INTEGER NOT NULL DEFAULT 0,
+//!     curated      INTEGER NOT NULL DEFAULT 0,
+//!     content_hash TEXT NOT NULL DEFAULT ''
 //! );
 //! ```
+//!
+//! `content_hash` is a blake3 digest of the raw transcript bytes at
+//! ingest time. Idempotency lives here: a refresh-mode re-ingest whose
+//! hash matches the stored row short-circuits without re-parsing or
+//! re-embedding. Without it, PreCompact+SessionEnd hooks would
+//! repeatedly re-embed unchanged turns every fire (see RESEARCH.md).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -77,15 +84,30 @@ impl ArchiveTracker {
                 "PRAGMA journal_mode = WAL;
                  PRAGMA synchronous = NORMAL;
                  CREATE TABLE IF NOT EXISTS archive_sessions (
-                     session_id  TEXT PRIMARY KEY,
-                     project     TEXT NOT NULL DEFAULT '',
-                     topic       TEXT NOT NULL DEFAULT '',
-                     ingested_at INTEGER NOT NULL,
-                     turn_count  INTEGER NOT NULL DEFAULT 0,
-                     curated     INTEGER NOT NULL DEFAULT 0
+                     session_id   TEXT PRIMARY KEY,
+                     project      TEXT NOT NULL DEFAULT '',
+                     topic        TEXT NOT NULL DEFAULT '',
+                     ingested_at  INTEGER NOT NULL,
+                     turn_count   INTEGER NOT NULL DEFAULT 0,
+                     curated      INTEGER NOT NULL DEFAULT 0,
+                     content_hash TEXT NOT NULL DEFAULT ''
                  );",
             )
             .map_err(store)?;
+            // Migration: older databases predate `content_hash`. Add the
+            // column if missing — existing rows get an empty hash, which
+            // naturally misses the dedup check and re-ingests once, then
+            // stays stable thereafter.
+            let has_hash: bool = c
+                .prepare("SELECT 1 FROM pragma_table_info('archive_sessions') WHERE name = 'content_hash'")
+                .and_then(|mut s| s.exists([]))
+                .unwrap_or(false);
+            if !has_hash {
+                c.execute_batch(
+                    "ALTER TABLE archive_sessions ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''",
+                )
+                .map_err(store)?;
+            }
             Ok(c)
         })
         .await
@@ -96,13 +118,17 @@ impl ArchiveTracker {
         })
     }
 
-    /// Record a session as ingested.
+    /// Record a session as ingested. `content_hash` is a digest of the
+    /// raw transcript bytes at ingest time; pass `""` when the caller
+    /// has no hash to store (older paths). The hash is used by
+    /// [`Self::content_hash`] to short-circuit idempotent re-ingests.
     pub fn upsert_session(
         &self,
         session_id: &str,
         project: &str,
         topic: &str,
         turn_count: i64,
+        content_hash: &str,
     ) -> Result<()> {
         let conn = self.conn.lock();
         let now = std::time::SystemTime::now()
@@ -110,16 +136,34 @@ impl ArchiveTracker {
             .unwrap_or_default()
             .as_secs() as i64;
         conn.execute(
-            "INSERT INTO archive_sessions (session_id, project, topic, ingested_at, turn_count)
-             VALUES (?1, ?2, ?3, ?4, ?5)
+            "INSERT INTO archive_sessions (session_id, project, topic, ingested_at, turn_count, content_hash)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(session_id) DO UPDATE SET
                  project = excluded.project,
                  topic = excluded.topic,
-                 turn_count = excluded.turn_count",
-            params![session_id, project, topic, now, turn_count],
+                 turn_count = excluded.turn_count,
+                 content_hash = excluded.content_hash",
+            params![session_id, project, topic, now, turn_count, content_hash],
         )
         .map_err(store)?;
         Ok(())
+    }
+
+    /// Fetch the stored `content_hash` for a session, or `None` when the
+    /// session isn't tracked. An empty string is returned for rows that
+    /// pre-date the `content_hash` column — treat that as "no hash yet".
+    pub fn content_hash(&self, session_id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock();
+        let row: std::result::Result<String, rusqlite::Error> = conn.query_row(
+            "SELECT content_hash FROM archive_sessions WHERE session_id = ?1",
+            params![session_id],
+            |row| row.get(0),
+        );
+        match row {
+            Ok(h) => Ok(Some(h)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(store(e)),
+        }
     }
 
     /// Check whether a session has already been ingested.
@@ -340,8 +384,10 @@ mod tests {
         let tracker = ArchiveTracker::open(&db).await.unwrap();
 
         tracker
-            .upsert_session("s1", "sample", "memory-arch", 42)
+            .upsert_session("s1", "sample", "memory-arch", 42, "hash-abc")
             .unwrap();
+        assert_eq!(tracker.content_hash("s1").unwrap().as_deref(), Some("hash-abc"));
+        assert_eq!(tracker.content_hash("missing").unwrap(), None);
         assert!(tracker.is_ingested("s1").unwrap());
         assert!(!tracker.is_ingested("s2").unwrap());
 

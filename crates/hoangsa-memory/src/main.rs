@@ -268,6 +268,43 @@ pub(crate) fn build_synth(kind: Option<SynthKind>) -> anyhow::Result<Option<Arc<
     }
 }
 
+/// Process-wide advisory flock serialising any CLI subcommand that boots
+/// its own ChromaDB Python sidecar (`archive ingest`, `index`, `watch`).
+/// When the daemon isn't running, two of these in parallel would each
+/// spin up a separate ~500 MB sidecar; hook-triggered ingests piled on
+/// top of a running `index` is how the 164GB disk-fill incident
+/// happened (see RESEARCH.md). Returns `Ok(Some(file))` when this
+/// process owns the lock (caller keeps the handle alive until its
+/// chroma work finishes), `Ok(None)` when another process already holds
+/// it, and `Err` when the lockfile itself can't be opened.
+///
+/// Read paths (`query`) intentionally do *not* acquire this lock: the
+/// point is preventing sidecar pile-up, and queries are short-lived
+/// enough that blocking them on a long-running index would be worse
+/// than letting a second read-only sidecar exist briefly.
+pub(crate) fn acquire_chroma_lock() -> anyhow::Result<Option<std::fs::File>> {
+    use anyhow::Context;
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .context("cannot determine home directory for chroma lock")?;
+    let dir = PathBuf::from(home).join(".hoangsa").join("memory");
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("create {} for chroma lock", dir.display()))?;
+    let path = dir.join("archive-ingest.lock");
+
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&path)
+        .with_context(|| format!("open chroma lock {}", path.display()))?;
+
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(_) => Ok(None),
+    }
+}
+
 pub(crate) async fn open_chroma(store: &StoreRoot) -> Option<Arc<hoangsa_memory_store::ChromaCol>> {
     let cfg = ChromaConfig::load_or_default(&store.path).await;
     if !cfg.enabled {

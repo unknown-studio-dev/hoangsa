@@ -39,9 +39,27 @@ pub async fn run_watch(root: &Path, src: &Path, debounce: Duration) -> Result<()
     let store = StoreRoot::open(root).await?;
     let cfg = hoangsa_memory_retrieve::IndexConfig::load_or_default(root).await;
     let mut idx = Indexer::new(store.clone(), LanguageRegistry::new()).with_config(&cfg);
-    if let Some(col) = open_chroma(&store).await {
-        idx = idx.with_chroma(col);
-    }
+    // Shared chroma lock — see `crate::acquire_chroma_lock`. Held for the
+    // watcher's lifetime so concurrent hook-triggered ingests don't stand
+    // up a second Python sidecar alongside ours.
+    let _chroma_lock = match crate::acquire_chroma_lock() {
+        Ok(Some(lock)) => {
+            if let Some(col) = open_chroma(&store).await {
+                idx = idx.with_chroma(col);
+            }
+            Some(lock)
+        }
+        Ok(None) => {
+            eprintln!(
+                "hoangsa-memory: another chroma-using command is running; watching without embeddings."
+            );
+            None
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to acquire chroma lock; proceeding without embeddings");
+            None
+        }
+    };
     idx = idx.with_progress(make_progress_bar());
 
     // Do an initial full index so subsequent deltas matter.

@@ -38,9 +38,29 @@ pub async fn run_index(root: &Path, src: &Path, json: bool) -> Result<()> {
     // size, hidden-dir / symlink toggles. Missing file → defaults.
     let cfg = hoangsa_memory_retrieve::IndexConfig::load_or_default(root).await;
     let mut idx = Indexer::new(store.clone(), LanguageRegistry::new()).with_config(&cfg);
-    if let Some(col) = open_chroma(&store).await {
-        idx = idx.with_chroma(col);
-    }
+    // Hold the process-wide chroma lock for the duration of this run so
+    // a hook-triggered `archive ingest` can't boot a second sidecar on
+    // top of ours. If another chroma command is already running we skip
+    // embeddings rather than aborting the whole index — BM25/graph
+    // indexing is still useful without them.
+    let _chroma_lock = match crate::acquire_chroma_lock() {
+        Ok(Some(lock)) => {
+            if let Some(col) = open_chroma(&store).await {
+                idx = idx.with_chroma(col);
+            }
+            Some(lock)
+        }
+        Ok(None) => {
+            eprintln!(
+                "hoangsa-memory: another chroma-using command is running; indexing without embeddings."
+            );
+            None
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to acquire chroma lock; proceeding without embeddings");
+            None
+        }
+    };
     idx = idx.with_progress(make_progress_bar());
 
     let stats = idx.index_path(src).await?;

@@ -928,6 +928,27 @@ pub async fn run_ingest(
             stats.skipped += 1;
             continue;
         }
+        // Idempotency: hash the raw transcript bytes up-front and skip
+        // the entire session (even in refresh mode) when the hash
+        // matches what we last ingested. Without this, PreCompact +
+        // SessionEnd hooks force every session file through
+        // parse → chunk → embed on every fire even when the bytes
+        // haven't changed — the re-embed loop that preceded the 164GB
+        // disk-fill incident (see RESEARCH.md).
+        let raw_bytes = match tokio::fs::read(&convo_file).await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(session = %session_id, error = %e, "skipping unreadable session file");
+                continue;
+            }
+        };
+        let content_hash = blake3::hash(&raw_bytes).to_hex().to_string();
+        if tracker.is_ingested(&session_id)?
+            && tracker.content_hash(&session_id)?.as_deref() == Some(content_hash.as_str())
+        {
+            stats.skipped += 1;
+            continue;
+        }
         // In refresh mode, drop any pre-existing chunks for this
         // session so shifted chunk boundaries don't leave orphans
         // alongside the freshly upserted rows.
@@ -1019,6 +1040,7 @@ pub async fn run_ingest(
             &project_name,
             &session_topic,
             chunks.len() as i64,
+            &content_hash,
         )?;
         stats.total_sessions += 1;
         stats.total_chunks += chunks.len() as u64;
