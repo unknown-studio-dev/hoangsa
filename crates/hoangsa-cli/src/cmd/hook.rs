@@ -1613,17 +1613,16 @@ pub fn cmd_state_clear(cwd: &str) {
 
 /// On `/clear`, promote the last-seen cost into the baseline so the
 /// statusline displays `max(0, total - baseline) = 0` until the new
-/// conversation accrues cost. No-op if the state file is missing or
-/// belongs to a different session.
+/// conversation accrues cost. Rewrites the stored session_id from the
+/// payload so the next statusline tick (which may carry a fresh sid
+/// from CC) still treats the baseline as current.
 fn snapshot_statusline_baseline(session_id: &str) {
     let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else { return };
     let run_dir = home.join(".hoangsa").join("run");
     let path = crate::cmd::statusline::cost_state_path(&run_dir);
     let Some(mut state) = crate::cmd::statusline::read_cost_state(&path) else { return };
-    if state.session_id != session_id {
-        return;
-    }
     state.baseline = state.last_seen;
+    state.session_id = session_id.to_string();
     crate::cmd::statusline::write_cost_state(&path, &state);
 }
 
