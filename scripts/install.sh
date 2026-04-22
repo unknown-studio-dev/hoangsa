@@ -95,6 +95,8 @@ EOF
 
 PASSTHROUGH=""
 HAS_MODE_FLAG=0
+IS_GLOBAL=0
+UNINSTALL=0
 
 append_arg() {
     # Append a shell-quoted arg to PASSTHROUGH so we can re-expand with `eval`.
@@ -113,11 +115,20 @@ for arg in "$@"; do
             usage
             exit 0
             ;;
-        --global|--local)
+        --global)
+            IS_GLOBAL=1
             HAS_MODE_FLAG=1
             append_arg "$arg"
             ;;
-        --uninstall|--install-chroma|--dry-run)
+        --local)
+            HAS_MODE_FLAG=1
+            append_arg "$arg"
+            ;;
+        --uninstall)
+            UNINSTALL=1
+            append_arg "$arg"
+            ;;
+        --install-chroma|--dry-run)
             append_arg "$arg"
             ;;
         *)
@@ -128,6 +139,7 @@ done
 
 if [ "$HAS_MODE_FLAG" -eq 0 ]; then
     # Default to --global for curl|sh ergonomics.
+    IS_GLOBAL=1
     if [ -z "$PASSTHROUGH" ]; then
         PASSTHROUGH="'--global'"
     else
@@ -361,6 +373,109 @@ edit_path_in_rc() {
 }
 
 # ---------------------------------------------------------------------------
+# Claude config dir picker (mirrors install-local.sh)
+# ---------------------------------------------------------------------------
+#
+# Claude Code honors `CLAUDE_CONFIG_DIR` so users can run alternate profiles
+# via shell aliases (e.g. `zclaude='CLAUDE_CONFIG_DIR=~/.zclaude claude'`).
+# Without the same awareness here, `--global` writes land in `~/.claude/` but
+# a zclaude session reads from `~/.zclaude/`, leaving hoangsa skills and the
+# `hoangsa-memory` MCP invisible inside that session.
+#
+# Strategy:
+#   * `CLAUDE_CONFIG_DIR` already set → honor silently.
+#   * Else glob `$HOME/.*claude*` for dirs that look like Claude config dirs
+#     (settings.json / projects/ / history.jsonl / .claude.json present).
+#     Single hit (the default) → no prompt. Multiple → interactive menu with
+#     "custom path" escape hatch. Non-TTY → default to first + log override
+#     hint (curl|sh runs are usually non-TTY; users can re-run with the env
+#     var explicit).
+
+is_claude_config_dir() {
+    [ -d "$1" ] || return 1
+    [ -f "$1/settings.json" ] \
+        || [ -d "$1/projects" ] \
+        || [ -f "$1/history.jsonl" ] \
+        || [ -f "$1/.claude.json" ]
+}
+
+# Populate $CLAUDE_CANDIDATES (newline-separated). Always includes
+# `$HOME/.claude` at the head so the default is available even when the user
+# has never launched Claude Code before.
+detect_claude_candidates() {
+    CLAUDE_CANDIDATES="$HOME/.claude"
+    # `.*claude*` (not `.claude*`) catches prefix-style profiles like
+    # `.zclaude` from `zclaude='CLAUDE_CONFIG_DIR=~/.zclaude claude'`.
+    for d in "$HOME"/.*claude*; do
+        [ -d "$d" ] || continue
+        [ "$d" = "$HOME/.claude" ] && continue
+        if is_claude_config_dir "$d"; then
+            CLAUDE_CANDIDATES="$CLAUDE_CANDIDATES
+$d"
+        fi
+    done
+}
+
+# Sets $CLAUDE_DIR_PICK. Caller is responsible for `export CLAUDE_CONFIG_DIR`.
+pick_claude_dir() {
+    if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+        CLAUDE_DIR_PICK="$CLAUDE_CONFIG_DIR"
+        info "honoring CLAUDE_CONFIG_DIR=$CLAUDE_DIR_PICK (inherited from env)"
+        return 0
+    fi
+
+    detect_claude_candidates
+    _count=$(printf '%s\n' "$CLAUDE_CANDIDATES" | wc -l | tr -d ' ')
+
+    if [ "$_count" -le 1 ]; then
+        CLAUDE_DIR_PICK="$CLAUDE_CANDIDATES"
+        return 0
+    fi
+
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+        CLAUDE_DIR_PICK=$(printf '%s\n' "$CLAUDE_CANDIDATES" | head -n 1)
+        info "multiple Claude config dirs detected but non-interactive — defaulting to $CLAUDE_DIR_PICK"
+        info "override: CLAUDE_CONFIG_DIR=<dir> sh install.sh --global"
+        return 0
+    fi
+
+    printf '\nMultiple Claude config dirs detected:\n' >&2
+    _i=1
+    while [ "$_i" -le "$_count" ]; do
+        _d=$(printf '%s\n' "$CLAUDE_CANDIDATES" | sed -n "${_i}p")
+        printf '  %d) %s\n' "$_i" "$_d" >&2
+        _i=$((_i + 1))
+    done
+    _custom_idx=$((_count + 1))
+    printf '  %d) custom path\n' "$_custom_idx" >&2
+    printf 'Pick [1]: ' >&2
+    _pick=""
+    # shellcheck disable=SC2039  # `read -r` is POSIX
+    read -r _pick || _pick=""
+    [ -z "$_pick" ] && _pick=1
+
+    if [ "$_pick" = "$_custom_idx" ]; then
+        printf 'Enter path: ' >&2
+        read -r CLAUDE_DIR_PICK || CLAUDE_DIR_PICK=""
+        [ -n "$CLAUDE_DIR_PICK" ] || die 2 "empty path"
+        # shellcheck disable=SC2088
+        case "$CLAUDE_DIR_PICK" in
+            "~/"*) CLAUDE_DIR_PICK="$HOME/${CLAUDE_DIR_PICK#\~/}" ;;
+            "~")   CLAUDE_DIR_PICK="$HOME" ;;
+        esac
+    else
+        case "$_pick" in
+            ''|*[!0-9]*) die 2 "invalid selection: $_pick" ;;
+        esac
+        if [ "$_pick" -lt 1 ] || [ "$_pick" -gt "$_count" ]; then
+            die 2 "selection out of range: $_pick"
+        fi
+        CLAUDE_DIR_PICK=$(printf '%s\n' "$CLAUDE_CANDIDATES" | sed -n "${_pick}p")
+    fi
+    info "using Claude config dir: $CLAUDE_DIR_PICK"
+}
+
+# ---------------------------------------------------------------------------
 # Resolve tag (latest -> vX.Y.Z)
 # ---------------------------------------------------------------------------
 
@@ -506,6 +621,16 @@ main() {
     esac
     if [ "$_need_path_edit" -eq 1 ]; then
         edit_path_in_rc
+    fi
+
+    # Pick the Claude config dir to install into and propagate to the CLI.
+    # Only relevant for --global; --local writes everything under cwd/.claude/
+    # and never touches a Claude profile dir. On uninstall we still pick so
+    # the CLI cleans the right profile.
+    if [ "$IS_GLOBAL" -eq 1 ]; then
+        pick_claude_dir
+        CLAUDE_CONFIG_DIR="$CLAUDE_DIR_PICK"
+        export CLAUDE_CONFIG_DIR
     fi
 
     # Stage templates + memory bins in a persistent directory OUTSIDE $TMP so
