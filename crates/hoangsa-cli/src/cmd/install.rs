@@ -79,9 +79,9 @@ fn memory_install_dir() -> Result<PathBuf, String> {
     Ok(home_path()?.join(".hoangsa"))
 }
 
-/// Compact `YYYYMMDD-HHMMSS` UTC stamp used as a suffix for both template
-/// patch backups and `settings.json` backups. A single formatter keeps the
-/// two backup naming schemes in sync.
+/// Compact `YYYYMMDD-HHMMSS` UTC stamp used as a suffix for template patch
+/// backups. `settings.json` uses a single stable `.bak` instead — see
+/// [`hooks::backup_settings`].
 fn backup_timestamp() -> String {
     OffsetDateTime::now_utc()
         .format(format_description!(
@@ -824,20 +824,50 @@ pub mod hooks {
         })
     }
 
-    /// Write a timestamped backup of `path` next to the original before any
-    /// in-place rewrite. A missing source file is a no-op (fresh install).
+    /// Write a single stable `.bak` next to the original before any in-place
+    /// rewrite. Overwrites the previous backup so repeat installs don't
+    /// pile up `settings.json.bak-<stamp>` files in the user's config dir.
+    /// Legacy timestamped siblings from earlier versions are swept on the
+    /// way through. A missing source file is a no-op (fresh install).
     pub fn backup_settings(path: &Path) -> io::Result<Option<PathBuf>> {
         if !path.exists() {
             return Ok(None);
         }
-        let stamp = super::backup_timestamp();
         let file_name = path
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "settings.json".to_string());
-        let backup = path.with_file_name(format!("{file_name}.bak-{stamp}"));
+        let backup = path.with_file_name(format!("{file_name}.bak"));
         fs::copy(path, &backup)?;
+        sweep_legacy_backups(path, &backup);
         Ok(Some(backup))
+    }
+
+    /// Sweep `<file_name>.bak-*` siblings; `keep` is never deleted. Errors are
+    /// swallowed — a stale backup is cosmetic, not a reason to fail the install.
+    fn sweep_legacy_backups(settings_path: &Path, keep: &Path) {
+        let Some(dir) = settings_path.parent() else {
+            return;
+        };
+        let Some(file_name) = settings_path.file_name().and_then(|s| s.to_str()) else {
+            return;
+        };
+        let prefix = format!("{file_name}.bak-");
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p == keep {
+                continue;
+            }
+            if p.file_name()
+                .and_then(|s| s.to_str())
+                .is_some_and(|n| n.starts_with(&prefix))
+            {
+                let _ = fs::remove_file(&p);
+            }
+        }
     }
 
     #[cfg(test)]
@@ -1114,6 +1144,33 @@ pub mod hooks {
             let tmp = tempdir().expect("tempdir");
             let result = backup_settings(&tmp.path().join("absent.json")).expect("backup");
             assert!(result.is_none(), "missing source must not create a backup");
+        }
+
+        #[test]
+        fn backup_overwrites_and_sweeps_legacy_stamped_files() {
+            let tmp = tempdir().expect("tempdir");
+            let settings = tmp.path().join("settings.json");
+            std::fs::write(&settings, b"{\"v\":1}").expect("seed settings");
+            // Two stale timestamped backups from a previous installer version.
+            let legacy_a = tmp.path().join("settings.json.bak-20250101-000000");
+            let legacy_b = tmp.path().join("settings.json.bak-20260101-120000");
+            std::fs::write(&legacy_a, b"old").expect("seed legacy a");
+            std::fs::write(&legacy_b, b"older").expect("seed legacy b");
+            // Unrelated sibling — must not be deleted.
+            let unrelated = tmp.path().join("other.json.bak-20260101-120000");
+            std::fs::write(&unrelated, b"keep").expect("seed unrelated");
+
+            let out = backup_settings(&settings).expect("backup").expect("path");
+            assert_eq!(out, tmp.path().join("settings.json.bak"));
+            assert_eq!(std::fs::read(&out).expect("read bak"), b"{\"v\":1}");
+            assert!(!legacy_a.exists(), "legacy bak-<stamp> must be swept");
+            assert!(!legacy_b.exists(), "legacy bak-<stamp> must be swept");
+            assert!(unrelated.exists(), "unrelated sibling must survive");
+
+            // Second run overwrites the single .bak with fresh contents.
+            std::fs::write(&settings, b"{\"v\":2}").expect("update settings");
+            backup_settings(&settings).expect("backup 2");
+            assert_eq!(std::fs::read(&out).expect("read bak 2"), b"{\"v\":2}");
         }
     }
 }
