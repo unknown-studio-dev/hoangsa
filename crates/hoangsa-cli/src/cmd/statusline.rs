@@ -30,6 +30,8 @@ struct Input {
     cwd: Option<String>,
     #[serde(default)]
     exceeds_200k_tokens: Option<bool>,
+    #[serde(default)]
+    session_id: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -264,14 +266,15 @@ fn seg_git(env: &Env, cwd: &Path) -> Option<String> {
     Some(out)
 }
 
-fn seg_model_cost(env: &Env, input: &Input) -> String {
+fn seg_model_cost(env: &Env, input: &Input, baseline: f64) -> String {
     let model = input
         .model
         .as_ref()
         .and_then(|m| m.display_name.clone().or_else(|| m.id.clone()))
         .unwrap_or_else(|| "claude".into());
     let model = shorten_model(&model);
-    let cost = input.cost.as_ref().and_then(|c| c.total_cost_usd).unwrap_or(0.0);
+    let total = input.cost.as_ref().and_then(|c| c.total_cost_usd).unwrap_or(0.0);
+    let cost = (total - baseline).max(0.0);
     let cost_str = format!("${cost:.2}");
     let cost_colored = if cost < 1.0 {
         env.theme.green(&cost_str)
@@ -412,7 +415,7 @@ fn resolve_cwd(input: &Input) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-fn render(env: &Env, input: &Input) -> String {
+fn render(env: &Env, input: &Input, baseline: f64) -> String {
     let cwd = resolve_cwd(input);
 
     let mut line1 = Vec::new();
@@ -423,7 +426,7 @@ fn render(env: &Env, input: &Input) -> String {
         line1.push(g);
     }
 
-    let mut line2 = vec![seg_model_cost(env, input), seg_path(env, &cwd)];
+    let mut line2 = vec![seg_model_cost(env, input, baseline), seg_path(env, &cwd)];
     if let Some(b) = seg_bootstrap(env, &cwd) {
         line2.push(b);
     }
@@ -437,9 +440,66 @@ fn render(env: &Env, input: &Input) -> String {
     if l1.is_empty() { l2 } else { format!("{l1}\n{l2}") }
 }
 
+// ── cost state (per-session baseline for /clear reset) ─────────────────────
+//
+// CC sends `total_cost_usd` as a session-cumulative number that does NOT
+// reset on `/clear`. We track a baseline per session_id: the SessionStart
+// hook (source="clear") snapshots `last_seen` into `baseline`, so the
+// statusline can display `max(0, total - baseline)` and appear to reset.
+//
+// Storage: a single file with exactly one entry (current session). Session
+// switch overwrites — no accumulation, no cleanup needed.
+
+#[derive(Debug, Default, Deserialize, serde::Serialize)]
+pub(crate) struct CostState {
+    pub session_id: String,
+    pub last_seen: f64,
+    pub baseline: f64,
+}
+
+pub(crate) fn cost_state_path(run_dir: &Path) -> PathBuf {
+    run_dir.join("statusline-cost.json")
+}
+
+pub(crate) fn read_cost_state(path: &Path) -> Option<CostState> {
+    let raw = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+pub(crate) fn write_cost_state(path: &Path, state: &CostState) {
+    let Some(parent) = path.parent() else { return };
+    if fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let tmp = path.with_extension("json.tmp");
+    let Ok(payload) = serde_json::to_string(state) else { return };
+    if fs::write(&tmp, payload).is_ok() {
+        let _ = fs::rename(&tmp, path);
+    }
+}
+
+/// Resolve baseline for the current session and update `last_seen`.
+///
+/// - Same session_id → keep baseline, refresh last_seen with `total`.
+/// - New session_id or no state → reset to `{sid, last_seen: total, baseline: 0}`.
+/// - Missing session_id in payload → no-op, baseline 0.
+fn sync_cost_state(run_dir: &Path, session_id: Option<&str>, total: f64) -> f64 {
+    let Some(sid) = session_id else { return 0.0 };
+    let path = cost_state_path(run_dir);
+    let baseline = match read_cost_state(&path) {
+        Some(st) if st.session_id == sid => st.baseline,
+        _ => 0.0,
+    };
+    write_cost_state(
+        &path,
+        &CostState { session_id: sid.to_string(), last_seen: total, baseline },
+    );
+    baseline
+}
+
 // ── cache ───────────────────────────────────────────────────────────────────
 
-fn cache_key(input: &Input, cwd: &Path, env: &Env) -> String {
+fn cache_key(input: &Input, cwd: &Path, env: &Env, baseline: f64) -> String {
     let mut h = Sha256::new();
     h.update(cwd.to_string_lossy().as_bytes());
     h.update(b"|");
@@ -451,6 +511,9 @@ fn cache_key(input: &Input, cwd: &Path, env: &Env) -> String {
     h.update(b"|");
     let cost_cents = (input.cost.as_ref().and_then(|c| c.total_cost_usd).unwrap_or(0.0) * 100.0).round() as i64;
     h.update(cost_cents.to_le_bytes());
+    h.update(b"|");
+    let baseline_cents = (baseline * 100.0).round() as i64;
+    h.update(baseline_cents.to_le_bytes());
     h.update(b"|");
     h.update([input.exceeds_200k_tokens.unwrap_or(false) as u8]);
     h.update(b"|");
@@ -529,14 +592,17 @@ pub fn cmd_statusline() {
     let env = Env::detect();
     let cwd = resolve_cwd(&input);
 
-    let key = cache_key(&input, &cwd, &env);
+    let total = input.cost.as_ref().and_then(|c| c.total_cost_usd).unwrap_or(0.0);
+    let baseline = sync_cost_state(&env.run_dir, input.session_id.as_deref(), total);
+
+    let key = cache_key(&input, &cwd, &env, baseline);
     let cpath = cache_path(&env);
     if let Some(hit) = cache_read(&cpath, &key) {
         print!("{hit}");
         return;
     }
 
-    let rendered = render(&env, &input);
+    let rendered = render(&env, &input, baseline);
     cache_write(&cpath, &key, &rendered);
     print!("{rendered}");
 }
@@ -598,7 +664,7 @@ mod tests {
             cwd: Some("/tmp/does-not-exist-xyz".into()),
             ..Default::default()
         };
-        let out = render(&env, &input);
+        let out = render(&env, &input, 0.0);
         assert!(!out.contains("[P]"), "idle must hide phase segment: {out}");
         assert!(out.contains("opus-4-7"), "model missing: {out}");
         assert!(out.contains("$0.12"), "cost missing: {out}");
@@ -616,15 +682,15 @@ mod tests {
 
         let mut cheap = base();
         cheap.cost = Some(Cost { total_cost_usd: Some(0.50) });
-        assert!(seg_model_cost(&env, &cheap).contains("\x1b[32m"), "cheap → green");
+        assert!(seg_model_cost(&env, &cheap, 0.0).contains("\x1b[32m"), "cheap → green");
 
         let mut warn = base();
         warn.cost = Some(Cost { total_cost_usd: Some(3.00) });
-        assert!(seg_model_cost(&env, &warn).contains("\x1b[33m"), "mid → yellow");
+        assert!(seg_model_cost(&env, &warn, 0.0).contains("\x1b[33m"), "mid → yellow");
 
         let mut hot = base();
         hot.cost = Some(Cost { total_cost_usd: Some(7.00) });
-        assert!(seg_model_cost(&env, &hot).contains("\x1b[31m"), "high → red");
+        assert!(seg_model_cost(&env, &hot, 0.0).contains("\x1b[31m"), "high → red");
     }
 
     #[test]
@@ -636,7 +702,7 @@ mod tests {
             cwd: Some("/tmp".into()),
             ..Default::default()
         };
-        let out = render(&env, &input);
+        let out = render(&env, &input, 0.0);
         assert!(!out.contains("\x1b["), "NO_COLOR must strip ANSI: {out:?}");
     }
 
@@ -655,7 +721,95 @@ mod tests {
         let cwd = PathBuf::from("/tmp");
         let a = Input { cost: Some(Cost { total_cost_usd: Some(0.10) }), ..Default::default() };
         let b = Input { cost: Some(Cost { total_cost_usd: Some(0.20) }), ..Default::default() };
-        assert_ne!(cache_key(&a, &cwd, &env), cache_key(&b, &cwd, &env));
+        assert_ne!(cache_key(&a, &cwd, &env, 0.0), cache_key(&b, &cwd, &env, 0.0));
+    }
+
+    #[test]
+    fn cache_key_changes_on_baseline() {
+        let env = plain_env();
+        let cwd = PathBuf::from("/tmp");
+        let inp = Input { cost: Some(Cost { total_cost_usd: Some(1.00) }), ..Default::default() };
+        assert_ne!(
+            cache_key(&inp, &cwd, &env, 0.0),
+            cache_key(&inp, &cwd, &env, 0.50),
+            "baseline change must invalidate cache"
+        );
+    }
+
+    #[test]
+    fn cost_baseline_subtracts_from_total() {
+        let env = plain_env();
+        let input = Input {
+            model: Some(Model { display_name: Some("claude-opus-4-7".into()), id: None }),
+            cost: Some(Cost { total_cost_usd: Some(1.20) }),
+            ..Default::default()
+        };
+        assert!(seg_model_cost(&env, &input, 1.00).contains("$0.20"), "1.20 - 1.00 = 0.20");
+    }
+
+    #[test]
+    fn cost_baseline_clamps_at_zero() {
+        let env = plain_env();
+        let input = Input {
+            model: Some(Model { display_name: Some("claude-opus-4-7".into()), id: None }),
+            cost: Some(Cost { total_cost_usd: Some(0.50) }),
+            ..Default::default()
+        };
+        // Baseline > total (shouldn't happen, but guard against negative display).
+        assert!(seg_model_cost(&env, &input, 2.00).contains("$0.00"));
+    }
+
+    #[test]
+    fn cost_state_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = cost_state_path(dir.path());
+        write_cost_state(&p, &CostState {
+            session_id: "sid-1".into(),
+            last_seen: 1.23,
+            baseline: 0.45,
+        });
+        let st = read_cost_state(&p).expect("state reads back");
+        assert_eq!(st.session_id, "sid-1");
+        assert!((st.last_seen - 1.23).abs() < 1e-9);
+        assert!((st.baseline - 0.45).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sync_cost_state_keeps_baseline_same_session() {
+        let dir = tempfile::tempdir().unwrap();
+        // Seed prior state: session=sid-1 saw last 1.00 with baseline 0.30.
+        write_cost_state(&cost_state_path(dir.path()), &CostState {
+            session_id: "sid-1".into(),
+            last_seen: 1.00,
+            baseline: 0.30,
+        });
+        let baseline = sync_cost_state(dir.path(), Some("sid-1"), 1.50);
+        assert!((baseline - 0.30).abs() < 1e-9, "same session → keep baseline");
+        let st = read_cost_state(&cost_state_path(dir.path())).unwrap();
+        assert!((st.last_seen - 1.50).abs() < 1e-9, "last_seen refreshes to 1.50");
+    }
+
+    #[test]
+    fn sync_cost_state_resets_on_new_session() {
+        let dir = tempfile::tempdir().unwrap();
+        write_cost_state(&cost_state_path(dir.path()), &CostState {
+            session_id: "sid-old".into(),
+            last_seen: 5.00,
+            baseline: 2.00,
+        });
+        let baseline = sync_cost_state(dir.path(), Some("sid-new"), 0.10);
+        assert_eq!(baseline, 0.0, "new session → baseline resets to 0");
+        let st = read_cost_state(&cost_state_path(dir.path())).unwrap();
+        assert_eq!(st.session_id, "sid-new");
+        assert!((st.baseline).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sync_cost_state_missing_sid_is_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let baseline = sync_cost_state(dir.path(), None, 1.00);
+        assert_eq!(baseline, 0.0);
+        assert!(!cost_state_path(dir.path()).exists(), "no file written without sid");
     }
 
     #[test]
@@ -673,7 +827,7 @@ mod tests {
     fn malformed_stdin_does_not_panic() {
         let env = plain_env();
         let input: Input = serde_json::from_str("not json at all").unwrap_or_default();
-        let out = render(&env, &input);
+        let out = render(&env, &input, 0.0);
         assert!(!out.is_empty(), "render must always emit something");
     }
 }

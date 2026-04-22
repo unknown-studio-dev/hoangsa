@@ -1590,11 +1590,41 @@ pub fn cmd_state_check(cwd: &str, args: &[&str]) {
 
 /// `hook state-clear`
 ///
-/// Removes the enforcement events file (used at session start).
+/// Fires on every SessionStart (startup, resume, clear). Clears the
+/// enforcement events file, and on `source == "clear"` snapshots the
+/// statusline cost baseline so the displayed cost resets to $0.00.
 pub fn cmd_state_clear(cwd: &str) {
     let events_path = enforcement_events_path(cwd);
     let _ = fs::remove_file(&events_path);
+
+    // Best-effort: read SessionStart payload (if any) and handle /clear.
+    let mut raw = String::new();
+    let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut raw);
+    if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&raw) {
+        let source = payload.get("source").and_then(|v| v.as_str()).unwrap_or("");
+        let sid = payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+        if source == "clear" && !sid.is_empty() {
+            snapshot_statusline_baseline(sid);
+        }
+    }
+
     out(&json!({"success": true}));
+}
+
+/// On `/clear`, promote the last-seen cost into the baseline so the
+/// statusline displays `max(0, total - baseline) = 0` until the new
+/// conversation accrues cost. No-op if the state file is missing or
+/// belongs to a different session.
+fn snapshot_statusline_baseline(session_id: &str) {
+    let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else { return };
+    let run_dir = home.join(".hoangsa").join("run");
+    let path = crate::cmd::statusline::cost_state_path(&run_dir);
+    let Some(mut state) = crate::cmd::statusline::read_cost_state(&path) else { return };
+    if state.session_id != session_id {
+        return;
+    }
+    state.baseline = state.last_seen;
+    crate::cmd::statusline::write_cost_state(&path, &state);
 }
 
 fn flag_value<'a>(args: &'a [&'a str], flag: &str) -> Option<&'a str> {
