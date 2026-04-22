@@ -267,13 +267,24 @@ impl WatchConfig {
 /// ChromaDB integration config (`[chroma]` in `config.toml`).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
-#[derive(Default)]
 pub struct ChromaConfig {
-    /// Enable ChromaDB semantic search. Default `false`.
+    /// Enable ChromaDB semantic search. Default `true` — retrieval quality
+    /// degrades noticeably without vector recall, so we opt users in by
+    /// default. When the Python sidecar or `chromadb` pkg is missing,
+    /// `open_chroma` falls back to a stderr warning and keyword-only search.
     pub enabled: bool,
     /// Custom ChromaDB data path. When `None`, falls back to
     /// `StoreRoot::chroma_path()`.
     pub data_path: Option<String>,
+}
+
+impl Default for ChromaConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            data_path: None,
+        }
+    }
 }
 
 

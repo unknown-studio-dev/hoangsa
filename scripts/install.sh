@@ -70,7 +70,9 @@ USAGE:
 FLAGS (forwarded to `hoangsa-cli install`):
     --global            Install globally for the current user (default)
     --local             Install for the current project (cwd)
-    --install-chroma    Provision the chroma sidecar venv only
+    --no-chroma         Skip the ChromaDB sidecar venv bootstrap
+                        (default is to provision it — retrieval quality
+                        degrades sharply without it).
     --dry-run           Print actions without writing files
     --help, -h          Show this help and exit
 
@@ -97,6 +99,7 @@ EOF
 PASSTHROUGH=""
 HAS_MODE_FLAG=0
 IS_GLOBAL=0
+SKIP_CHROMA=0
 
 append_arg() {
     # Append a shell-quoted arg to PASSTHROUGH so we can re-expand with `eval`.
@@ -124,7 +127,16 @@ for arg in "$@"; do
             HAS_MODE_FLAG=1
             append_arg "$arg"
             ;;
-        --install-chroma|--dry-run)
+        --install-chroma)
+            # Legacy flag: venv bootstrap is now the default. Keep accepting
+            # it silently so `--install-chroma` in existing scripts still
+            # works, but don't forward it — `hoangsa-cli install` no longer
+            # needs to know about it.
+            ;;
+        --no-chroma)
+            SKIP_CHROMA=1
+            ;;
+        --dry-run)
             append_arg "$arg"
             ;;
         *)
@@ -513,6 +525,53 @@ resolve_tag() {
 }
 
 # ---------------------------------------------------------------------------
+# ChromaDB sidecar venv bootstrap
+# ---------------------------------------------------------------------------
+#
+# `hoangsa-memory` optionally calls into a Python ChromaDB sidecar for
+# semantic retrieval. Without it, recall quality drops to BM25 + graph
+# only. We provision `$HOANGSA_INSTALL_DIR/memory/venv` with `chromadb`
+# installed so the default `enabled = true` config just works.
+#
+# Non-fatal: a missing python3, network failure, or pip error logs a warning
+# and skips the step. `hoangsa-memory` degrades gracefully on its own.
+install_chroma_venv() {
+    _venv_dir="$HOANGSA_INSTALL_DIR/memory/venv"
+    if [ -x "$_venv_dir/bin/python3" ] \
+        && "$_venv_dir/bin/python3" -c "import chromadb" >/dev/null 2>&1; then
+        info "chroma venv already provisioned at $_venv_dir"
+        return 0
+    fi
+
+    if ! have python3; then
+        warn "python3 not found on PATH — skipping ChromaDB venv bootstrap."
+        warn "install python3 and rerun with --install-chroma, or set"
+        warn "[chroma] enabled = false in ~/.hoangsa/memory/config.toml."
+        return 0
+    fi
+
+    info "provisioning ChromaDB venv at $_venv_dir (≈300MB, one-time)"
+    mkdir -p "$HOANGSA_INSTALL_DIR/memory"
+    if ! python3 -m venv "$_venv_dir" >/dev/null 2>&1; then
+        warn "python3 -m venv failed — ChromaDB will stay disabled until you run"
+        warn "    python3 -m venv \"$_venv_dir\" && \"$_venv_dir/bin/pip\" install chromadb"
+        return 0
+    fi
+
+    if ! "$_venv_dir/bin/pip" install --quiet --upgrade pip >/dev/null 2>&1; then
+        warn "pip upgrade failed (continuing with bundled pip)"
+    fi
+
+    if "$_venv_dir/bin/pip" install --quiet chromadb; then
+        info "chromadb installed into $_venv_dir"
+    else
+        warn "pip install chromadb failed — retry manually:"
+        warn "    \"$_venv_dir/bin/pip\" install chromadb"
+        warn "or disable with [chroma] enabled = false in config.toml."
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Main install flow
 # ---------------------------------------------------------------------------
 
@@ -667,6 +726,14 @@ main() {
 
     HOANGSA_STAGING_DIR="$STAGING"
     export HOANGSA_STAGING_DIR
+
+    # Provision the ChromaDB sidecar venv unless --no-chroma was passed.
+    # Runs before the exec so the CLI inherits a ready-to-use environment.
+    if [ "$SKIP_CHROMA" -eq 0 ]; then
+        install_chroma_venv
+    else
+        info "--no-chroma — skipping ChromaDB venv bootstrap"
+    fi
 
     # Clear the cleanup trap before `exec`. $TMP still gets rm'd here because
     # we drop the trap only after consuming everything we needed from it; the

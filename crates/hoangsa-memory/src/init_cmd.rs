@@ -118,8 +118,11 @@ const DEFAULT_CONFIG_TOML: &str = r#"# hoangsa-memory config. All fields are opt
 
 [chroma]
 # Enable ChromaDB semantic search alongside the built-in retrieval.
-# Default: false.
-# enabled = false
+# Default: true. Retrieval quality degrades sharply without vector recall,
+# so we opt users in by default. If the Python sidecar or `chromadb` pkg
+# is unavailable, `hoangsa-memory` emits a stderr warning once and falls
+# back to keyword-only search — disabling here silences the warning.
+# enabled = true
 
 # Custom ChromaDB data path. When unset, falls back to
 # `StoreRoot::chroma_path()` under the memory root.
