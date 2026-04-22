@@ -23,7 +23,7 @@ The installer ships pre-built native binaries — no Node, no `npm`, no `cargo` 
 - `hoangsa-cli` → `~/.hoangsa/bin/`
 - `hoangsa-memory`, `hoangsa-memory-mcp` → `~/.hoangsa/bin/`
 
-Supported platforms: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `linux-x64-musl`.
+Supported platforms: `darwin-arm64` (Apple Silicon), `linux-x64`, `linux-arm64`, `linux-x64-musl`.
 
 Flags: `--global` (default), `--local`, `--dry-run`, `--no-embed` (skip pre-downloading the fastembed weights; they fetch lazily on first use).
 

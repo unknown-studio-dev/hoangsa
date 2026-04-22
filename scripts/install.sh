@@ -37,7 +37,7 @@ HOANGSA_INSTALL_DIR="${HOANGSA_INSTALL_DIR:-$HOME/.hoangsa}"
 HOANGSA_CLI_DIR="${HOANGSA_CLI_DIR:-$HOANGSA_INSTALL_DIR/bin}"
 HOANGSA_NO_PATH_EDIT="${HOANGSA_NO_PATH_EDIT:-}"
 
-SUPPORTED_TRIPLES="darwin-arm64 darwin-x64 linux-x64 linux-arm64 linux-x64-musl"
+SUPPORTED_TRIPLES="darwin-arm64 linux-x64 linux-arm64 linux-x64-musl"
 
 # ---------------------------------------------------------------------------
 # Helpers (info/warn/err are provided by lib/ui.sh)
