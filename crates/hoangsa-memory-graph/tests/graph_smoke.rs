@@ -434,7 +434,13 @@ async fn imports_of_file_dedupes_and_includes_file_stem() {
     let dir = tempdir().unwrap();
     let g = new_graph(dir.path()).await;
 
-    g.upsert_node(node("file::sym", "file.rs", 1))
+    // Anchor the fixture path inside the tempdir (no Cargo.toml in its
+    // ancestry) so `imports_of_file` falls back to `file_stem()` ("file")
+    // — the synthetic scheme these edges are keyed on. Running from inside
+    // a real crate would otherwise walk up to Cargo.toml and resolve
+    // `file.rs` → `<crate>::file`, bypassing the file-stem edge entirely.
+    let file_path = dir.path().join("file.rs");
+    g.upsert_node(node("file::sym", file_path.to_str().unwrap(), 1))
         .await
         .unwrap();
     g.upsert_edges_batch(vec![
@@ -446,7 +452,7 @@ async fn imports_of_file_dedupes_and_includes_file_stem() {
     .await
     .unwrap();
 
-    let mut imports = g.imports_of_file("file.rs").await.unwrap();
+    let mut imports = g.imports_of_file(&file_path).await.unwrap();
     imports.sort();
     assert_eq!(
         imports,

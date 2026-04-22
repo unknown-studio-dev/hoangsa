@@ -11,6 +11,7 @@ description = "Symbol / call / import graph built on top of hoangsa-memory-store
 [dependencies]
 hoangsa-memory-core   = { workspace = true }
 hoangsa-memory-store  = { workspace = true }
+hoangsa-memory-parse  = { workspace = true }
 serde        = { workspace = true }
 serde_json   = { workspace = true }
 

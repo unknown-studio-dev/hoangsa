@@ -30,6 +30,7 @@ DRY_RUN=0
 IS_GLOBAL=0
 PASSTHROUGH=""
 HAS_MODE_FLAG=0
+SKIP_CHROMA=0
 
 append_arg() {
     quoted=$(printf "%s" "$1" | sed "s/'/'\\\\''/g")
@@ -46,7 +47,10 @@ for arg in "$@"; do
         --dry-run)    DRY_RUN=1;    append_arg "$arg" ;;
         --global) IS_GLOBAL=1; HAS_MODE_FLAG=1; append_arg "$arg" ;;
         --local)  HAS_MODE_FLAG=1; append_arg "$arg" ;;
-        --install-chroma) append_arg "$arg" ;;
+        --install-chroma)
+            # Legacy: venv bootstrap is now the default; accept silently.
+            ;;
+        --no-chroma) SKIP_CHROMA=1 ;;
         -h|--help)
             sed -n '2,15p' "$0"
             exit 0
@@ -430,6 +434,42 @@ export HOANGSA_TEMPLATES_DIR HOANGSA_STAGING_DIR
 # out of staging/bin into the install dirs, then cleans up). If we keep the
 # trap, the shell's EXIT handler would yank $STAGING before the CLI reads it.
 trap - EXIT INT TERM
+
+# --- ChromaDB sidecar venv bootstrap ----------------------------------------
+#
+# Same behaviour as scripts/install.sh: provision $HOANGSA_INSTALL_DIR/memory/venv
+# with `chromadb` installed so hoangsa-memory's default `[chroma] enabled = true`
+# just works. Skipped with --no-chroma. Non-fatal on failure.
+install_chroma_venv() {
+    _venv_dir="$HOANGSA_INSTALL_DIR/memory/venv"
+    if [ -x "$_venv_dir/bin/python3" ] \
+        && "$_venv_dir/bin/python3" -c "import chromadb" >/dev/null 2>&1; then
+        info "chroma venv already provisioned at $_venv_dir"
+        return 0
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        info "python3 not on PATH — skipping ChromaDB venv bootstrap"
+        return 0
+    fi
+    info "provisioning ChromaDB venv at $_venv_dir"
+    mkdir -p "$HOANGSA_INSTALL_DIR/memory"
+    if ! python3 -m venv "$_venv_dir" >/dev/null 2>&1; then
+        info "python3 -m venv failed — skipping (disable with --no-chroma to silence)"
+        return 0
+    fi
+    "$_venv_dir/bin/pip" install --quiet --upgrade pip >/dev/null 2>&1 || true
+    if "$_venv_dir/bin/pip" install --quiet chromadb; then
+        info "chromadb installed into $_venv_dir"
+    else
+        info "pip install chromadb failed — retry manually or use --no-chroma"
+    fi
+}
+
+if [ "$SKIP_CHROMA" -eq 0 ]; then
+    install_chroma_venv
+else
+    info "--no-chroma — skipping ChromaDB venv bootstrap"
+fi
 
 # --- Hand off to the CLI ----------------------------------------------------
 

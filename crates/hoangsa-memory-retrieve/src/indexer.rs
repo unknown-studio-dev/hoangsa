@@ -22,7 +22,7 @@ use parking_lot::Mutex;
 use hoangsa_memory_core::Result;
 use hoangsa_memory_graph::{Edge, EdgeKind, Graph, Node};
 use hoangsa_memory_parse::{
-    LanguageRegistry, SourceChunk, SymbolKind,
+    LanguageRegistry, SourceChunk, SymbolKind, crate_qualified_module_path,
     walk::{WalkOptions, walk_sources, walk_text_sources},
 };
 use hoangsa_memory_store::{ChromaCol, ChunkDoc, StoreRoot, SymbolRow};
@@ -621,7 +621,7 @@ impl Indexer {
         // Import edges
         let alias_only: std::collections::HashMap<String, String> =
             table.aliases.iter().cloned().collect();
-        let module = module_fqn(path);
+        let module = crate_qualified_module_path(path);
         if !alias_only.is_empty() {
             let mut seen = std::collections::HashSet::new();
             for target in alias_only.values() {
@@ -763,7 +763,10 @@ fn symbol_kind_tag(k: SymbolKind) -> &'static str {
 /// baked into the hash meta key invalidates every previously-stored
 /// hash sentinel in one go, so the next indexer run re-parses every
 /// file even when its bytes haven't changed.
-const PARSER_SCHEMA_VERSION: u32 = 6;
+// v7: module FQNs are now crate-qualified (e.g. `hoangsa_cli::main` instead
+// of the bare `main`), fixing the cross-crate collision where every
+// workspace member's `main.rs` shared the same graph key.
+const PARSER_SCHEMA_VERSION: u32 = 7;
 
 /// Meta key under which we store the blake3 hash of the last-indexed bytes
 /// of `path`. Kept private to the indexer — callers shouldn't need to read
@@ -772,12 +775,6 @@ const PARSER_SCHEMA_VERSION: u32 = 6;
 /// per-path sentinels (e.g. `mtime:`) without colliding.
 fn hash_meta_key(path: &Path) -> String {
     format!("hash{PARSER_SCHEMA_VERSION}:{}", path.display())
-}
-
-fn module_fqn(path: &Path) -> String {
-    path.file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default()
 }
 
 /// Pick a sensible default fan-out for [`Indexer::index_path`]. Uses the

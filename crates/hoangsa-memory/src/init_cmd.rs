@@ -2,31 +2,35 @@
 
 use std::path::Path;
 
-use hoangsa_memory_store::StoreRoot;
-
 /// Create `.hoangsa/memory/` at `root`, seed `MEMORY.md` / `LESSONS.md`, and
 /// write a documented `config.toml` on first run. Existing files are preserved.
+///
+/// `init` only touches markdown + config files. It intentionally does NOT
+/// open the redb graph, tantivy index, or sqlite episode log — those would
+/// fail with "Database already open. Cannot acquire lock" when an MCP
+/// daemon is already running against the same root. Opening them has no
+/// value here because `index` / `watch` / `query` all open them on demand.
 pub async fn cmd_init(root: &Path) -> anyhow::Result<()> {
     let existed = root.exists();
-    let store = StoreRoot::open(root).await?;
+    tokio::fs::create_dir_all(root).await?;
 
     let mut seeded = Vec::new();
     for name in ["MEMORY.md", "LESSONS.md"] {
-        let p = store.path.join(name);
+        let p = root.join(name);
         if !p.exists() {
             tokio::fs::write(&p, format!("# {name}\n")).await?;
             seeded.push(name);
         }
     }
 
-    let cfg_path = store.path.join("config.toml");
+    let cfg_path = root.join("config.toml");
     if !cfg_path.exists() {
         tokio::fs::write(&cfg_path, DEFAULT_CONFIG_TOML).await?;
         seeded.push("config.toml");
     }
 
     let verb = if existed { "refreshed" } else { "created" };
-    println!("✓ {verb} {}", store.path.display());
+    println!("✓ {verb} {}", root.display());
     if !seeded.is_empty() {
         println!("  seeded: {}", seeded.join(", "));
     }
@@ -114,8 +118,11 @@ const DEFAULT_CONFIG_TOML: &str = r#"# hoangsa-memory config. All fields are opt
 
 [chroma]
 # Enable ChromaDB semantic search alongside the built-in retrieval.
-# Default: false.
-# enabled = false
+# Default: true. Retrieval quality degrades sharply without vector recall,
+# so we opt users in by default. If the Python sidecar or `chromadb` pkg
+# is unavailable, `hoangsa-memory` emits a stderr warning once and falls
+# back to keyword-only search — disabling here silences the warning.
+# enabled = true
 
 # Custom ChromaDB data path. When unset, falls back to
 # `StoreRoot::chroma_path()` under the memory root.

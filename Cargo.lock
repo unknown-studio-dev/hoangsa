@@ -1061,6 +1061,7 @@ name = "hoangsa-memory-graph"
 version = "0.0.4"
 dependencies = [
  "hoangsa-memory-core",
+ "hoangsa-memory-parse",
  "hoangsa-memory-store",
  "serde",
  "serde_json",
