@@ -126,9 +126,6 @@ fn main() {
         ("hook", "enforce") => {
             cmd::hook::cmd_enforce(&cwd);
         }
-        ("hook", "intent-guard") => {
-            cmd::hook::cmd_intent_guard(&cwd);
-        }
         ("hook", "post-enforce") => {
             cmd::hook::cmd_post_enforce(&cwd);
         }

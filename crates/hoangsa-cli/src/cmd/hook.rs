@@ -836,51 +836,6 @@ pub fn intent_guard_bash_commit(events: &str, staged_files: &[String]) -> Intent
     }
 }
 
-/// `hook intent-guard`
-///
-/// Standalone PreToolUse-style subcommand that runs ONLY the correlation
-/// checks (file-level for Edit/Write, diff-scope for Bash git-commit).
-/// Does NOT read rules.json — it trusts the caller to have decided whether
-/// the guard should fire. Useful for composing lint-style commit hooks or
-/// writing unit tests that exercise correlation in isolation.
-///
-/// Decisions: approve | block | approve+reason (warn). Reads tool payload
-/// from stdin in the same shape Claude Code's PreToolUse hooks receive.
-pub fn cmd_intent_guard(cwd: &str) {
-    use std::io::Read as _;
-    let mut input = String::new();
-    std::io::stdin().read_to_string(&mut input).ok();
-    let parsed: serde_json::Value = serde_json::from_str(&input).unwrap_or(json!({}));
-    let tool_name = parsed.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
-    let tool_input = parsed.get("tool_input").cloned().unwrap_or(json!({}));
-    let events = fs::read_to_string(enforcement_events_path(cwd)).unwrap_or_default();
-
-    let outcome = match tool_name {
-        "Edit" | "Write" => {
-            match tool_input.get("file_path").and_then(|v| v.as_str()) {
-                Some(fp) if is_source_file(fp) => intent_guard_edit(&events, fp),
-                _ => IntentOutcome::Approve,
-            }
-        }
-        "Bash" => {
-            match tool_input.get("command").and_then(|v| v.as_str()) {
-                Some(cmd) if is_git_commit(cmd) => {
-                    let files = get_staged_files(cwd);
-                    intent_guard_bash_commit(&events, &files)
-                }
-                _ => IntentOutcome::Approve,
-            }
-        }
-        _ => IntentOutcome::Approve,
-    };
-
-    match outcome {
-        IntentOutcome::Approve => out(&json!({"decision": "approve"})),
-        IntentOutcome::Block(reason) => out(&json!({"decision": "block", "reason": reason})),
-        IntentOutcome::Warn(reason) => out(&json!({"decision": "approve", "reason": reason})),
-    }
-}
-
 fn get_staged_files(cwd: &str) -> Vec<String> {
     use std::process::Command;
     let output = Command::new("git")
