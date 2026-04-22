@@ -242,7 +242,13 @@ impl FtsIndex {
         tokio::task::spawn_blocking(move || -> Result<Vec<FtsHit>> {
             let searcher = reader.searcher();
             let qp = QueryParser::for_index(&index, vec![fields.body, fields.symbol]);
-            let parsed = qp.parse_query(&q).map_err(store)?;
+            // Replace tantivy metacharacters with spaces so code-symbol queries
+            // like `hoangsa_cli::main` or `src/foo.rs:10` don't trip the parser.
+            // The index uses `SimpleTokenizer`, which already strips these chars
+            // at index time, so the sanitised query tokenises identically to
+            // the stored content — search intent is preserved.
+            let sanitised = sanitise_query(&q);
+            let parsed = qp.parse_query(&sanitised).map_err(store)?;
             let collector = TopDocs::with_limit(k).order_by_score();
             let mut top = searcher.search(&parsed, &collector).map_err(store)?;
 
@@ -253,7 +259,7 @@ impl FtsIndex {
             // once more before giving up. Runs in the same blocking task
             // so hot-path (non-empty result) pays nothing.
             if top.is_empty()
-                && let Some(fz) = build_fuzzy_query(&q, &fields) {
+                && let Some(fz) = build_fuzzy_query(&sanitised, &fields) {
                     top = searcher.search(&fz, &collector).map_err(store)?;
                 }
 
@@ -267,6 +273,32 @@ impl FtsIndex {
         .await
         .map_err(|e| Error::Store(format!("join: {e}")))?
     }
+}
+
+/// Replace every tantivy `QueryParser` metacharacter with a space, then
+/// collapse runs of whitespace. The index tokeniser (`SimpleTokenizer`)
+/// strips these same characters at index time, so the rewritten query
+/// matches the indexed tokens — and the parser never trips on `:`, `+`,
+/// wildcards, or stray brackets in user input.
+fn sanitise_query(raw: &str) -> String {
+    const RESERVED: &[char] = &[
+        ':', '+', '-', '&', '|', '!', '(', ')', '{', '}', '[', ']', '^', '"', '~', '*', '?', '\\',
+    ];
+    let mut out = String::with_capacity(raw.len());
+    let mut prev_space = true;
+    for c in raw.chars() {
+        let replaced = if RESERVED.contains(&c) { ' ' } else { c };
+        if replaced.is_whitespace() {
+            if !prev_space {
+                out.push(' ');
+                prev_space = true;
+            }
+        } else {
+            out.push(replaced);
+            prev_space = false;
+        }
+    }
+    out.trim_end().to_string()
 }
 
 /// Build a lenient OR-query that tolerates typos. Returns `None` when the
