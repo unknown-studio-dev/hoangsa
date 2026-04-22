@@ -166,7 +166,7 @@ fn parse_bytes(
         bytes,
         path,
         lang,
-        /* module_path */ &module_path_from(path),
+        /* module_path */ &crate_qualified_module_path(path),
         &mut chunks,
         &mut table,
         &mut stack,
@@ -193,10 +193,113 @@ fn parse_bytes(
     Ok((chunks, table))
 }
 
-fn module_path_from(path: &Path) -> String {
+/// Resolve `path` to a crate-qualified module FQN suitable as a graph key.
+///
+/// For files that live inside a Rust crate (found by walking up for a
+/// `Cargo.toml` with a `[package] name = "..."`), builds
+/// `{crate_name}::{mod_path}` — e.g. `crates/hoangsa-cli/src/cmd/install.rs`
+/// becomes `hoangsa_cli::cmd::install`, and `crates/hoangsa-cli/src/main.rs`
+/// becomes `hoangsa_cli::main`.
+///
+/// This is the fix for the cross-crate FQN collision where every
+/// `crates/*/src/main.rs` used to map to the bare module `"main"`, causing
+/// imports and call-graph edges from unrelated crates to merge in redb.
+///
+/// Falls back to `path.file_stem()` for non-Rust files or when no
+/// `Cargo.toml` is reachable — callers for those languages keep their
+/// prior keying until a per-language resolver is added.
+pub fn crate_qualified_module_path(path: &Path) -> String {
+    if let Some(m) = rust_crate_qualified_path(path) {
+        return m;
+    }
     path.file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+fn rust_crate_qualified_path(path: &Path) -> Option<String> {
+    // Walk up from the file's directory looking for Cargo.toml with a
+    // `[package]` section. Workspace roots (virtual manifests without
+    // `[package]`) are skipped so we don't attribute crate members to
+    // the workspace root.
+    let mut dir = path.parent()?;
+    let (crate_dir, crate_name) = loop {
+        let cargo = dir.join("Cargo.toml");
+        if cargo.is_file()
+            && let Some(name) = read_cargo_package_name(&cargo)
+        {
+            break (dir.to_path_buf(), name);
+        }
+        dir = dir.parent()?;
+    };
+
+    let crate_name_norm = crate_name.replace('-', "_");
+    let rel = path.strip_prefix(&crate_dir).ok()?;
+
+    // Skip the leading `src/` if present — it's not part of the module path.
+    let mut iter = rel.components().peekable();
+    if iter.peek().map(|c| c.as_os_str().to_string_lossy() == "src") == Some(true) {
+        iter.next();
+    }
+    let comps: Vec<_> = iter.collect();
+    if comps.is_empty() {
+        return Some(crate_name_norm);
+    }
+
+    let mut parts: Vec<String> = Vec::with_capacity(comps.len());
+    let last = comps.len() - 1;
+    for (i, comp) in comps.iter().enumerate() {
+        let s = comp.as_os_str().to_string_lossy();
+        if i == last {
+            let stem = Path::new(s.as_ref())
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            // `lib.rs` IS the crate root; `mod.rs` is its parent directory
+            // (already captured by previous components); `main.rs` we keep
+            // so different binaries in the same crate stay distinguishable
+            // when examples/ or bin/ hosts multiple mains.
+            match stem.as_str() {
+                "lib" | "mod" => {}
+                _ => parts.push(stem),
+            }
+        } else {
+            parts.push(s.into_owned());
+        }
+    }
+
+    if parts.is_empty() {
+        Some(crate_name_norm)
+    } else {
+        Some(format!("{}::{}", crate_name_norm, parts.join("::")))
+    }
+}
+
+/// Minimal `Cargo.toml` reader: returns the `[package] name` value if the
+/// manifest has a `[package]` section with a `name`. Returns `None` for
+/// virtual workspace manifests (no `[package]`) so callers keep walking up.
+fn read_cargo_package_name(cargo: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(cargo).ok()?;
+    let mut in_package = false;
+    for raw in text.lines() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.starts_with('[') {
+            in_package = line == "[package]";
+            continue;
+        }
+        if in_package
+            && let Some(rest) = line.strip_prefix("name")
+        {
+            let rest = rest.trim_start();
+            if let Some(eq) = rest.strip_prefix('=') {
+                let val = eq.trim().trim_matches('"').trim_matches('\'');
+                if !val.is_empty() {
+                    return Some(val.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Chunk a non-code text file into BM25-indexable slices.
