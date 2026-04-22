@@ -45,13 +45,14 @@ fn main() -> ExitCode {
 
     // Special case: first arg is a command we recognise (not a reserved
     // subcommand). Route to proxy_run so `hsp git log` just works.
-    if let Some(first) = raw_args.first() {
-        if !RESERVED.contains(&first.as_str()) && !first.starts_with('-') {
-            // Direct routing: no CLI flags parsed, env vars drive color policy
-            // + HSP_STRICT lossless toggle.
-            let code = proxy_run(first, &raw_args[1..], false, ansi::Flag::Auto, false, false);
-            return ExitCode::from(u8::try_from(code & 0xff).unwrap_or(1));
-        }
+    if let Some(first) = raw_args.first()
+        && !RESERVED.contains(&first.as_str())
+        && !first.starts_with('-')
+    {
+        // Direct routing: no CLI flags parsed, env vars drive color policy
+        // + HSP_STRICT lossless toggle.
+        let code = proxy_run(first, &raw_args[1..], false, ansi::Flag::Auto, false, false);
+        return ExitCode::from(u8::try_from(code & 0xff).unwrap_or(1));
     }
 
     let matches = cli().try_get_matches_from(std::iter::once("hsp".to_string()).chain(raw_args));
@@ -254,16 +255,16 @@ fn cmd_list() -> ExitCode {
     let mut rt = RhaiRuntime::new();
     rt.load_dirs(&config::project_dir(&cwd), global_dir.as_deref());
     let rhai_handlers = rt.handlers.lock().ok();
-    if let Some(hs) = rhai_handlers {
-        if !hs.is_empty() {
-            println!("rhai handlers:");
-            for h in hs.iter() {
-                let sub = h.subcmd.as_deref().unwrap_or("*");
-                println!(
-                    "  {}  {}  priority={}  tier={:?}  from={}",
-                    h.cmd, sub, h.priority, h.tier, h.source_path
-                );
-            }
+    if let Some(hs) = rhai_handlers
+        && !hs.is_empty()
+    {
+        println!("rhai handlers:");
+        for h in hs.iter() {
+            let sub = h.subcmd.as_deref().unwrap_or("*");
+            println!(
+                "  {}  {}  priority={}  tier={:?}  from={}",
+                h.cmd, sub, h.priority, h.tier, h.source_path
+            );
         }
     }
     for e in &rt.errors {

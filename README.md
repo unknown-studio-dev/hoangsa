@@ -21,7 +21,7 @@ curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh
 The installer ships pre-built native binaries — no Node, no `npm`, no `cargo` required.
 
 - `hoangsa-cli` → `~/.hoangsa/bin/`
-- `hoangsa-memory`, `hoangsa-memory-mcp` → `~/.hoangsa-memory/bin/`
+- `hoangsa-memory`, `hoangsa-memory-mcp` → `~/.hoangsa/bin/`
 
 Supported platforms: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `linux-x64-musl`.
 
@@ -79,12 +79,12 @@ After `/hoangsa:menu`, run `/hoangsa:prepare` to plan, then `/hoangsa:cook` to e
 
 HOANGSA ships with **hoangsa-memory**, a local MCP server that gives Claude persistent memory (facts, lessons, preferences) and code-graph awareness (impact analysis, symbol context, change detection) across sessions.
 
-- **Auto-installed** by the installer: binaries land in `~/.hoangsa-memory/bin/` and the MCP server is registered in your project's `.mcp.json`.
-- **State** per project lives under `~/.hoangsa-memory/projects/<slug>/` (MEMORY.md, LESSONS.md, USER.md + index).
+- **Auto-installed** by the installer: binaries land in `~/.hoangsa/bin/` and the MCP server is registered in your project's `.mcp.json`.
+- **State** per project lives under `~/.hoangsa/memory/projects/<slug>/` (MEMORY.md, LESSONS.md, USER.md + index).
 - **Hooks** installed into Claude Code settings: pre-edit rule enforcement, pre-edit lesson recall, post-tool event logging, and PreCompact / SessionEnd archive ingest for conversation recall.
 - **Archive search** (full conversation history) needs a chroma sidecar — optional, provision with `hoangsa-cli install --install-chroma`.
 
-Manual reindex: `/hoangsa:index` or `~/.hoangsa-memory/bin/hoangsa-memory --json index .`
+Manual reindex: `/hoangsa:index` or `~/.hoangsa/bin/hoangsa-memory --json index .`
 
 ---
 

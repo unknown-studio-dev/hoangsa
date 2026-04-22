@@ -108,7 +108,6 @@ impl BfsDir {
 #[derive(Clone)]
 pub struct KvStore {
     db: Arc<Database>,
-    path: PathBuf,
 }
 
 impl KvStore {
@@ -122,9 +121,8 @@ impl KvStore {
             tokio::fs::create_dir_all(parent).await?;
         }
 
-        let db_path = path.clone();
         let db = tokio::task::spawn_blocking(move || -> Result<Database> {
-            let db = Database::create(&db_path).map_err(store)?;
+            let db = Database::create(&path).map_err(store)?;
             // Ensure all tables exist, and — if this is a DB that predates
             // the reverse edge index — mirror every existing forward edge
             // into `edges_by_dst`. The backfill is gated on a meta flag so
@@ -173,7 +171,6 @@ impl KvStore {
 
         Ok(Self {
             db: Arc::new(db),
-            path,
         })
     }
 

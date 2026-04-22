@@ -9,7 +9,7 @@ use tempfile::TempDir;
 #[test]
 fn rhai_runtime_error_returns_err_not_panic() {
     let tmp = TempDir::new().unwrap();
-    let project = tmp.path().join(".hoangsa-proxy");
+    let project = tmp.path().join(".hoangsa").join("proxy");
     fs::create_dir_all(&project).unwrap();
     fs::write(
         project.join("boom.rhai"),

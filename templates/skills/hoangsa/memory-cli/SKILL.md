@@ -13,13 +13,13 @@ metadata:
 
 Every hoangsa-memory MCP tool has a CLI equivalent, plus a few CLI-only
 commands (setup, watch, eval). Run from the repo root unless noted —
-the CLI defaults `--root` to `./.hoangsa-memory`.
+the CLI defaults `--root` to `./.hoangsa/memory`.
 
 ## Bootstrap
 
 ### `hoangsa-memory setup`
 
-One-shot install. Writes `./.hoangsa-memory/config.toml`, seeds `MEMORY.md` +
+One-shot install. Writes `./.hoangsa/memory/config.toml`, seeds `MEMORY.md` +
 `LESSONS.md`, merges hoangsa-memory hooks + skills + MCP server into
 `.claude/settings.json` (or `~/.claude/settings.json` with
 `--scope user`). Re-run any time to reconfigure / self-heal.
@@ -33,7 +33,7 @@ hoangsa-memory setup --status       # show install state, don't modify
 ### `hoangsa-memory uninstall`
 
 Removes hoangsa-memory's managed hooks + skills + MCP entry from
-`.claude/settings.json` and `.mcp.json`. Leaves the `.hoangsa-memory/` data
+`.claude/settings.json` and `.mcp.json`. Leaves the `.hoangsa/memory/` data
 directory intact — delete it manually if you want a hard reset.
 
 ```bash
@@ -197,7 +197,7 @@ a live skill and removes the draft.
 
 ```bash
 hoangsa-memory skills install                                  # bundled
-hoangsa-memory skills install .hoangsa-memory/skills/my-skill.draft     # promote draft
+hoangsa-memory skills install .hoangsa/memory/skills/my-skill.draft     # promote draft
 hoangsa-memory skills install --scope user                     # ~/.claude/skills/
 ```
 
@@ -227,7 +227,7 @@ Pull business rules from an external source (`file`, `notion`,
 
 ## Global flags
 
-- `--root PATH` — defaults to `./.hoangsa-memory`. Point at `~/.hoangsa-memory` for
+- `--root PATH` — defaults to `./.hoangsa/memory`. Point at `~/.hoangsa/memory` for
   user-global memory.
 - `--json` — machine-readable output (for subcommands that support it).
 - `--embedder <voyage|openai|cohere>` — Mode::Full semantic search.

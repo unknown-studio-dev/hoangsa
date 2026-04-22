@@ -57,7 +57,7 @@ pub(crate) struct Inner {
 }
 
 impl Server {
-    /// Open a server rooted at `path` (the `.hoangsa-memory/` directory).
+    /// Open a server rooted at `path` (the `.hoangsa/memory/` directory).
     ///
     /// ChromaDB (and its ONNX embedder) is **not** loaded here — it is
     /// lazily initialized on first use to avoid the ~2 GB RSS hit when
@@ -126,7 +126,7 @@ impl Server {
     /// watcher was spawned.
     ///
     /// `src` is the source tree to watch (typically the project root,
-    /// i.e. the parent of `.hoangsa-memory/`).
+    /// i.e. the parent of `.hoangsa/memory/`).
     pub async fn spawn_watcher(&self, src: PathBuf) -> bool {
         let cfg = WatchConfig::load_or_default(&self.inner.root).await;
         if !cfg.enabled {
@@ -419,7 +419,7 @@ impl Server {
                         .unwrap_or("memory");
                     out.chunks.push(hoangsa_memory_core::Chunk {
                         id: h.id,
-                        path: PathBuf::from(format!(".hoangsa-memory/{kind}")),
+                        path: PathBuf::from(format!(".hoangsa/memory/{kind}")),
                         line: 0,
                         span: (0, 0),
                         symbol: None,
@@ -448,7 +448,7 @@ impl Server {
                         .unwrap_or("conversation");
                     out.chunks.push(hoangsa_memory_core::Chunk {
                         id: h.id,
-                        path: PathBuf::from(".hoangsa-memory/archive"),
+                        path: PathBuf::from(".hoangsa/memory/archive"),
                         line: 0,
                         span: (0, 0),
                         symbol: Some(format!("[{topic}]")),
@@ -863,7 +863,7 @@ impl Server {
         #[derive(Deserialize)]
         struct Args {
             /// Slug for the proposed skill directory under
-            /// `.hoangsa-memory/skills/<slug>.draft/`.
+            /// `.hoangsa/memory/skills/<slug>.draft/`.
             slug: String,
             /// The SKILL.md body the agent drafted. Must start with the
             /// `---\nname: ...` frontmatter.
@@ -2385,7 +2385,7 @@ fn tools_catalog() -> Vec<Tool> {
         },
         Tool {
             name: "memory_skills_list".to_string(),
-            description: "List every installed skill under .hoangsa-memory/skills/.".to_string(),
+            description: "List every installed skill under .hoangsa/memory/skills/.".to_string(),
             input_schema: json!({ "type": "object", "properties": {} }),
         },
         Tool {
@@ -2511,7 +2511,7 @@ fn tools_catalog() -> Vec<Tool> {
         },
         Tool {
             name: "memory_skill_propose".to_string(),
-            description: "Draft a new SKILL.md under .hoangsa-memory/skills/<slug>.draft/ — used when \
+            description: "Draft a new SKILL.md under .hoangsa/memory/skills/<slug>.draft/ — used when \
                           you've noticed ≥5 related lessons and want to consolidate them into \
                           a reusable skill. The user promotes via `hoangsa-memory skills install`."
                 .to_string(),
@@ -3010,7 +3010,7 @@ pub fn socket_path(root: &Path) -> std::path::PathBuf {
 
 /// Run a Unix-socket sidecar alongside the stdio transport.
 ///
-/// Binds `.hoangsa-memory/mcp.sock` and accepts connections in a loop. Each
+/// Binds `.hoangsa/memory/mcp.sock` and accepts connections in a loop. Each
 /// connection is a short-lived JSON-RPC session (one line in → one line
 /// out, then close). The socket is removed on clean shutdown.
 ///

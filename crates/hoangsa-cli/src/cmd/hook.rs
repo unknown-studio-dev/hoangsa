@@ -112,7 +112,7 @@ pub fn cmd_lesson_guard(cwd: &str) {
     }
 
     // Find hoangsa-memory binary
-    let memory_root = Path::new(cwd).join(".hoangsa-memory");
+    let memory_root = Path::new(cwd).join(".hoangsa").join("memory");
     if !memory_root.exists() {
         out(&json!({"decision": "approve"}));
         return;
@@ -316,7 +316,7 @@ fn find_memory_bin() -> Option<String> {
     let home = std::env::var("HOME").ok()?;
     let suffix = if cfg!(windows) { ".exe" } else { "" };
     let candidate = Path::new(&home)
-        .join(".hoangsa-memory")
+        .join(".hoangsa")
         .join("bin")
         .join(format!("hoangsa-memory{suffix}"));
     if candidate.exists() {
@@ -421,15 +421,15 @@ fn try_forward_to_daemon() -> bool {
     matches!(reader.read_line(&mut buf), Ok(n) if n > 0)
 }
 
-/// Locate an MCP daemon socket. Tries the local `.hoangsa-memory/` in
+/// Locate an MCP daemon socket. Tries the local `.hoangsa/memory/` in
 /// the current working directory first, then the global
-/// `~/.hoangsa-memory/projects/<slug>/` layout (mirroring the resolver
+/// `~/.hoangsa/memory/projects/<slug>/` layout (mirroring the resolver
 /// in `hoangsa-memory-mcp::main`).
 fn candidate_mcp_socket() -> Option<std::path::PathBuf> {
     let cwd = std::env::current_dir().ok()?;
 
     // Local root
-    let local = cwd.join(".hoangsa-memory").join("mcp.sock");
+    let local = cwd.join(".hoangsa").join("memory").join("mcp.sock");
     if local.exists() {
         return Some(local);
     }
@@ -439,7 +439,8 @@ fn candidate_mcp_socket() -> Option<std::path::PathBuf> {
     let home = std::env::var_os("HOME")?;
     let slug = project_slug(&cwd);
     let global = std::path::PathBuf::from(home)
-        .join(".hoangsa-memory")
+        .join(".hoangsa")
+        .join("memory")
         .join("projects")
         .join(slug)
         .join("mcp.sock");
@@ -1196,7 +1197,7 @@ fn resolve_symbol_to_file(cwd: &str, symbol: &str) -> Option<String> {
 
     // Preferred: hoangsa-memory index lookup.
     if let Some(memory_bin) = find_memory_bin() {
-        let memory_root = Path::new(cwd).join(".hoangsa-memory");
+        let memory_root = Path::new(cwd).join(".hoangsa").join("memory");
         if memory_root.exists()
             && let Ok(out) = Command::new(&memory_bin)
                 .args(["--root", &memory_root.to_string_lossy()])
@@ -1243,7 +1244,7 @@ fn find_symbol_in_tree(
     }
     const SKIP_DIRS: &[&str] = &[
         ".git", "node_modules", "target", "dist", "build", ".hoangsa",
-        ".hoangsa-memory", ".claude", "__pycache__", ".venv", "venv", ".next",
+        ".claude", "__pycache__", ".venv", "venv", ".next",
     ];
     const SOURCE_EXTS: &[&str] = &[
         "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "c", "cpp",

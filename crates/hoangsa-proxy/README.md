@@ -84,8 +84,8 @@ output through unchanged. Your scope intent always wins.
 
 ## Config (`hsp.toml`)
 
-Drop `.hoangsa-proxy/config.toml` into your project (or
-`~/.config/hoangsa-proxy/config.toml` for a global default):
+Drop `.hoangsa/proxy/config.toml` into your project (or
+`~/.hoangsa/proxy/config.toml` for a global default):
 
 ```toml
 [runtime]
@@ -105,8 +105,8 @@ skipped.
 
 ## Extending with Rhai
 
-Drop a `.rhai` file into `.hoangsa-proxy/` (project) or
-`~/.config/hoangsa-proxy/` (global):
+Drop a `.rhai` file into `.hoangsa/proxy/` (project) or
+`~/.hoangsa/proxy/` (global):
 
 ```rhai
 proxy::register(#{

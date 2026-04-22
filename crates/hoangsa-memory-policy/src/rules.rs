@@ -2,7 +2,7 @@
 //!
 //! A [`Rule`] is the merged view of an enforcement directive produced by
 //! combining layered TOML config (default / user / project) with rules
-//! compiled from lessons and from `.hoangsa-memory/ignore` glob lines.
+//! compiled from lessons and from `.hoangsa/memory/ignore` glob lines.
 //!
 //! Layer precedence (later overrides earlier by rule ID):
 //!
@@ -51,13 +51,13 @@ pub struct Rule {
 pub enum RuleSource {
     /// Shipped `rules.default.toml` baked into the binary.
     Default,
-    /// User layer at `~/.hoangsa-memory/rules.user.toml`.
+    /// User layer at `~/.hoangsa/memory/rules.user.toml`.
     User,
-    /// Project layer at `.hoangsa-memory/rules.project.toml`.
+    /// Project layer at `.hoangsa/memory/rules.project.toml`.
     Project,
     /// Compiled from a lesson — carries the `lesson_id` for backref.
     Lesson(String),
-    /// Compiled from a `.hoangsa-memory/ignore` glob line — carries the raw glob
+    /// Compiled from a `.hoangsa/memory/ignore` glob line — carries the raw glob
     /// source so `hoangsa-memory rule list` can point users at the config line.
     Ignore(String),
 }
@@ -65,20 +65,20 @@ pub enum RuleSource {
 /// Five-slot layer container for rule merge.
 ///
 /// Callers fill each slot independently (typically: parse the three TOML
-/// layers, iterate `LESSONS.md`, read `.hoangsa-memory/ignore`), then invoke
+/// layers, iterate `LESSONS.md`, read `.hoangsa/memory/ignore`), then invoke
 /// [`RuleLayerMerge::effective`] to collapse duplicates by ID using the
 /// precedence documented on the module.
 #[derive(Debug, Clone, Default)]
 pub struct RuleLayerMerge {
     /// Rules from the shipped `rules.default.toml`.
     pub default: Vec<Rule>,
-    /// Rules from `~/.hoangsa-memory/rules.user.toml`.
+    /// Rules from `~/.hoangsa/memory/rules.user.toml`.
     pub user: Vec<Rule>,
-    /// Rules from `.hoangsa-memory/rules.project.toml`.
+    /// Rules from `.hoangsa/memory/rules.project.toml`.
     pub project: Vec<Rule>,
     /// Rules compiled from lessons at load time.
     pub from_lessons: Vec<Rule>,
-    /// Rules compiled from `.hoangsa-memory/ignore` globs at load time.
+    /// Rules compiled from `.hoangsa/memory/ignore` globs at load time.
     pub from_ignore: Vec<Rule>,
 }
 
@@ -474,7 +474,7 @@ pub mod layer_merge {
             .collect()
     }
 
-    /// Compile a `.hoangsa-memory/ignore` file (one glob per line, `#` comments).
+    /// Compile a `.hoangsa/memory/ignore` file (one glob per line, `#` comments).
     ///
     /// Each glob becomes a `Block`-tier rule targeting `Edit` / `Write` on
     /// that path. A missing file yields `Ok(vec![])`.
@@ -504,11 +504,11 @@ pub mod layer_merge {
                 trigger: LessonTrigger {
                     tool: None, // matched at the gate against Edit|Write
                     path_glob: Some(glob.to_string()),
-                    natural: format!("Edits to `{glob}` are blocked by .hoangsa-memory/ignore"),
+                    natural: format!("Edits to `{glob}` are blocked by .hoangsa/memory/ignore"),
                     ..Default::default()
                 },
                 message: Some(format!(
-                    "Path `{glob}` is in .hoangsa-memory/ignore — editing it is blocked."
+                    "Path `{glob}` is in .hoangsa/memory/ignore — editing it is blocked."
                 )),
                 source: RuleSource::Ignore(glob.to_string()),
             })
@@ -517,7 +517,7 @@ pub mod layer_merge {
 
     /// Standard loader — assembles a [`RuleLayerMerge`] from
     /// the shipped defaults, user TOML, project TOML, a slice of lessons,
-    /// and a `.hoangsa-memory/ignore` file.
+    /// and a `.hoangsa/memory/ignore` file.
     ///
     /// Missing files are tolerated (no error). Parse errors are surfaced.
     pub fn load_from_paths(

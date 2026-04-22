@@ -6,13 +6,13 @@ pub enum ProjectsCmd {
     List,
     /// Show which root the current directory resolves to.
     Which,
-    /// Move `./.hoangsa-memory/` to `~/.hoangsa-memory/projects/{slug}/` and update
+    /// Move `./.hoangsa/memory/` to `~/.hoangsa/memory/projects/{slug}/` and update
     /// hooks + MCP to point to the new location.
     Migrate {
         /// Print what would happen without modifying anything.
         #[arg(long)]
         dry_run: bool,
-        /// Delete the local `.hoangsa-memory/` after a successful copy.
+        /// Delete the local `.hoangsa/memory/` after a successful copy.
         #[arg(long)]
         rm_local: bool,
     },
@@ -25,16 +25,16 @@ pub enum ProjectsCmd {
     },
 }
 
-/// Resolve the `.hoangsa-memory/` data root via a 4-step chain:
+/// Resolve the `.hoangsa/memory/` data root via a 4-step chain:
 ///
 /// 1. Explicit `--root` flag (highest priority)
 /// 2. `$HOANGSA_MEMORY_ROOT` env var
-/// 3. Project-local `./.hoangsa-memory/` — BUT only when it actually has
-///    a populated graph. An empty `.hoangsa-memory/` created by an
+/// 3. Project-local `./.hoangsa/memory/` — BUT only when it actually has
+///    a populated graph. An empty `.hoangsa/memory/` created by an
 ///    `index .` run that lost the `--root` flag used to silently pre-empt
 ///    the real global root; we now detect that case and fall through to
 ///    the global path, printing a one-line warning so the user knows why.
-/// 4. Global `~/.hoangsa-memory/projects/{slug}/`
+/// 4. Global `~/.hoangsa/memory/projects/{slug}/`
 pub fn resolve_root(explicit: Option<&Path>) -> PathBuf {
     if let Some(root) = explicit {
         return root.to_path_buf();
@@ -45,7 +45,7 @@ pub fn resolve_root(explicit: Option<&Path>) -> PathBuf {
             return p;
         }
     }
-    let local = PathBuf::from(".hoangsa-memory");
+    let local = PathBuf::from(".hoangsa").join("memory");
     let local_populated = local.is_dir() && is_populated_root(&local);
 
     if local_populated {
@@ -55,23 +55,18 @@ pub fn resolve_root(explicit: Option<&Path>) -> PathBuf {
     if let Some(home) = home_dir()
         && let Ok(cwd) = std::env::current_dir()
     {
-        let projects = home.join(".hoangsa-memory").join("projects");
+        let projects = home.join(".hoangsa").join("memory").join("projects");
         let slug = project_slug(&cwd);
         let global_path = projects.join(&slug);
-        // Readable-slug is the only global layout we accept. Legacy
-        // blake3 hash dirs from the pre-rename era are intentionally NOT
-        // consulted — they'd shadow a fresh install and let the indexer
-        // write to an orphaned location. Users with hash-era data move
-        // it manually; new installs always route to `{slug}/`.
 
-        // Warn when we're falling through a stale local `.hoangsa-memory/`
+        // Warn when we're falling through a stale local `.hoangsa/memory/`
         // to reach a populated global root. Silent if the local doesn't
         // exist at all (common, expected) or the global path is equally
         // empty (we can't tell which is "right", so don't guess).
         if local.is_dir() && is_populated_root(&global_path) {
             eprintln!(
-                "hoangsa-memory: ignoring stale local .hoangsa-memory/ (no graph.redb); using {} instead. \
-                 Remove ./.hoangsa-memory or run `hoangsa-memory index --root ./.hoangsa-memory .` to repopulate it.",
+                "hoangsa-memory: ignoring stale local .hoangsa/memory/ (no graph.redb); using {} instead. \
+                 Remove ./.hoangsa/memory or run `hoangsa-memory index --root ./.hoangsa/memory .` to repopulate it.",
                 global_path.display()
             );
         }
@@ -107,15 +102,6 @@ pub fn project_slug(path: &Path) -> String {
     let n = components.len();
     let parts = if n >= 2 { &components[n - 2..] } else { &components[..] };
     sanitize_slug(&parts.join("-"))
-}
-
-/// Legacy 12-char hex slug (blake3 hash). No longer consulted by
-/// [`resolve_root`] — kept only so the `projects migrate-slugs` command
-/// can still locate pre-rename data directories on disk.
-pub fn legacy_project_slug(path: &Path) -> String {
-    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let hash = blake3::hash(canonical.to_string_lossy().as_bytes());
-    hash.to_hex()[..12].to_string()
 }
 
 fn sanitize_slug(raw: &str) -> String {
@@ -162,18 +148,10 @@ mod tests {
         assert_eq!(sanitize_slug(&parts.join("-")), "desktop-my-project");
     }
 
-    #[test]
-    fn legacy_slug_is_hex() {
-        let p = PathBuf::from("/tmp/test-project");
-        let slug = legacy_project_slug(&p);
-        assert_eq!(slug.len(), 12);
-        assert!(slug.chars().all(|c| c.is_ascii_hexdigit()));
-    }
-
-    /// Bug 5 — a `./.hoangsa-memory/` with no `graph.redb` (or a stub one) must
+    /// Bug 5 — a `./.hoangsa/memory/` with no `graph.redb` (or a stub one) must
     /// not shadow the populated global root. This is the explicit
     /// detection gate `resolve_root` uses to decide whether to accept
-    /// the local or fall through to `~/.hoangsa-memory/projects/{slug}/`.
+    /// the local or fall through to `~/.hoangsa/memory/projects/{slug}/`.
     #[test]
     fn is_populated_root_rejects_empty_and_stub_graph() {
         let tmp = tempfile::tempdir().expect("tempdir");

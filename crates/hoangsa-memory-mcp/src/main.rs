@@ -10,7 +10,7 @@
 //!
 //! ```text
 //! hoangsa-memory-mcp                               # serve on stdio; log to stderr
-//! HOANGSA_MEMORY_ROOT=/path/.hoangsa-memory hoangsa-memory-mcp
+//! HOANGSA_MEMORY_ROOT=/path/.hoangsa/memory hoangsa-memory-mcp
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -35,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
     let server = Server::open(&root).await?;
 
     // The project root is either cwd (global mode) or the parent of
-    // .hoangsa-memory/ (local mode).
+    // .hoangsa/memory/ (local mode).
     let project_root = std::env::current_dir().unwrap_or_else(|_| {
         root.parent()
             .map(|p| p.to_path_buf())
@@ -65,12 +65,11 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Resolve root: `$HOANGSA_MEMORY_ROOT` > populated `./.hoangsa-memory/` >
-/// `~/.hoangsa-memory/projects/{readable-slug}/`.
+/// Resolve root: `$HOANGSA_MEMORY_ROOT` > populated `./.hoangsa/memory/` >
+/// `~/.hoangsa/memory/projects/{readable-slug}/`.
 ///
 /// Mirrors `hoangsa_memory::resolve::resolve_root`: an empty/unpopulated local
-/// `.hoangsa-memory/` must not shadow the global root, and the global
-/// layout is readable-slug only (legacy blake3 hash dirs are ignored).
+/// `.hoangsa/memory/` must not shadow the global root.
 fn resolve_root() -> PathBuf {
     if let Ok(env) = std::env::var("HOANGSA_MEMORY_ROOT") {
         let p = PathBuf::from(env);
@@ -78,7 +77,7 @@ fn resolve_root() -> PathBuf {
             return p;
         }
     }
-    let local = PathBuf::from(".hoangsa-memory");
+    let local = PathBuf::from(".hoangsa").join("memory");
     let local_populated = local.is_dir() && is_populated_root(&local);
     if local_populated {
         return local;
@@ -86,7 +85,10 @@ fn resolve_root() -> PathBuf {
     if let Some(home) = std::env::var_os("HOME")
         && let Ok(cwd) = std::env::current_dir()
     {
-        let projects = PathBuf::from(home).join(".hoangsa-memory").join("projects");
+        let projects = PathBuf::from(home)
+            .join(".hoangsa")
+            .join("memory")
+            .join("projects");
         return projects.join(project_slug(&cwd));
     }
     local

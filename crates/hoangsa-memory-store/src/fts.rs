@@ -7,7 +7,7 @@
 //! small — if we need more fields later (e.g. a code-aware tokenizer), we
 //! bump the index generation and rebuild.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -76,7 +76,6 @@ pub struct FtsIndex {
     reader: IndexReader,
     writer: Arc<Mutex<IndexWriter>>,
     fields: Arc<Fields>,
-    path: PathBuf,
 }
 
 impl FtsIndex {
@@ -85,7 +84,6 @@ impl FtsIndex {
         let dir = dir.as_ref().to_path_buf();
         tokio::fs::create_dir_all(&dir).await?;
 
-        let dir2 = dir.clone();
         tokio::task::spawn_blocking(move || -> Result<Self> {
             let schema = build_schema();
             // `get_field` is infallible in practice — `build_schema` right
@@ -108,7 +106,7 @@ impl FtsIndex {
                 language: get("language")?,
             };
 
-            let mmap = tantivy::directory::MmapDirectory::open(&dir2).map_err(store)?;
+            let mmap = tantivy::directory::MmapDirectory::open(&dir).map_err(store)?;
             let index = Index::open_or_create(mmap, schema).map_err(store)?;
 
             let writer: IndexWriter = index.writer(WRITER_HEAP_BYTES).map_err(store)?;
@@ -127,7 +125,6 @@ impl FtsIndex {
                 reader,
                 writer: Arc::new(Mutex::new(writer)),
                 fields: Arc::new(fields),
-                path: dir2,
             })
         })
         .await

@@ -4,7 +4,7 @@
 //! `CARGO_BIN_EXE_hoangsa-cli` and observe stdout JSON + exit codes.
 //! Every test is hermetic — HOME, cwd, and every HOANGSA_* env var are
 //! redirected to `tempfile::tempdir()` so the real `~/.claude/`,
-//! `~/.claude.json`, and `~/.hoangsa-memory/` are never touched.
+//! `~/.claude.json`, and `~/.hoangsa/` are never touched.
 //!
 //! Covered scenarios (12):
 //!   1. dry_run_global_emits_mode_global
@@ -277,7 +277,7 @@ fn mcp_local_missing_bin_exits_3() {
     let staging = tempfile::tempdir().expect("staging tempdir");
     let templates = seed_templates(staging.path());
 
-    // HOME is a fresh tempdir — no ~/.hoangsa-memory/bin/hoangsa-memory-mcp.
+    // HOME is a fresh tempdir — no ~/.hoangsa/bin/hoangsa-memory-mcp.
     // --no-memory skips the relocate step so we cleanly hit the
     // register_mcp_local prerequisite check and exit 3.
     let out = run(install_cmd(home.path(), cwd.path())

@@ -21,11 +21,11 @@ load-bearing action:
 
 1. **Indexed code graph** — via `memory_recall` (hybrid BM25 + symbol +
    vector search over the tree).
-2. **User preferences** — `.hoangsa-memory/USER.md`, first-person style + workflow
+2. **User preferences** — `.hoangsa/memory/USER.md`, first-person style + workflow
    choices that apply across projects.
-3. **Project facts** — `.hoangsa-memory/MEMORY.md`, durable invariants about this
+3. **Project facts** — `.hoangsa/memory/MEMORY.md`, durable invariants about this
    codebase.
-4. **Reflective lessons** — `.hoangsa-memory/LESSONS.md`, action-triggered advice.
+4. **Reflective lessons** — `.hoangsa/memory/LESSONS.md`, action-triggered advice.
 
 USER.md + MEMORY.md + LESSONS.md are injected verbatim at SessionStart, so
 you already have them in context. The `memory_recall` hit extends that with
@@ -186,7 +186,7 @@ see a conflict, do NOT try to auto-promote: flag it to the user via
 
 ## Audit log
 
-Every memory mutation lands in `.hoangsa-memory/memory-history.jsonl` (one JSON
+Every memory mutation lands in `.hoangsa/memory/memory-history.jsonl` (one JSON
 per line) with `op`, `kind`, `title`, `actor`, `reason`, and a timestamp.
 Ops include: `append`, `replace`, `remove`, `stage`, `promote`, `reject`,
 `quarantine`, `propose`, `request_review`. Inspect with
@@ -203,9 +203,9 @@ reusable skill via `memory_skill_propose`:
 - `body`: full SKILL.md text starting with `---\nname: ...` frontmatter.
 - `source_triggers`: the triggers of the lessons being consolidated.
 
-The draft lands at `.hoangsa-memory/skills/<slug>.draft/SKILL.md` and an entry is
+The draft lands at `.hoangsa/memory/skills/<slug>.draft/SKILL.md` and an entry is
 written to the history log. The user promotes the draft via `hoangsa-memory
-skills install .hoangsa-memory/skills/<slug>.draft` once they've reviewed it.
+skills install .hoangsa/memory/skills/<slug>.draft` once they've reviewed it.
 
 Drafts are NOT auto-installed — a human must review before a proposed
 skill starts shaping future sessions. This is the main guardrail against

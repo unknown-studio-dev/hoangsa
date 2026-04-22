@@ -35,7 +35,7 @@
 //! The columns are added by a one-shot migration in [`EpisodeLog::open`],
 //! so existing stores upgrade in place.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -87,7 +87,6 @@ pub struct Turn {
 #[derive(Clone)]
 pub struct EpisodeLog {
     conn: Arc<Mutex<Connection>>,
-    path: PathBuf,
 }
 
 impl EpisodeLog {
@@ -97,10 +96,9 @@ impl EpisodeLog {
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        let path2 = path.clone();
 
         let conn = tokio::task::spawn_blocking(move || -> Result<Connection> {
-            let c = Connection::open(&path2).map_err(store)?;
+            let c = Connection::open(&path).map_err(store)?;
             // Pragmas for a write-heavy append log.
             c.pragma_update(None, "journal_mode", "WAL")
                 .map_err(store)?;
@@ -207,7 +205,6 @@ impl EpisodeLog {
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
-            path,
         })
     }
 

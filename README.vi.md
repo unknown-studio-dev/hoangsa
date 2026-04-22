@@ -23,7 +23,7 @@ curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh
 Installer tải sẵn binary native — **không cần Node, không cần `npm`, không cần `cargo`**.
 
 - `hoangsa-cli` → `~/.hoangsa/bin/`
-- `hoangsa-memory`, `hoangsa-memory-mcp` → `~/.hoangsa-memory/bin/`
+- `hoangsa-memory`, `hoangsa-memory-mcp` → `~/.hoangsa/bin/`
 
 Nền tảng hỗ trợ: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `linux-x64-musl`.
 
@@ -81,12 +81,12 @@ Sau `/hoangsa:menu`, chạy `/hoangsa:prepare` để lập kế hoạch, rồi `
 
 HOANGSA đi kèm **hoangsa-memory** — MCP server chạy local, cung cấp cho Claude bộ nhớ lâu dài (facts, lessons, preferences) và hiểu biết về code graph (impact analysis, symbol context, change detection) qua nhiều session.
 
-- **Tự động cài** bởi installer: binary đặt tại `~/.hoangsa-memory/bin/`, MCP server được đăng ký trong `.mcp.json` của project.
-- **State** theo từng project nằm trong `~/.hoangsa-memory/projects/<slug>/` (MEMORY.md, LESSONS.md, USER.md + index).
+- **Tự động cài** bởi installer: binary đặt tại `~/.hoangsa/bin/`, MCP server được đăng ký trong `.mcp.json` của project.
+- **State** theo từng project nằm trong `~/.hoangsa/memory/projects/<slug>/` (MEMORY.md, LESSONS.md, USER.md + index).
 - **Hooks** cài vào settings Claude Code: pre-edit rule enforcement, pre-edit lesson recall, post-tool event logging, và PreCompact / SessionEnd archive ingest để recall nội dung hội thoại.
 - **Archive search** (lịch sử hội thoại đầy đủ) cần chroma sidecar — tùy chọn, cài bằng `hoangsa-cli install --install-chroma`.
 
-Reindex thủ công: `/hoangsa:index` hoặc `~/.hoangsa-memory/bin/hoangsa-memory --json index .`
+Reindex thủ công: `/hoangsa:index` hoặc `~/.hoangsa/bin/hoangsa-memory --json index .`
 
 ---
 

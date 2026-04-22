@@ -2,14 +2,14 @@
 
 use std::path::PathBuf;
 
-/// Project-local Rhai script dir: `<cwd>/.hoangsa-proxy/`.
+/// Project-local Rhai script dir: `<cwd>/.hoangsa/proxy/`.
 pub fn project_dir(cwd: &std::path::Path) -> PathBuf {
-    cwd.join(".hoangsa-proxy")
+    cwd.join(".hoangsa").join("proxy")
 }
 
-/// Global Rhai script dir: `~/.config/hoangsa-proxy/`.
+/// Global Rhai script dir: `~/.hoangsa/proxy/`.
 pub fn global_dir() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("hoangsa-proxy"))
+    dirs::home_dir().map(|d| d.join(".hoangsa").join("proxy"))
 }
 
 /// Resolve all directories scripts may live in, in resolution priority order:

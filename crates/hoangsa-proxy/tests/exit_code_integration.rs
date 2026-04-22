@@ -5,7 +5,6 @@
 //! Every case here runs the real binary with `hsp run` and asserts the
 //! child's exit code flows through unchanged.
 
-use std::io::Write;
 use std::process::{Command, Stdio};
 
 fn hsp_bin() -> String {
@@ -209,29 +208,4 @@ fn unknown_flag_passes_through_to_child() {
         .output()
         .expect("spawn hsp");
     assert_eq!(out.status.code(), Some(2));
-}
-
-/// Builder helper for use in streaming tests later.
-#[cfg(unix)]
-fn run_via_hsp_stdin(shell_snippet: &str, stdin_data: &str) -> (String, String, i32) {
-    let mut child = Command::new(hsp_bin())
-        .args(["run", "sh", "-c", shell_snippet])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn hsp");
-    child
-        .stdin
-        .as_mut()
-        .unwrap()
-        .write_all(stdin_data.as_bytes())
-        .unwrap();
-    drop(child.stdin.take());
-    let output = child.wait_with_output().expect("wait hsp");
-    (
-        String::from_utf8_lossy(&output.stdout).to_string(),
-        String::from_utf8_lossy(&output.stderr).to_string(),
-        output.status.code().unwrap_or(-1),
-    )
 }

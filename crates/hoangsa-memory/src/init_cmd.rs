@@ -1,10 +1,10 @@
-//! `hoangsa-memory init` — create `.hoangsa-memory/` + seed markdown + scaffold config.toml.
+//! `hoangsa-memory init` — create `.hoangsa/memory/` + seed markdown + scaffold config.toml.
 
 use std::path::Path;
 
 use hoangsa_memory_store::StoreRoot;
 
-/// Create `.hoangsa-memory/` at `root`, seed `MEMORY.md` / `LESSONS.md`, and
+/// Create `.hoangsa/memory/` at `root`, seed `MEMORY.md` / `LESSONS.md`, and
 /// write a documented `config.toml` on first run. Existing files are preserved.
 pub async fn cmd_init(root: &Path) -> anyhow::Result<()> {
     let existed = root.exists();
@@ -39,7 +39,7 @@ const DEFAULT_CONFIG_TOML: &str = r#"# hoangsa-memory config. All fields are opt
 
 [index]
 # Gitignore-syntax patterns. Applied on top of `.gitignore`, `.ignore`, and
-# any `.hoangsa-memoryignore` found in the project. Supports re-including with `!`.
+# any `.memoryignore` found in the project. Supports re-including with `!`.
 #
 # ignore = [
 #     "target/",

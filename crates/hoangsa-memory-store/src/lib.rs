@@ -54,14 +54,14 @@ pub use fts::{ChunkDoc, FtsHit, FtsIndex};
 pub use kv::{BfsDir, EdgeRow, KvStore, NodeRow, SymbolRow};
 pub use markdown::MarkdownStore;
 
-/// Root handle bundling every backend living under a `.hoangsa-memory/` dir.
+/// Root handle bundling every backend living under a `.hoangsa/memory/` dir.
 ///
 /// Opening a [`StoreRoot`] lazily creates all the sub-paths required by the
 /// individual backends, so downstream code can assume "if it opened, it's
 /// ready".
 #[derive(Clone)]
 pub struct StoreRoot {
-    /// Root path on disk (typically `.hoangsa-memory/`).
+    /// Root path on disk (typically `.hoangsa/memory/`).
     pub path: PathBuf,
     /// Markdown memory surface (source of truth).
     pub markdown: MarkdownStore,

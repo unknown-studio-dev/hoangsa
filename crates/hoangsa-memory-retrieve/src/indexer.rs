@@ -128,7 +128,7 @@ impl Indexer {
 
     /// Attach extra ignore patterns (gitignore syntax) that will be applied
     /// during [`Indexer::index_path`] on top of `.gitignore`, `.ignore`, and
-    /// `.hoangsa-memoryignore`. Malformed patterns are logged and skipped.
+    /// `.memoryignore`. Malformed patterns are logged and skipped.
     ///
     /// Typical source: `config.toml`'s `[index] ignore = [...]`.
     pub fn with_ignore_patterns<I, S>(mut self, patterns: I) -> Self

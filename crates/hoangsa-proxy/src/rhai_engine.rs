@@ -51,6 +51,12 @@ struct LoadCtx {
     tier: Tier,
 }
 
+impl Default for RhaiRuntime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RhaiRuntime {
     pub fn new() -> Self {
         let handlers: Arc<Mutex<Vec<RhaiHandler>>> = Arc::new(Mutex::new(Vec::new()));
@@ -374,10 +380,10 @@ fn push_handler_from_spec(spec: Map) {
     };
 
     HANDLERS_SINK.with(|c| {
-        if let Some(sink) = c.borrow().as_ref() {
-            if let Ok(mut lock) = sink.lock() {
-                lock.push(handler);
-            }
+        if let Some(sink) = c.borrow().as_ref()
+            && let Ok(mut lock) = sink.lock()
+        {
+            lock.push(handler);
         }
     });
 }

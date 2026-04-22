@@ -23,9 +23,9 @@ mod watch_cmd;
 #[derive(Parser, Debug)]
 #[command(name = "hoangsa-memory", version, about = "Long-term memory for coding agents.")]
 struct Cli {
-    /// Path to the `.hoangsa-memory/` data directory. Resolved via:
-    /// `--root` > `$HOANGSA_MEMORY_ROOT` > `./.hoangsa-memory/` >
-    /// `~/.hoangsa-memory/projects/{slug}/`.
+    /// Path to the `.hoangsa/memory/` data directory. Resolved via:
+    /// `--root` > `$HOANGSA_MEMORY_ROOT` > `./.hoangsa/memory/` >
+    /// `~/.hoangsa/memory/projects/{slug}/`.
     #[arg(long, global = true)]
     root: Option<PathBuf>,
 
@@ -74,7 +74,7 @@ impl ImpactDir {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
-    /// Initialize a bare `.hoangsa-memory/` directory — seed MEMORY.md / LESSONS.md /
+    /// Initialize a bare `.hoangsa/memory/` directory — seed MEMORY.md / LESSONS.md /
     /// config.toml. Idempotent. Hoangsa install handles higher-level setup.
     Init,
 
@@ -287,7 +287,7 @@ pub(crate) async fn open_chroma(store: &StoreRoot) -> Option<Arc<hoangsa_memory_
         Err(e) => {
             eprintln!(
                 "hoangsa-memory: chroma enabled in config but failed to start — embeddings disabled for this run.\n  cause: {e}\n  hint:  `pip install chromadb` into the python at $HOANGSA_MEMORY_PYTHON \
-                 or ~/.hoangsa-memory/sidecar-venv/bin/python3, or set `[chroma] enabled = false` to silence this warning."
+                 or ~/.hoangsa/memory/venv/bin/python3, or set `[chroma] enabled = false` to silence this warning."
             );
             return None;
         }

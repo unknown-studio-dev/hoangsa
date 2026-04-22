@@ -1,5 +1,5 @@
 //! Thin-client that forwards CLI requests to a running MCP daemon via
-//! its Unix domain socket (`.hoangsa-memory/mcp.sock`).
+//! its Unix domain socket (`.hoangsa/memory/mcp.sock`).
 //!
 //! When the MCP server is alive (spawned by Claude Code), `redb` holds an
 //! exclusive file lock on `graph.redb`. Instead of fighting for the lock

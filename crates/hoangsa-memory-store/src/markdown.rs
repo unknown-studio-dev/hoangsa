@@ -139,7 +139,7 @@ const SKILL_MD: &str = "SKILL.md";
 /// Reader/writer for the markdown memory surface under `root`.
 #[derive(Clone)]
 pub struct MarkdownStore {
-    /// Root folder (typically `.hoangsa-memory/`).
+    /// Root folder (typically `.hoangsa/memory/`).
     pub root: PathBuf,
 }
 

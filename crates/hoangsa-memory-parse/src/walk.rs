@@ -5,7 +5,7 @@
 //!
 //! 1. `.gitignore`, `.git/info/exclude`, global git excludes, and `.ignore`
 //!    files — the same set the `ignore` crate (ripgrep's walker) honours.
-//! 2. `.hoangsa-memoryignore` — a project-local ignore file using gitignore
+//! 2. `.memoryignore` — a project-local ignore file using gitignore
 //!    syntax. Useful when the user wants to exclude paths from the memory
 //!    index but keep them in git (e.g. generated fixtures, vendored docs).
 //! 3. `WalkOptions::extra_ignore_patterns` — inline patterns passed from
@@ -25,7 +25,7 @@ use crate::LanguageRegistry;
 
 /// The filename scanned at every directory level for hoangsa-memory-specific
 /// ignore rules. Uses the same syntax as `.gitignore`.
-pub const HOANGSA_MEMORY_IGNORE_FILE: &str = ".hoangsa-memoryignore";
+pub const MEMORY_IGNORE_FILE: &str = ".memoryignore";
 
 /// Options controlling [`walk_sources`].
 #[derive(Debug, Clone)]
@@ -37,7 +37,7 @@ pub struct WalkOptions {
     /// Whether to descend into hidden directories (e.g. `.github`).
     pub include_hidden: bool,
     /// Extra ignore patterns, in gitignore syntax. Applied on top of
-    /// `.gitignore` / `.ignore` / `.hoangsa-memoryignore`. Typical sources:
+    /// `.gitignore` / `.ignore` / `.memoryignore`. Typical sources:
     /// `config.toml`'s `[index] ignore = [...]` or a CLI `--ignore` flag.
     ///
     /// Examples:
@@ -66,7 +66,7 @@ impl Default for WalkOptions {
 ///
 /// Filtering pipeline:
 /// 1. Same ignore rules as [`walk_sources`] (`.gitignore`,
-///    `.hoangsa-memoryignore`, inline patterns).
+///    `.memoryignore`, inline patterns).
 /// 2. Files whose extension IS claimed by the grammar registry are
 ///    skipped — [`walk_sources`] handles those.
 /// 3. Size cap from [`WalkOptions::max_file_size`].
@@ -88,7 +88,7 @@ pub fn walk_text_sources(
         .git_global(true)
         .require_git(false)
         .parents(true)
-        .add_custom_ignore_filename(HOANGSA_MEMORY_IGNORE_FILE);
+        .add_custom_ignore_filename(MEMORY_IGNORE_FILE);
 
     let extra = build_extra_ignore(root, &opts.extra_ignore_patterns);
     let walker = builder.build();
@@ -176,10 +176,10 @@ pub fn walk_sources(
         // every file listed in its `.gitignore`.
         .require_git(false)
         .parents(true)
-        // Any `.hoangsa-memoryignore` found in an ancestor or descendant directory
+        // Any `.memoryignore` found in an ancestor or descendant directory
         // is treated just like `.gitignore` — same syntax, same precedence
         // rules (deeper files override shallower ones).
-        .add_custom_ignore_filename(HOANGSA_MEMORY_IGNORE_FILE);
+        .add_custom_ignore_filename(MEMORY_IGNORE_FILE);
 
     // Build a synthetic Gitignore matcher from the inline patterns. The
     // `ignore` crate's `WalkBuilder` doesn't expose a way to hand it a

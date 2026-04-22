@@ -22,7 +22,7 @@ fn ctx(cmd: &str, subcmd: &str, stdout: &str) -> ProxyContext {
 #[test]
 fn loads_script_and_applies_filter() {
     let tmp = TempDir::new().unwrap();
-    let project = tmp.path().join(".hoangsa-proxy");
+    let project = tmp.path().join(".hoangsa").join("proxy");
     fs::create_dir_all(&project).unwrap();
     fs::write(
         project.join("git.rhai"),

@@ -364,8 +364,9 @@ fn find_python() -> String {
     }
     if let Some(home) = std::env::var_os("HOME") {
         let venv = std::path::PathBuf::from(home)
-            .join(".hoangsa-memory")
-            .join("sidecar-venv")
+            .join(".hoangsa")
+            .join("memory")
+            .join("venv")
             .join("bin")
             .join("python3");
         if venv.exists() {

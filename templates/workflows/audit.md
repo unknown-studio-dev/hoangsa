@@ -193,7 +193,7 @@ done
 node_modules/    dist/          build/         target/
 .next/           .nuxt/         .output/       out/
 vendor/          __pycache__/   .venv/         venv/
-.git/            .hoangsa-memory/        .hoangsa/
+.git/            .hoangsa/memory/        .hoangsa/
 *.min.js         *.min.css      *.bundle.js
 *.map            *.lock         package-lock.json
 *.generated.*    *.pb.go        *_generated.rs

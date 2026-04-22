@@ -114,21 +114,21 @@ Overall status is derived from the task statuses:
 
 ## Step 4b: hoangsa-memory memory status
 
-If `.hoangsa-memory/` directory exists, show hoangsa-memory memory health:
+If `.hoangsa/memory/` directory exists, show hoangsa-memory memory health:
 
 ```bash
 # Count facts and lessons
-FACTS=$(grep -c '^### ' .hoangsa-memory/MEMORY.md 2>/dev/null || echo 0)
-LESSONS=$(grep -c '^### ' .hoangsa-memory/LESSONS.md 2>/dev/null || echo 0)
-PENDING_F=$(grep -c '^### ' .hoangsa-memory/MEMORY.pending.md 2>/dev/null || echo 0)
-PENDING_L=$(grep -c '^### ' .hoangsa-memory/LESSONS.pending.md 2>/dev/null || echo 0)
-QUARANTINED=$(grep -c '^### ' .hoangsa-memory/LESSONS.quarantined.md 2>/dev/null || echo 0)
+FACTS=$(grep -c '^### ' .hoangsa/memory/MEMORY.md 2>/dev/null || echo 0)
+LESSONS=$(grep -c '^### ' .hoangsa/memory/LESSONS.md 2>/dev/null || echo 0)
+PENDING_F=$(grep -c '^### ' .hoangsa/memory/MEMORY.pending.md 2>/dev/null || echo 0)
+PENDING_L=$(grep -c '^### ' .hoangsa/memory/LESSONS.pending.md 2>/dev/null || echo 0)
+QUARANTINED=$(grep -c '^### ' .hoangsa/memory/LESSONS.quarantined.md 2>/dev/null || echo 0)
 
 # Reflection debt (if gate.jsonl exists)
-if [ -f ".hoangsa-memory/gate.jsonl" ] && [ -f ".hoangsa-memory/.session-start" ]; then
-  SESSION_START=$(cat .hoangsa-memory/.session-start)
-  MUTATIONS=$(awk -v start="$SESSION_START" '$0 ~ start {found=1} found && /approve/ && /Write|Edit|NotebookEdit/' .hoangsa-memory/gate.jsonl | wc -l | tr -d ' ')
-  REMEMBERS=$(awk -v start="$SESSION_START" '$0 ~ start {found=1} found' .hoangsa-memory/memory-history.jsonl 2>/dev/null | wc -l | tr -d ' ')
+if [ -f ".hoangsa/memory/gate.jsonl" ] && [ -f ".hoangsa/memory/.session-start" ]; then
+  SESSION_START=$(cat .hoangsa/memory/.session-start)
+  MUTATIONS=$(awk -v start="$SESSION_START" '$0 ~ start {found=1} found && /approve/ && /Write|Edit|NotebookEdit/' .hoangsa/memory/gate.jsonl | wc -l | tr -d ' ')
+  REMEMBERS=$(awk -v start="$SESSION_START" '$0 ~ start {found=1} found' .hoangsa/memory/memory-history.jsonl 2>/dev/null | wc -l | tr -d ' ')
   DEBT=$((MUTATIONS - REMEMBERS))
   [ $DEBT -lt 0 ] && DEBT=0
 fi

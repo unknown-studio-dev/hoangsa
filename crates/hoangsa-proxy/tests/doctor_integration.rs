@@ -76,7 +76,7 @@ fn doctor_hook_rewrite_reports_latency() {
 #[test]
 fn doctor_flags_broken_config() {
     let tmp = TempDir::new().unwrap();
-    let cfg_dir = tmp.path().join(".hoangsa-proxy");
+    let cfg_dir = tmp.path().join(".hoangsa").join("proxy");
     fs::create_dir_all(&cfg_dir).unwrap();
     fs::write(cfg_dir.join("config.toml"), "not = valid = toml").unwrap();
     let (out, _code) = run_doctor_in(tmp.path());

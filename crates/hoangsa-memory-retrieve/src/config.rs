@@ -39,7 +39,7 @@ use serde::Deserialize;
 #[serde(default, deny_unknown_fields)]
 pub struct IndexConfig {
     /// Gitignore-syntax patterns to exclude from indexing. Applied on top
-    /// of `.gitignore`, `.ignore`, and `.hoangsa-memoryignore`. Supports negation
+    /// of `.gitignore`, `.ignore`, and `.memoryignore`. Supports negation
     /// with a leading `!`.
     pub ignore: Vec<String>,
     /// Max file size (bytes) considered for indexing. Files larger than

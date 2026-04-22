@@ -20,7 +20,7 @@
 //! | `memory_index`              | Walk a source path and populate indexes          |
 //! | `memory_remember_fact`      | Append a fact to `MEMORY.md`                     |
 //! | `memory_remember_lesson`    | Append a lesson to `LESSONS.md`                  |
-//! | `memory_skills_list`        | Enumerate installed skills under `.hoangsa-memory/skills/`|
+//! | `memory_skills_list`        | Enumerate installed skills under `.hoangsa/memory/skills/`|
 //! | `memory_show`        | Return current `MEMORY.md` + `LESSONS.md`        |
 //!
 //! Two markdown files are also published as MCP resources so clients can

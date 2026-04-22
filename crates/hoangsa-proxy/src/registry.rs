@@ -87,7 +87,7 @@ pub fn known_commands() -> &'static [&'static str] {
 }
 
 pub fn is_known(cmd: &str) -> bool {
-    known_commands().iter().any(|k| *k == cmd)
+    known_commands().contains(&cmd)
 }
 
 /// Pick the best built-in for `(cmd, subcmd)`. Exact subcmd match beats

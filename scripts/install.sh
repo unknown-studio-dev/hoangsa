@@ -8,8 +8,8 @@
 # Environment variables:
 #   HOANGSA_VERSION     Release tag to install (default: latest)
 #   HOANGSA_REPO        GitHub repo slug (default: unknown-studio-dev/hoangsa)
-#   HOANGSA_INSTALL_DIR Install root for memory binaries (default: $HOME/.hoangsa-memory)
-#   HOANGSA_CLI_DIR     Install root for hoangsa-cli (default: $HOME/.hoangsa/bin)
+#   HOANGSA_INSTALL_DIR Install root for all binaries (default: $HOME/.hoangsa)
+#   HOANGSA_CLI_DIR     Install root for hoangsa-cli (default: $HOANGSA_INSTALL_DIR/bin)
 #   HOANGSA_NO_PATH_EDIT If "1", skip rc file edit (reserved for T-10)
 #   HOANGSA_TEST_MODE   If set, skip main block (for sourcing in tests)
 #
@@ -27,8 +27,8 @@ set -eu
 
 HOANGSA_REPO="${HOANGSA_REPO:-unknown-studio-dev/hoangsa}"
 HOANGSA_VERSION="${HOANGSA_VERSION:-latest}"
-HOANGSA_INSTALL_DIR="${HOANGSA_INSTALL_DIR:-$HOME/.hoangsa-memory}"
-HOANGSA_CLI_DIR="${HOANGSA_CLI_DIR:-$HOME/.hoangsa/bin}"
+HOANGSA_INSTALL_DIR="${HOANGSA_INSTALL_DIR:-$HOME/.hoangsa}"
+HOANGSA_CLI_DIR="${HOANGSA_CLI_DIR:-$HOANGSA_INSTALL_DIR/bin}"
 HOANGSA_NO_PATH_EDIT="${HOANGSA_NO_PATH_EDIT:-}"
 
 SUPPORTED_TRIPLES="darwin-arm64 darwin-x64 linux-x64 linux-arm64 linux-x64-musl"
@@ -78,8 +78,8 @@ FLAGS (forwarded to `hoangsa-cli install`):
 ENVIRONMENT:
     HOANGSA_VERSION     Release tag (default: latest)
     HOANGSA_REPO        GitHub repo slug (default: unknown-studio-dev/hoangsa)
-    HOANGSA_INSTALL_DIR Install root for memory bins (default: ~/.hoangsa-memory)
-    HOANGSA_CLI_DIR     Install root for hoangsa-cli (default: ~/.hoangsa/bin)
+    HOANGSA_INSTALL_DIR Install root for all bins (default: ~/.hoangsa)
+    HOANGSA_CLI_DIR     Install root for hoangsa-cli (default: $HOANGSA_INSTALL_DIR/bin)
     HOANGSA_NO_PATH_EDIT If "1", do not touch rc files (manual export only)
 
 EXAMPLES:
@@ -252,8 +252,12 @@ fetch_stdout() {
 # the installer state does not silently break the rc snippet.
 managed_export_line() {
     # shellcheck disable=SC2016  # `$PATH` intentionally literal.
-    printf 'export PATH="%s/bin:%s:$PATH"\n' \
-        "$HOANGSA_INSTALL_DIR" "$HOANGSA_CLI_DIR"
+    if [ "$HOANGSA_INSTALL_DIR/bin" = "$HOANGSA_CLI_DIR" ]; then
+        printf 'export PATH="%s:$PATH"\n' "$HOANGSA_CLI_DIR"
+    else
+        printf 'export PATH="%s/bin:%s:$PATH"\n' \
+            "$HOANGSA_INSTALL_DIR" "$HOANGSA_CLI_DIR"
+    fi
 }
 
 # Print the manual export instructions. Used as a fallback whenever the rc
@@ -266,8 +270,8 @@ print_manual_export() {
 
 # Managed-block markers. Used by both the awk strip pass and the append pass
 # below — keep in sync via this single constant.
-HOANGSA_MARK_START='# hoangsa-memory:managed start'
-HOANGSA_MARK_END='# hoangsa-memory:managed end'
+HOANGSA_MARK_START='# hoangsa:managed start'
+HOANGSA_MARK_END='# hoangsa:managed end'
 
 # Rewrite the managed block inside the given rc file. Strips any existing
 # block delimited by the managed markers, then appends a fresh one. BSD/GNU
@@ -335,7 +339,7 @@ edit_path_in_rc() {
     fi
 
     # Interactive: prompt before touching the rc file.
-    printf 'Add ~/.hoangsa-memory/bin to PATH in %s? [Y/n] ' "$_rc"
+    printf 'Add ~/.hoangsa/bin to PATH in %s? [Y/n] ' "$_rc"
     REPLY=""
     # shellcheck disable=SC2039  # `read -r` is POSIX
     read -r REPLY || REPLY=""

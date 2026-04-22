@@ -69,10 +69,10 @@ pub fn uninstall(scope: Scope, cwd: &Path) -> anyhow::Result<PathBuf> {
         return Ok(path);
     }
     let mut settings = load_json(&path)?;
-    if let Some(hooks) = settings.get_mut("hooks").and_then(|v| v.as_object_mut()) {
-        if let Some(arr) = hooks.get_mut("PreToolUse").and_then(|v| v.as_array_mut()) {
-            arr.retain(|e| !is_hsp_entry(e));
-        }
+    if let Some(hooks) = settings.get_mut("hooks").and_then(|v| v.as_object_mut())
+        && let Some(arr) = hooks.get_mut("PreToolUse").and_then(|v| v.as_array_mut())
+    {
+        arr.retain(|e| !is_hsp_entry(e));
     }
     save_json(&path, &settings)?;
     Ok(path)

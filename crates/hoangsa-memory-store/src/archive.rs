@@ -16,7 +16,7 @@
 //! );
 //! ```
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -61,7 +61,6 @@ pub struct TopicSummary {
 #[derive(Clone)]
 pub struct ArchiveTracker {
     conn: Arc<Mutex<Connection>>,
-    path: PathBuf,
 }
 
 impl ArchiveTracker {
@@ -71,10 +70,9 @@ impl ArchiveTracker {
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        let path2 = path.clone();
 
         let conn = tokio::task::spawn_blocking(move || -> Result<Connection> {
-            let c = Connection::open(&path2).map_err(store)?;
+            let c = Connection::open(&path).map_err(store)?;
             c.execute_batch(
                 "PRAGMA journal_mode = WAL;
                  PRAGMA synchronous = NORMAL;
@@ -95,7 +93,6 @@ impl ArchiveTracker {
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
-            path,
         })
     }
 

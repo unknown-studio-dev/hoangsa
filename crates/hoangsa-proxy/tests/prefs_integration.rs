@@ -1,4 +1,4 @@
-//! End-to-end: `.hoangsa-proxy/config.toml` actually changes behaviour of
+//! End-to-end: `.hoangsa/proxy/config.toml` actually changes behaviour of
 //! the `hsp` binary. Project-scoped — we chdir into a tempdir and use it
 //! as CWD, so the global config on the dev machine doesn't interfere.
 
@@ -31,7 +31,7 @@ fn run_in(dir: &std::path::Path, args: &[&str]) -> (String, String, Option<i32>)
 }
 
 fn write_config(dir: &std::path::Path, body: &str) {
-    let p = dir.join(".hoangsa-proxy");
+    let p = dir.join(".hoangsa").join("proxy");
     fs::create_dir_all(&p).unwrap();
     fs::write(p.join("config.toml"), body).unwrap();
 }

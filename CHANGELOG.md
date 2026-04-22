@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed (BREAKING)
 - **Internal `thoth-*` crates renamed to `hoangsa-memory-*`.** The public
   surface (binaries `hoangsa-memory`, `hoangsa-memory-mcp`; install dir
-  `~/.hoangsa-memory/`; MCP tool names `mcp__hoangsa-memory__memory_*`)
+  `~/.hoangsa/memory/`; MCP tool names `mcp__hoangsa-memory__memory_*`)
   was already on the new name — this pass aligns the Rust workspace:
   `thoth-core` → `hoangsa-memory-core`, `thoth-parse/store/graph/retrieve/
   mcp` → `hoangsa-memory-{parse,store,graph,retrieve,mcp}`, `thoth-memory`
@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Node/npm packaging removed.** The `hoangsa-cc` npm package, the six `@hoangsa/cli-*` platform packages, `bin/install` (Node), `package.json`, and `pnpm-lock.yaml` are gone. Installation is exclusively the native `curl | sh` installer that downloads pre-built binaries from GitHub Releases. Existing `npx hoangsa-cc` invocations stop working — switch to the curl one-liner in the README.
 - Release workflow rewritten to native-only: one `build` matrix job per supported triple (`linux-{x64,arm64,x64-musl}`, `darwin-{x64,arm64}`) plus an `assemble-release` job that tarballs binaries + templates and uploads them to the GitHub Release. The `publish` (npm) job was deleted. Windows is no longer produced because the installer does not support it.
 - `--global` install mode no longer writes to the current working directory. Previously `.mcp.json`, `.hoangsa/rules.json`, and `.thothignore` were written to `cwd` even in global mode; now they are never created by `--global`. Global MCP registration now lives in `~/.claude.json`.
-- `hoangsa-memory` and `hoangsa-memory-mcp` binaries are now installed to `~/.hoangsa-memory/bin/` regardless of `--global` or `--local`.
+- `hoangsa-memory` and `hoangsa-memory-mcp` binaries are now installed to `~/.hoangsa/bin/` regardless of `--global` or `--local`.
 - `--task-manager` is now a flag (was an interactive prompt only).
 - `templates/workflows/update.md` rewritten to drive updates through the native installer (GitHub Releases API + `install.sh`) instead of `npm view` / `npx hoangsa-cc`.
 

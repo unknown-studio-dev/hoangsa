@@ -109,19 +109,6 @@ pub fn count_tokens(text: &str) -> u64 {
     }
 }
 
-/// Estimate tokens using content-type ratio (fast, no tiktoken).
-/// Used in cook phase for real-time tracking.
-pub fn estimate_tokens_by_ratio(text: &str, content_type: &str) -> u64 {
-    let ratio: f64 = match content_type {
-        "english" => 4.0,
-        "code" => 3.5,
-        "vietnamese" => 2.5,
-        "json" => 3.0,
-        _ => 3.5,
-    };
-    (text.len() as f64 / ratio) as u64
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,42 +124,4 @@ mod tests {
         assert_eq!(count_tokens(""), 0, "empty string should yield 0 tokens");
     }
 
-    #[test]
-    fn test_estimate_tokens_by_ratio_english() {
-        // "Hello" = 5 chars / 4.0 = 1
-        assert_eq!(estimate_tokens_by_ratio("Hello", "english"), 1);
-    }
-
-    #[test]
-    fn test_estimate_tokens_by_ratio_vietnamese() {
-        // 10 chars / 2.5 = 4
-        let text = "0123456789";
-        assert_eq!(estimate_tokens_by_ratio(text, "vietnamese"), 4);
-    }
-
-    #[test]
-    fn test_estimate_tokens_by_ratio_code() {
-        // 7 chars / 3.5 = 2
-        let text = "fn foo()";
-        assert_eq!(estimate_tokens_by_ratio(text, "code"), 2);
-    }
-
-    #[test]
-    fn test_estimate_tokens_by_ratio_json() {
-        // 6 chars / 3.0 = 2
-        let text = "{\"k\":1}";
-        assert_eq!(estimate_tokens_by_ratio(text, "json"), 2);
-    }
-
-    #[test]
-    fn test_estimate_tokens_by_ratio_default() {
-        // 7 chars / 3.5 = 2
-        let text = "fn foo()";
-        assert_eq!(estimate_tokens_by_ratio(text, "mixed"), 2);
-    }
-
-    #[test]
-    fn test_estimate_tokens_by_ratio_empty() {
-        assert_eq!(estimate_tokens_by_ratio("", "english"), 0);
-    }
 }

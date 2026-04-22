@@ -433,7 +433,7 @@ pub async fn cmd_archive_purge(
 // ---------------------------------------------------------------------------
 
 /// Try to acquire the process-wide archive-ingest advisory lock at
-/// `~/.hoangsa-memory/archive-ingest.lock`. Returns `Ok(Some(file))` when
+/// `~/.hoangsa/memory/archive-ingest.lock`. Returns `Ok(Some(file))` when
 /// the lock is held by this process (caller keeps the handle alive until
 /// ingest finishes), `Ok(None)` when another process already holds it, and
 /// `Err` when the lockfile itself can't be opened.
@@ -441,7 +441,7 @@ fn acquire_ingest_lock() -> Result<Option<std::fs::File>> {
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .context("cannot determine home directory for archive-ingest lock")?;
-    let dir = PathBuf::from(home).join(".hoangsa-memory");
+    let dir = PathBuf::from(home).join(".hoangsa").join("memory");
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("create {} for ingest lock", dir.display()))?;
     let path = dir.join("archive-ingest.lock");

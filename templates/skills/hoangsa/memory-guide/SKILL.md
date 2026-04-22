@@ -98,7 +98,7 @@ continuing.
   Normally hook-driven; agents rarely call this directly.
 - **`memory_skill_propose { slug, body, source_triggers? }`** — draft a
   new skill from ≥5 related lessons. Lands in
-  `.hoangsa-memory/skills/<slug>.draft/` for user review.
+  `.hoangsa/memory/skills/<slug>.draft/` for user review.
 - **`memory_skills_list`** — enumerate installed skills.
 
 ## MCP prompts

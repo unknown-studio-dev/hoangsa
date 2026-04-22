@@ -59,7 +59,7 @@ async fn index_and_recall_returns_relevant_chunks() {
         .await
         .unwrap();
 
-    // Open a `.hoangsa-memory/` alongside.
+    // Open a `.hoangsa/memory/` alongside.
     let (_memory_dir, store) = make_store().await;
 
     // Index.

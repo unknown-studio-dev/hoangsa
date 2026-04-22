@@ -25,7 +25,7 @@ fn home_path() -> Result<PathBuf, String> {
 /// Honors the `HOANGSA_INSTALL_DIR` env var (set by `scripts/install.sh`) so
 /// a user who points the installer at a non-default location still gets MCP
 /// entries whose `command` field matches where the bins actually landed.
-/// Falls back to `$HOME/.hoangsa-memory` when the env var is unset or empty.
+/// Falls back to `$HOME/.hoangsa` when the env var is unset or empty.
 fn memory_install_dir() -> Result<PathBuf, String> {
     if let Some(raw) = std::env::var_os("HOANGSA_INSTALL_DIR") {
         let s = raw.to_string_lossy().into_owned();
@@ -33,7 +33,7 @@ fn memory_install_dir() -> Result<PathBuf, String> {
             return Ok(PathBuf::from(s));
         }
     }
-    Ok(home_path()?.join(".hoangsa-memory"))
+    Ok(home_path()?.join(".hoangsa"))
 }
 
 /// Compact `YYYYMMDD-HHMMSS` UTC stamp used as a suffix for both template
@@ -123,7 +123,7 @@ fn mode_str(f: &InstallFlags) -> &'static str {
 pub mod templates {
     use super::*;
 
-    /// On-disk shape of `~/.hoangsa-memory/manifest.json`. Relative paths use
+    /// On-disk shape of `~/.hoangsa/manifest.json`. Relative paths use
     /// forward slashes for portability; hex-encoded SHA256 digests.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub struct Manifest {
@@ -419,7 +419,7 @@ pub mod templates {
 
     /// Resolve the manifest path for a given destination tree.
     ///
-    /// Per Decision #11 the real install writes to `~/.hoangsa-memory/manifest.json`,
+    /// Per Decision #11 the real install writes to `~/.hoangsa/manifest.json`,
     /// but tests pass a tempdir — so the caller computes it.
     pub fn default_manifest_path() -> Result<PathBuf, String> {
         Ok(super::memory_install_dir()?.join("manifest.json"))
@@ -431,7 +431,7 @@ pub mod templates {
 // Port of `bin/install`'s `ensureHoangsaHooks` + `cleanupHooksFromSettings`
 // + the top-level `settings.json` read/write helpers. Owns:
 //
-//   * HOANGSA hook payload construction (command = `<target>/hoangsa/bin/hoangsa-cli hook <event>`)
+//   * HOANGSA hook payload construction (command = `~/.hoangsa/bin/hoangsa-cli hook <event>`)
 //   * idempotent merge into an existing Claude Code `settings.json`
 //   * statusLine preservation (we only default; we never clobber a user-tuned value)
 //
@@ -496,13 +496,15 @@ pub mod hooks {
     }
 
     /// Build the HOANGSA-managed hook tree keyed by Claude Code event name.
-    /// `target_dir` is the `.claude/` directory (parent of `hoangsa/`).
+    /// `target_dir` is the `.claude/` directory (parent of `hoangsa/`). The CLI
+    /// itself lives globally in `~/.hoangsa/bin/` (or whatever
+    /// `$HOANGSA_INSTALL_DIR/bin` resolves to), not under the project-scoped
+    /// template tree, so the hook command points at that global launcher.
     /// Mirrors `ensureHoangsaHooks` in `bin/install`.
-    pub fn build_hoangsa_hooks(target_dir: &Path) -> Value {
-        let cli = target_dir
-            .join("hoangsa")
-            .join("bin")
-            .join("hoangsa-cli")
+    pub fn build_hoangsa_hooks(_target_dir: &Path) -> Value {
+        let cli = super::memory_install_dir()
+            .map(|d| d.join("bin").join("hoangsa-cli"))
+            .unwrap_or_else(|_| PathBuf::from("hoangsa-cli"))
             .display()
             .to_string();
 
@@ -656,11 +658,10 @@ pub mod hooks {
 
     /// Default statusLine spec — points at our own `hook statusline` subcommand
     /// (the CLI handler for which lives in a later task; we only wire it here).
-    pub fn default_statusline(target_dir: &Path) -> Value {
-        let cli = target_dir
-            .join("hoangsa")
-            .join("bin")
-            .join("hoangsa-cli")
+    pub fn default_statusline(_target_dir: &Path) -> Value {
+        let cli = super::memory_install_dir()
+            .map(|d| d.join("bin").join("hoangsa-cli"))
+            .unwrap_or_else(|_| PathBuf::from("hoangsa-cli"))
             .display()
             .to_string();
         json!({
@@ -842,7 +843,7 @@ pub mod hooks {
 //
 // Moves the bundled `hoangsa-memory` + `hoangsa-memory-mcp` binaries out of
 // the tarball staging area and into the stable per-user directory
-// `~/.hoangsa-memory/bin/` — regardless of `--global` or `--local` mode
+// `~/.hoangsa/bin/` — regardless of `--global` or `--local` mode
 // (REQ-10, Decision #5: memory bins are a shared per-user resource, not a
 // per-project asset).
 //
@@ -872,7 +873,7 @@ pub mod relocate {
     }
 
     /// Production destination: `<HOANGSA_INSTALL_DIR>/bin/`, which defaults to
-    /// `~/.hoangsa-memory/bin/` when the env var is unset. Resolves via the
+    /// `~/.hoangsa/bin/` when the env var is unset. Resolves via the
     /// shared [`super::memory_install_dir`] helper so the Rust installer and
     /// `scripts/install.sh` agree on where bins land.
     pub fn memory_bin_dir() -> Result<PathBuf, String> {
@@ -927,7 +928,7 @@ pub mod relocate {
 
     /// Same semantics as [`relocate_memory_bins`] but with an explicit
     /// destination — keeps tests hermetic (they never touch the real
-    /// `~/.hoangsa-memory/bin/`).
+    /// `~/.hoangsa/bin/`).
     pub fn relocate_memory_bins_to(staging: &Path, dest: &Path) -> io::Result<RelocateReport> {
         fs::create_dir_all(dest)?;
         let mut report = RelocateReport::default();
@@ -972,7 +973,7 @@ pub mod relocate {
         Ok(report)
     }
 
-    /// Copy the memory bins from `staging` into `~/.hoangsa-memory/bin/`.
+    /// Copy the memory bins from `staging` into `~/.hoangsa/bin/`.
     /// Idempotent: re-running overwrites the existing copies. Missing sources
     /// are reported, not an error (matches `install_bin` in `install.sh`).
     pub fn relocate_memory_bins(staging: &Path) -> io::Result<RelocateReport> {
@@ -1000,7 +1001,7 @@ pub mod relocate {
     mod tests {
         //! Unit tests for the memory-bin relocate pipeline. Every test uses
         //! `tempfile::tempdir()` for BOTH source and destination — we never
-        //! write to the real `~/.hoangsa-memory/bin/`.
+        //! write to the real `~/.hoangsa/bin/`.
 
         use super::*;
         use std::fs;
@@ -1141,7 +1142,7 @@ pub mod relocate {
 //   * `--global` → MCP registration in `~/.claude.json`; no cwd writes.
 //   * `--local`  → MCP registration in `<cwd>/.mcp.json`; exit 3 if the
 //                  `hoangsa-memory-mcp` binary is absent from
-//                  `~/.hoangsa-memory/bin/` (REQ-09 hint).
+//                  `~/.hoangsa/bin/` (REQ-09 hint).
 //   * Rule + `.memoryignore` seeds are **local-only** — `--global` must
 //     never create them in the user's current directory.
 //   * Quality-gate skills (`silent-failure-hunter`, `pr-test-analyzer`,
@@ -1177,8 +1178,8 @@ pub mod mode {
 # .memoryignore — hoangsa-memory-specific ignore rules (gitignore syntax).
 # Layered on top of .gitignore. Edit freely.
 
-# hoangsa-memory data (always ignored by the watcher, but explicit here too)
-.hoangsa-memory/
+# hoangsa data (always ignored by the watcher, but explicit here too)
+.hoangsa/
 
 # Node / JS / TS
 node_modules/
@@ -1219,7 +1220,7 @@ pnpm-lock.yaml
     }
 
     /// Absolute path to the globally-installed `hoangsa-memory-mcp` binary.
-    /// Resolves under `$HOANGSA_INSTALL_DIR` (default `~/.hoangsa-memory`) so
+    /// Resolves under `$HOANGSA_INSTALL_DIR` (default `~/.hoangsa`) so
     /// a user who overrode the install dir in `scripts/install.sh` still gets
     /// an MCP `command` field pointing at the real bin location.
     /// `--local` register requires this to exist (REQ-09 exit 3).
@@ -1692,7 +1693,7 @@ pnpm-lock.yaml
         #[test]
         fn register_mcp_global_honors_install_dir_env() {
             // Bug A regression: `memory_mcp_bin()` used to hardcode
-            // `$HOME/.hoangsa-memory/bin/hoangsa-memory-mcp`, ignoring the
+            // `$HOME/.hoangsa/bin/hoangsa-memory-mcp`, ignoring the
             // `HOANGSA_INSTALL_DIR` override from `scripts/install.sh`.
             // With the fix, setting the env var must be reflected in the
             // `command` field written into `claude.json`.
@@ -1829,13 +1830,13 @@ pub fn cmd_install(args: &[&str]) {
             }
 
             // T-06 dry-run: list each memory bin we WOULD relocate out of the
-            // tarball staging area into `~/.hoangsa-memory/bin/`. Silent when
+            // tarball staging area into `~/.hoangsa/bin/`. Silent when
             // no staging dir is advertised (normal for re-runs) and skipped
             // entirely under `--no-memory`.
             if !flags.no_memory
                 && let Some(staging) = relocate::staging_dir_from_env() {
                     let dest_preview = relocate::memory_bin_dir()
-                        .unwrap_or_else(|_| PathBuf::from("~/.hoangsa-memory/bin"));
+                        .unwrap_or_else(|_| PathBuf::from("~/.hoangsa/bin"));
                     for src in relocate::source_memory_bins(&staging) {
                         let name = src
                             .file_name()
@@ -1938,8 +1939,8 @@ pub fn cmd_install(args: &[&str]) {
             "targets": {
                 "global_claude_json": "~/.claude.json",
                 "local_claude_dir": ".claude/",
-                "memory_bin_dir": "~/.hoangsa-memory/bin/",
-                "manifest": "~/.hoangsa-memory/manifest.json"
+                "memory_bin_dir": "~/.hoangsa/bin/",
+                "manifest": "~/.hoangsa/manifest.json"
             },
             "flags": {
                 "global": flags.global,
@@ -2017,7 +2018,7 @@ pub fn cmd_install(args: &[&str]) {
     }
 
     // T-06: relocate `hoangsa-memory` + `hoangsa-memory-mcp` into
-    // `~/.hoangsa-memory/bin/` (REQ-10) — same destination for both
+    // `~/.hoangsa/bin/` (REQ-10) — same destination for both
     // `--global` and `--local`. Skipped when `--no-memory` is set, or when
     // no staging dir was handed off (normal for plain `--local` re-runs
     // where the bins were already installed globally via the curl|sh path).
@@ -2243,7 +2244,7 @@ mod templates_tests {
     //! Unit tests for the template copy + manifest + patch-backup pipeline.
     //!
     //! Every test routes through `tempfile::tempdir()` — we never touch real
-    //! `~/.claude/` or `~/.hoangsa-memory/`.
+    //! `~/.claude/` or `~/.hoangsa/`.
 
     use super::templates::*;
     use std::fs;

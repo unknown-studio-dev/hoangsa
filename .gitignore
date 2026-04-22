@@ -8,7 +8,6 @@ crates/*/target/
 coverage/
 .gitnexus
 .idea
-.hoangsa-memory
 .mcp.json
 CLAUDE.md
 AGENTS.md

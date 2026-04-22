@@ -2,8 +2,8 @@
 //!
 //! Precedence (lowest → highest):
 //!   1. Built-in defaults
-//!   2. Global config `~/.config/hoangsa-proxy/config.toml`
-//!   3. Project config `<cwd>/.hoangsa-proxy/config.toml`
+//!   2. Global config `~/.hoangsa/proxy/config.toml`
+//!   3. Project config `<cwd>/.hoangsa/proxy/config.toml`
 //!   4. Env vars (`HSP_STRICT`)
 //!   5. CLI flags (`--strict`)
 //!
@@ -63,7 +63,7 @@ impl Prefs {
         if let Some(g) = global_config_path_with_override(global_override) {
             prefs.overlay_file(&g);
         }
-        prefs.overlay_file(&project_cwd.join(".hoangsa-proxy/config.toml"));
+        prefs.overlay_file(&project_cwd.join(".hoangsa/proxy/config.toml"));
         prefs
     }
 
@@ -117,13 +117,13 @@ fn global_config_path_with_override(override_path: Option<&Path>) -> Option<Path
     if let Some(p) = override_path {
         return Some(p.to_path_buf());
     }
-    dirs::config_dir().map(|d| d.join("hoangsa-proxy/config.toml"))
+    dirs::home_dir().map(|d| d.join(".hoangsa").join("proxy").join("config.toml"))
 }
 
 /// Path where `hsp doctor` and `hsp init` resolve the project config. Kept
 /// here so every caller agrees on the filename.
 pub fn project_config_path(cwd: &Path) -> PathBuf {
-    cwd.join(".hoangsa-proxy/config.toml")
+    cwd.join(".hoangsa/proxy/config.toml")
 }
 
 #[cfg(test)]
@@ -152,7 +152,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
-            ".hoangsa-proxy/config.toml",
+            ".hoangsa/proxy/config.toml",
             "[runtime]\nstrict = true\nmax_output_mb = 50\n\n[handlers]\ndisabled = [\"cargo\"]\n",
         );
         let p = Prefs::load(tmp.path(), Some(&tmp.path().join("nowhere.toml")));
@@ -172,7 +172,7 @@ mod tests {
         .unwrap();
         write(
             tmp.path(),
-            ".hoangsa-proxy/config.toml",
+            ".hoangsa/proxy/config.toml",
             "[runtime]\nstrict = true\n",
         );
         let p = Prefs::load(tmp.path(), Some(&global_path));
@@ -184,7 +184,7 @@ mod tests {
     #[test]
     fn parse_error_warns_not_fatal() {
         let tmp = TempDir::new().unwrap();
-        write(tmp.path(), ".hoangsa-proxy/config.toml", "not = valid = toml");
+        write(tmp.path(), ".hoangsa/proxy/config.toml", "not = valid = toml");
         let p = Prefs::load(tmp.path(), Some(&tmp.path().join("nowhere.toml")));
         assert!(!p.strict);
         assert!(
@@ -199,7 +199,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
-            ".hoangsa-proxy/config.toml",
+            ".hoangsa/proxy/config.toml",
             "[runtime]\nmax_output_mb = 99999\n",
         );
         let p = Prefs::load(tmp.path(), Some(&tmp.path().join("nowhere.toml")));

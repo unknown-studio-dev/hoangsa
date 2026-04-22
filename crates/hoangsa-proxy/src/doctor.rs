@@ -345,7 +345,7 @@ mod tests {
     #[test]
     fn config_warn_on_broken_file() {
         let tmp = TempDir::new().unwrap();
-        let p = tmp.path().join(".hoangsa-proxy");
+        let p = tmp.path().join(".hoangsa").join("proxy");
         fs::create_dir_all(&p).unwrap();
         fs::write(p.join("config.toml"), "not = valid = toml").unwrap();
         let checks = check_config(tmp.path());
