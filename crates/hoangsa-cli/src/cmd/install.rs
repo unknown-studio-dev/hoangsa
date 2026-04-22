@@ -292,11 +292,53 @@ pub mod templates {
             .join("/")
     }
 
+    /// Map a template-relative path to the on-disk layout Claude Code actually
+    /// scans. `dst` is the `.claude/` dir, so each top-level template subdir
+    /// lands where Claude's discovery expects:
+    ///
+    ///   * `workflows/<f>`               → `hoangsa/workflows/<f>` (internal —
+    ///     slash commands resolve their body from here; NOT auto-discovered
+    ///     by Claude Code)
+    ///   * `commands/<f>`                → `commands/<f>` (subdir becomes the
+    ///     `hoangsa:` namespace)
+    ///   * `skills/hoangsa/<skill>/<f>`  → `skills/<skill>/<f>` (flatten the
+    ///     extra `hoangsa/` level — Claude expects `<skill>/SKILL.md` directly
+    ///     under `skills/`)
+    ///   * `agents/<f>`                  → `agents/<f>`
+    ///
+    /// Unrecognized top-level dirs are preserved as-is so unit tests (which
+    /// use synthetic trees without these names) still pass.
+    fn route_rel(rel: &Path) -> PathBuf {
+        let mut comps = rel.components();
+        let Some(first) = comps.next() else {
+            return rel.to_path_buf();
+        };
+        let tail = comps.as_path().to_path_buf();
+        let first_str = first.as_os_str().to_string_lossy();
+        match first_str.as_ref() {
+            "workflows" => Path::new("hoangsa").join("workflows").join(&tail),
+            "commands" => Path::new("commands").join(&tail),
+            "agents" => Path::new("agents").join(&tail),
+            "skills" => {
+                // Strip an optional leading `hoangsa/` namespace subdir so a
+                // skill lands at `skills/<name>/SKILL.md`.
+                let mut t = tail.components();
+                match t.next() {
+                    Some(c) if c.as_os_str() == "hoangsa" => {
+                        Path::new("skills").join(t.as_path())
+                    }
+                    _ => Path::new("skills").join(&tail),
+                }
+            }
+            _ => rel.to_path_buf(),
+        }
+    }
+
     /// Copy `src` → `dst` recursively, backing up any `dst` file that the user
     /// modified since the previous install. A file counts as "modified" when
     /// its current SHA256 differs from the hash recorded in `prev_manifest`.
     ///
-    /// Backups land at `<dst.parent()>/hoangsa-patches/<relpath>.bak-<stamp>`.
+    /// Backups land at `<dst>/hoangsa-patches/<relpath>.bak-<stamp>`.
     /// Returns both the report and a freshly computed manifest (keyed by `src`).
     pub fn copy_templates(
         src: &Path,
@@ -321,7 +363,7 @@ pub mod templates {
                 .strip_prefix(src)
                 .map_err(|_| io::Error::other("strip_prefix failed"))?;
             let rel_str = rel_key(rel);
-            let dst_file = dst.join(rel);
+            let dst_file = dst.join(route_rel(rel));
 
             // Record the source hash — the manifest tracks pristine install state.
             let src_hash = compute_file_sha256(&src_file)?;
@@ -364,11 +406,12 @@ pub mod templates {
         Ok((report, new_manifest))
     }
 
-    /// Directory where `.bak-<stamp>` files land. Kept sibling to `dst` so an
-    /// uninstall that wipes `dst` doesn't take backups with it.
+    /// Directory where `.bak-<stamp>` files land. Kept under `dst/hoangsa-patches/`
+    /// so backups stay co-located with the install tree instead of polluting
+    /// the caller's cwd (dst is now `.claude/`, whose parent is the project
+    /// root or `$HOME`).
     fn patches_root(dst: &Path) -> PathBuf {
-        let parent = dst.parent().unwrap_or(dst);
-        parent.join("hoangsa-patches")
+        dst.join("hoangsa-patches")
     }
 
     /// Build the `actions` array for `--dry-run`: one `copy` per source file,
@@ -390,7 +433,7 @@ pub mod templates {
                 .strip_prefix(src)
                 .map_err(|_| io::Error::other("strip_prefix failed"))?;
             let rel_str = rel_key(rel);
-            let dst_file = dst.join(rel);
+            let dst_file = dst.join(route_rel(rel));
 
             if dst_file.exists()
                 && let Some(prev) = prev_manifest
@@ -1763,11 +1806,16 @@ pnpm-lock.yaml
 }
 
 /// Destination tree for the installed templates, derived from mode + cwd.
-/// `global` → `~/.claude/hoangsa/`, `local` → `<cwd>/.claude/hoangsa/`.
+/// `global` → `~/.claude/`, `local` → `<cwd>/.claude/`. The `templates`
+/// module's `route_rel` fans each template subdir (`commands/`, `skills/`,
+/// `agents/`, `workflows/`) into the right spot under this root so Claude
+/// Code's discovery (which only scans `.claude/{commands,skills,agents}/`)
+/// actually finds them. The hoangsa-internal `workflows/` tree lives at
+/// `.claude/hoangsa/workflows/`, matching what each slash command resolves.
 fn install_dst_dir(mode: &str, cwd: &Path) -> Result<PathBuf, String> {
     match mode {
-        "global" => Ok(home_path()?.join(".claude").join("hoangsa")),
-        _ => Ok(cwd.join(".claude").join("hoangsa")),
+        "global" => Ok(home_path()?.join(".claude")),
+        _ => Ok(cwd.join(".claude")),
     }
 }
 
@@ -2044,11 +2092,8 @@ pub fn cmd_install(args: &[&str]) {
         };
 
     // T-04: settings.json merge + statusline + legacy cleanup.
-    // `dst` is `.claude/hoangsa/`; its parent is the `.claude/` dir we need.
-    let target_dir = dst
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| dst.clone());
+    // `dst` is already the `.claude/` dir — hooks/statusline want it verbatim.
+    let target_dir = dst.clone();
     let settings_file = match hooks::settings_path(mode, &cwd) {
         Ok(p) => p,
         Err(e) => {
@@ -2286,7 +2331,7 @@ mod templates_tests {
     fn copy_happy_path_no_prev_manifest() {
         let tmp = tempdir().expect("tempdir");
         let src = tmp.path().join("src");
-        let dst = tmp.path().join("dst/.claude/hoangsa");
+        let dst = tmp.path().join("dst/.claude");
 
         write(&src.join("top.md"), "# top");
         write(&src.join("nested/child.md"), "# child");
@@ -2316,7 +2361,7 @@ mod templates_tests {
     fn rerun_with_unchanged_files_makes_no_backup() {
         let tmp = tempdir().expect("tempdir");
         let src = tmp.path().join("src");
-        let dst = tmp.path().join("dst/.claude/hoangsa");
+        let dst = tmp.path().join("dst/.claude");
         write(&src.join("menu.md"), "# menu v1");
 
         // First run: no prev manifest, everything gets copied.
@@ -2345,7 +2390,7 @@ mod templates_tests {
     fn user_modified_file_is_backed_up_then_overwritten() {
         let tmp = tempdir().expect("tempdir");
         let src = tmp.path().join("src");
-        let dst = tmp.path().join("dst/.claude/hoangsa");
+        let dst = tmp.path().join("dst/.claude");
         write(&src.join("workflow.md"), "# upstream v1");
 
         // Run 1 — install v1.
@@ -2373,13 +2418,12 @@ mod templates_tests {
         let backup_contents = fs::read_to_string(backup_path).expect("read backup");
         assert_eq!(backup_contents, "# user's local edit");
 
-        // Backup lands under hoangsa-patches/ sibling to dst.
-        let parent_of_dst = dst.parent().expect("dst has parent");
+        // Backup lands under <dst>/hoangsa-patches/.
         assert!(
-            backup_path.starts_with(parent_of_dst.join("hoangsa-patches")),
+            backup_path.starts_with(dst.join("hoangsa-patches")),
             "backup path {:?} should live under {}",
             backup_path,
-            parent_of_dst.join("hoangsa-patches").display()
+            dst.join("hoangsa-patches").display()
         );
 
         // Destination file now has upstream v2.
@@ -2427,7 +2471,7 @@ mod templates_tests {
     fn plan_actions_lists_copies_and_backups() {
         let tmp = tempdir().expect("tempdir");
         let src = tmp.path().join("src");
-        let dst = tmp.path().join("dst/.claude/hoangsa");
+        let dst = tmp.path().join("dst/.claude");
         write(&src.join("a.md"), "# a v1");
 
         // Prime: install + snapshot manifest, then user edits.
