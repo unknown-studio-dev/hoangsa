@@ -394,16 +394,16 @@ impl Graph {
             }
         }
 
-        // File-level imports: the indexer writes these with the file
-        // stem as the `from` of an `Imports` edge. The stem has no
-        // corresponding Node (see `hoangsa-memory-retrieve::indexer::module_fqn`)
-        // so a node-driven scan alone would miss them.
-        if let Some(stem) = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .map(str::to_string)
-        {
-            for e in self.outgoing(&stem).await? {
+        // File-level imports: the indexer writes these with the file's
+        // crate-qualified module path (`crate_name::mod_path`) as the
+        // `from` of an `Imports` edge. That FQN has no corresponding Node,
+        // so a node-driven scan alone would miss them. Using the bare
+        // `file_stem()` here was the old scheme and caused import lists
+        // from unrelated crates' `main.rs` files to merge; we now resolve
+        // the same way the indexer keys its writes.
+        let module = hoangsa_memory_parse::crate_qualified_module_path(path);
+        if !module.is_empty() {
+            for e in self.outgoing(&module).await? {
                 if matches!(e.kind, EdgeKind::Imports) && seen.insert(e.to.clone()) {
                     out.push(e.to);
                 }
