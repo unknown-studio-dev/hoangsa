@@ -27,7 +27,9 @@ Installer tải sẵn binary native — **không cần Node, không cần `npm`,
 
 Nền tảng hỗ trợ: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `linux-x64-musl`.
 
-Flags (chuyển tiếp sang `hoangsa-cli install`): `--global` (mặc định), `--local`, `--uninstall`, `--install-chroma`, `--dry-run`.
+Flags (chuyển tiếp sang `hoangsa-cli install`): `--global` (mặc định), `--local`, `--install-chroma`, `--dry-run`.
+
+Để gỡ cài đặt: chạy `scripts/uninstall.sh --global` (hoặc `--local`) từ bản checkout của repo. Thêm `--purge` để xoá luôn `~/.hoangsa` (templates + memory data).
 
 ---
 

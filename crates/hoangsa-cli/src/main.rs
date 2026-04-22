@@ -264,7 +264,7 @@ Usage:
   stats record '<json>'
   stats summary [--last N] [--complexity low|medium|high]
   stats cache [-n top] [-s session_id]
-  install [--global|--local] [--uninstall] [--install-chroma] [--dry-run] [--task-manager=<clickup|asana|none>] [--no-memory] [--skip-path-edit]
+  install [--global|--local] [--install-chroma] [--dry-run] [--task-manager=<clickup|asana|none>] [--no-memory] [--skip-path-edit]
 "
             );
             std::process::exit(1);

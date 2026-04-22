@@ -96,7 +96,6 @@ fn backup_timestamp() -> String {
 struct InstallFlags {
     global: bool,
     local: bool,
-    uninstall: bool,
     install_chroma: bool,
     dry_run: bool,
     no_memory: bool,
@@ -113,7 +112,6 @@ fn parse_flags(args: &[&str]) -> Result<InstallFlags, String> {
         match a {
             "--global" => f.global = true,
             "--local" => f.local = true,
-            "--uninstall" => f.uninstall = true,
             "--install-chroma" => f.install_chroma = true,
             "--dry-run" => f.dry_run = true,
             "--no-memory" => f.no_memory = true,
@@ -139,21 +137,15 @@ fn validate(f: &InstallFlags) -> Result<(), String> {
     if f.global && f.local {
         return Err("--global and --local are mutually exclusive".into());
     }
-    if f.uninstall && !f.global && !f.local {
-        return Err("--uninstall requires either --global or --local".into());
-    }
     Ok(())
 }
 
 fn mode_str(f: &InstallFlags) -> &'static str {
-    if f.uninstall {
-        "uninstall"
-    } else if f.global {
+    if f.global {
         "global"
-    } else if f.local {
-        "local"
     } else {
-        // Default mode when neither --global nor --local is specified.
+        // Default mode when --global is not specified. `--local` is the only
+        // other option and falls through here too.
         "local"
     }
 }
@@ -2085,7 +2077,7 @@ pub fn cmd_install(args: &[&str]) {
         let mut actions_json: Vec<serde_json::Value> = Vec::new();
         let mut warnings: Vec<String> = Vec::new();
 
-        if !flags.uninstall {
+        {
             match (
                 templates::templates_source_dir(mode, &cwd),
                 install_dst_dir(mode, &cwd),
@@ -2232,7 +2224,6 @@ pub fn cmd_install(args: &[&str]) {
             "flags": {
                 "global": flags.global,
                 "local": flags.local,
-                "uninstall": flags.uninstall,
                 "install_chroma": flags.install_chroma,
                 "no_memory": flags.no_memory,
                 "skip_path_edit": flags.skip_path_edit,
@@ -2241,19 +2232,6 @@ pub fn cmd_install(args: &[&str]) {
         });
         helpers::out(&preview);
         return;
-    }
-
-    // Live path for global/local installs. `--uninstall` is still a REQ-06
-    // drift — emit a structured error with exit code 4 so callers (and
-    // shells) see the stub state rather than a silent no-op success.
-    if flags.uninstall {
-        helpers::out(&json!({
-            "status": "error",
-            "code": 4,
-            "message": "--uninstall is not implemented yet; remove files manually",
-            "mode": mode,
-        }));
-        std::process::exit(4);
     }
 
     // Warnings collector for the live flow. Non-fatal per-step errors
@@ -2505,21 +2483,13 @@ mod tests {
     }
 
     #[test]
-    fn uninstall_requires_scope() {
-        let f = parse_flags(&["--uninstall"]).expect("parse");
-        assert!(validate(&f).is_err());
-        let f2 = parse_flags(&["--uninstall", "--local"]).expect("parse");
-        assert!(validate(&f2).is_ok());
-    }
-
-    #[test]
     fn mode_derivation() {
         let f = parse_flags(&["--global"]).expect("parse");
         assert_eq!(mode_str(&f), "global");
         let f = parse_flags(&["--local"]).expect("parse");
         assert_eq!(mode_str(&f), "local");
-        let f = parse_flags(&["--uninstall", "--global"]).expect("parse");
-        assert_eq!(mode_str(&f), "uninstall");
+        let f = parse_flags(&[]).expect("parse");
+        assert_eq!(mode_str(&f), "local");
     }
 }
 

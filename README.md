@@ -25,7 +25,9 @@ The installer ships pre-built native binaries — no Node, no `npm`, no `cargo` 
 
 Supported platforms: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `linux-x64-musl`.
 
-Flags (forwarded to `hoangsa-cli install`): `--global` (default), `--local`, `--uninstall`, `--install-chroma`, `--dry-run`.
+Flags (forwarded to `hoangsa-cli install`): `--global` (default), `--local`, `--install-chroma`, `--dry-run`.
+
+To uninstall, run `scripts/uninstall.sh --global` (or `--local`) from a checkout of the repo. Pass `--purge` to also delete `~/.hoangsa` (templates + memory data).
 
 ---
 

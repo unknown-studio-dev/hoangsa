@@ -9,8 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Zero-dep `curl | sh` installer as a per-tag GitHub Release asset. See README for the one-liner.
-- New Rust subcommand `hoangsa-cli install [--global|--local] [--uninstall] [--install-chroma] [--dry-run]` owning all install logic.
+- New Rust subcommand `hoangsa-cli install [--global|--local] [--install-chroma] [--dry-run]` owning all install logic.
 - CI smoke tests on alpine, ubuntu, and macOS for the install pipeline.
+- `scripts/uninstall.sh [--global|--local] [--dry-run] [--purge]` — standalone POSIX-sh uninstaller that removes binaries, manifest-tracked templates, managed hook entries, the `hoangsa-memory` MCP registration, and the managed PATH block.
+
+### Removed
+- `--uninstall` flag on `hoangsa-cli install` (was a stub returning exit 4). Use `scripts/uninstall.sh` instead.
 
 ### Changed (BREAKING)
 - **Internal `thoth-*` crates renamed to `hoangsa-memory-*`.** The public

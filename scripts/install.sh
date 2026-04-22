@@ -70,10 +70,11 @@ USAGE:
 FLAGS (forwarded to `hoangsa-cli install`):
     --global            Install globally for the current user (default)
     --local             Install for the current project (cwd)
-    --uninstall         Remove a previous install (combine with --global/--local)
     --install-chroma    Provision the chroma sidecar venv only
     --dry-run           Print actions without writing files
     --help, -h          Show this help and exit
+
+To uninstall, use scripts/uninstall.sh from a checkout of the repo.
 
 ENVIRONMENT:
     HOANGSA_VERSION     Release tag (default: latest)
@@ -96,7 +97,6 @@ EOF
 PASSTHROUGH=""
 HAS_MODE_FLAG=0
 IS_GLOBAL=0
-UNINSTALL=0
 
 append_arg() {
     # Append a shell-quoted arg to PASSTHROUGH so we can re-expand with `eval`.
@@ -122,10 +122,6 @@ for arg in "$@"; do
             ;;
         --local)
             HAS_MODE_FLAG=1
-            append_arg "$arg"
-            ;;
-        --uninstall)
-            UNINSTALL=1
             append_arg "$arg"
             ;;
         --install-chroma|--dry-run)
@@ -625,8 +621,7 @@ main() {
 
     # Pick the Claude config dir to install into and propagate to the CLI.
     # Only relevant for --global; --local writes everything under cwd/.claude/
-    # and never touches a Claude profile dir. On uninstall we still pick so
-    # the CLI cleans the right profile.
+    # and never touches a Claude profile dir.
     if [ "$IS_GLOBAL" -eq 1 ]; then
         pick_claude_dir
         CLAUDE_CONFIG_DIR="$CLAUDE_DIR_PICK"

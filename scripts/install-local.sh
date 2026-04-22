@@ -4,8 +4,10 @@
 # scripts/install.sh performs after downloading a release tarball. Also
 # installs the `hsp` proxy binary, which the CLI install flow does not own.
 #
+# To uninstall, use scripts/uninstall.sh.
+#
 # Usage:
-#   scripts/install-local.sh [--global|--local] [--dry-run] [--uninstall]
+#   scripts/install-local.sh [--global|--local] [--dry-run]
 #                            [--skip-build] [-- extra args forwarded to CLI]
 #
 # Environment variables:
@@ -25,7 +27,6 @@ HOANGSA_CLI_DIR="${HOANGSA_CLI_DIR:-$HOANGSA_INSTALL_DIR/bin}"
 HOANGSA_NO_PATH_EDIT="${HOANGSA_NO_PATH_EDIT:-}"
 SKIP_BUILD=0
 DRY_RUN=0
-UNINSTALL=0
 IS_GLOBAL=0
 PASSTHROUGH=""
 HAS_MODE_FLAG=0
@@ -43,7 +44,6 @@ for arg in "$@"; do
     case "$arg" in
         --skip-build) SKIP_BUILD=1 ;;
         --dry-run)    DRY_RUN=1;    append_arg "$arg" ;;
-        --uninstall)  UNINSTALL=1;  append_arg "$arg" ;;
         --global) IS_GLOBAL=1; HAS_MODE_FLAG=1; append_arg "$arg" ;;
         --local)  HAS_MODE_FLAG=1; append_arg "$arg" ;;
         --install-chroma) append_arg "$arg" ;;
@@ -108,7 +108,7 @@ $d"
 }
 
 # Prompt the user to pick a candidate; sets $CLAUDE_DIR_PICK. Must only be
-# called when $IS_GLOBAL=1 and $UNINSTALL=0.
+# called when $IS_GLOBAL=1.
 pick_claude_dir() {
     # Caller-provided env wins — even over $HOME/.claude fallback. This is how
     # zclaude-style aliases propagate their profile into the installer.
@@ -175,8 +175,8 @@ pick_claude_dir() {
 
 # --- PATH rc-file edit ($SHELL-detected; matches install.sh marker contract) -
 #
-# Managed-block markers MUST match scripts/install.sh so a later uninstall /
-# re-install from either entry point can strip-and-rewrite the same block.
+# Managed-block markers MUST match scripts/install.sh (and scripts/uninstall.sh)
+# so a later uninstall or re-install can strip-and-rewrite the same block.
 
 HOANGSA_MARK_START='# hoangsa:managed start'
 HOANGSA_MARK_END='# hoangsa:managed end'
@@ -355,22 +355,19 @@ else
     CARGO_FLAGS=""
 fi
 
-# Skip the build on pure --uninstall — no binaries are needed to delete files.
-if [ "$SKIP_BUILD" -eq 0 ] && [ "$UNINSTALL" -eq 0 ]; then
+if [ "$SKIP_BUILD" -eq 0 ]; then
     info "building binaries (profile: $CARGO_PROFILE)"
     # shellcheck disable=SC2086
     cargo build $CARGO_FLAGS $CARGO_PKGS
-elif [ "$UNINSTALL" -eq 0 ]; then
+else
     info "skipping build; using $BIN_DIR"
 fi
 
-if [ "$UNINSTALL" -eq 0 ]; then
-    for b in $REQUIRED_BINS; do
-        [ -x "$BIN_DIR/$b" ] || die "missing binary: $BIN_DIR/$b (drop --skip-build?)"
-    done
-fi
+for b in $REQUIRED_BINS; do
+    [ -x "$BIN_DIR/$b" ] || die "missing binary: $BIN_DIR/$b (drop --skip-build?)"
+done
 
-# --- Install / uninstall CLI-tier binaries (hoangsa-cli, hsp) ---------------
+# --- Install CLI-tier binaries (hoangsa-cli, hsp) ---------------------------
 #
 # `hoangsa-cli install` itself owns templates + memory bins but does NOT copy
 # its own binary or hsp. We manage both here so a user running
@@ -383,15 +380,6 @@ install_cli_bin() {
     _name="$1"
     _dst="$HOANGSA_CLI_DIR/$_name"
     _src="$BIN_DIR/$_name"
-    if [ "$UNINSTALL" -eq 1 ]; then
-        if [ "$DRY_RUN" -eq 1 ]; then
-            info "dry-run: would remove $_dst"
-        elif [ -e "$_dst" ]; then
-            info "removing $_dst"
-            rm -f "$_dst"
-        fi
-        return 0
-    fi
     if [ "$DRY_RUN" -eq 1 ]; then
         info "dry-run: would install $_src -> $_dst"
         return 0
@@ -414,7 +402,7 @@ install_cli_bin hsp
 # successful install still leaves `hoangsa-cli` / `hsp` unreachable from the
 # shell. Local installs bypass this — project-scoped consumers don't need PATH.
 
-if [ "$UNINSTALL" -eq 0 ] && [ "$IS_GLOBAL" -eq 1 ]; then
+if [ "$IS_GLOBAL" -eq 1 ]; then
     pick_claude_dir
     # Export so the CLI (and its `claude_config_dir()` helper) writes to the
     # chosen profile instead of defaulting to $HOME/.claude.
@@ -425,37 +413,29 @@ fi
 
 # --- Stage templates + memory bins (mirrors install.sh layout) --------------
 
-if [ "$UNINSTALL" -eq 0 ]; then
-    STAGING=$(mktemp -d "${TMPDIR:-/tmp}/hoangsa-local.XXXXXX")
-    trap 'rm -rf "$STAGING"' EXIT INT TERM
+STAGING=$(mktemp -d "${TMPDIR:-/tmp}/hoangsa-local.XXXXXX")
+trap 'rm -rf "$STAGING"' EXIT INT TERM
 
-    info "staging into $STAGING"
-    cp -R "$REPO_ROOT/templates" "$STAGING/templates"
-    mkdir -p "$STAGING/bin"
-    cp "$BIN_DIR/hoangsa-memory"     "$STAGING/bin/"
-    cp "$BIN_DIR/hoangsa-memory-mcp" "$STAGING/bin/"
+info "staging into $STAGING"
+cp -R "$REPO_ROOT/templates" "$STAGING/templates"
+mkdir -p "$STAGING/bin"
+cp "$BIN_DIR/hoangsa-memory"     "$STAGING/bin/"
+cp "$BIN_DIR/hoangsa-memory-mcp" "$STAGING/bin/"
 
-    HOANGSA_TEMPLATES_DIR="$STAGING/templates"
-    HOANGSA_STAGING_DIR="$STAGING"
-    export HOANGSA_TEMPLATES_DIR HOANGSA_STAGING_DIR
+HOANGSA_TEMPLATES_DIR="$STAGING/templates"
+HOANGSA_STAGING_DIR="$STAGING"
+export HOANGSA_TEMPLATES_DIR HOANGSA_STAGING_DIR
 
-    # Drop trap before exec — the CLI owns $STAGING from here on (it moves bins
-    # out of staging/bin into the install dirs, then cleans up). If we keep the
-    # trap, the shell's EXIT handler would yank $STAGING before the CLI reads it.
-    trap - EXIT INT TERM
-fi
+# Drop trap before exec — the CLI owns $STAGING from here on (it moves bins
+# out of staging/bin into the install dirs, then cleans up). If we keep the
+# trap, the shell's EXIT handler would yank $STAGING before the CLI reads it.
+trap - EXIT INT TERM
 
 # --- Hand off to the CLI ----------------------------------------------------
 
 CLI="$BIN_DIR/hoangsa-cli"
-# On --uninstall we still need the CLI binary (installed or from target/).
-# Fall back to an installed hoangsa-cli if we skipped the build for uninstall.
 if [ ! -x "$CLI" ]; then
-    if command -v hoangsa-cli >/dev/null 2>&1; then
-        CLI=$(command -v hoangsa-cli)
-    else
-        die "hoangsa-cli not found (build first or install via --global / --local)"
-    fi
+    die "hoangsa-cli not found at $CLI (build first or drop --skip-build)"
 fi
 
 info "running: $CLI install $PASSTHROUGH"

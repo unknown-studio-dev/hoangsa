@@ -6,12 +6,11 @@
 //! redirected to `tempfile::tempdir()` so the real `~/.claude/`,
 //! `~/.claude.json`, and `~/.hoangsa/` are never touched.
 //!
-//! Covered scenarios (12):
+//! Covered scenarios (gaps are intentional — removed tests left their
+//! original numbers in section headers so history-aware search still works):
 //!   1. dry_run_global_emits_mode_global
 //!   2. dry_run_local_emits_mode_local
-//!   3. dry_run_uninstall_with_global_emits_mode_uninstall
 //!   4. global_and_local_together_exits_2
-//!   5. uninstall_without_mode_exits_2
 //!   6. dry_run_global_no_cwd_writes
 //!   7. dry_run_local_references_cwd_paths
 //!   8. mcp_merge_preserves_existing_global
@@ -135,21 +134,6 @@ fn dry_run_local_emits_mode_local() {
     assert_eq!(v["mode"], "local", "expected mode=local; got: {v}");
 }
 
-// ─── 3. dry-run uninstall with global ────────────────────────────────────
-
-#[test]
-fn dry_run_uninstall_with_global_emits_mode_uninstall() {
-    let (home, cwd) = tmp_home_cwd();
-
-    let out = run(install_cmd(home.path(), cwd.path())
-        .args(["--uninstall", "--global", "--dry-run"]));
-    let v = expect_success_json(&out, "dry-run uninstall");
-    assert_eq!(
-        v["mode"], "uninstall",
-        "--uninstall + --global must yield mode=uninstall; got: {v}"
-    );
-}
-
 // ─── 4. --global + --local rejected (REQ-15) ─────────────────────────────
 
 #[test]
@@ -161,21 +145,6 @@ fn global_and_local_together_exits_2() {
         exit_code(&out),
         2,
         "REQ-15: --global + --local must exit 2; stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-// ─── 5. --uninstall without mode rejected (REQ-15) ───────────────────────
-
-#[test]
-fn uninstall_without_mode_exits_2() {
-    let (home, cwd) = tmp_home_cwd();
-
-    let out = run(install_cmd(home.path(), cwd.path()).args(["--uninstall"]));
-    assert_eq!(
-        exit_code(&out),
-        2,
-        "REQ-15: --uninstall without --global|--local must exit 2; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 }
@@ -511,34 +480,6 @@ fn seed_failure_reported_as_warning_not_ok() {
     assert!(
         has_seed_warning,
         "warnings must mention the failing step name; got: {v}"
-    );
-}
-
-// ─── 12b. live --uninstall returns exit 4 "not implemented" (REQ-06) ─────
-
-#[test]
-fn uninstall_returns_not_implemented_exit_4() {
-    let (home, cwd) = tmp_home_cwd();
-
-    // Live (non-dry-run) uninstall: the subcommand is still a spec drift
-    // against REQ-06. Instead of silently reporting `status=ok` with a
-    // "pending" note, it must fail fast with exit code 4 and a structured
-    // JSON error so callers don't mistake the stub for a real uninstall.
-    let out = run(install_cmd(home.path(), cwd.path()).args(["--uninstall", "--global"]));
-    assert_eq!(
-        exit_code(&out),
-        4,
-        "live --uninstall must exit 4 until implemented; stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let v = parse_stdout(&out);
-    assert_eq!(v["status"], "error", "status must be error; got: {v}");
-    assert_eq!(v["code"], 4, "code must be 4; got: {v}");
-    assert!(
-        v["message"]
-            .as_str()
-            .is_some_and(|m| m.contains("not implemented")),
-        "message must flag not-implemented; got: {v}"
     );
 }
 
