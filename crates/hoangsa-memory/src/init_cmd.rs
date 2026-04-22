@@ -79,6 +79,67 @@ const DEFAULT_CONFIG_TOML: &str = r#"# hoangsa-memory config. All fields are opt
 # decay_lambda = 0.02
 # decay_floor  = 0.05
 
+# Hard caps (bytes) for the three markdown surfaces. A `memory_remember_*`
+# that would push the file above its cap returns a structured
+# `CapExceededError` instead of silently appending — the agent must call
+# `memory_replace` / `memory_remove` first. Sized so USER + MEMORY +
+# LESSONS combined inject < ~10K tokens at SessionStart.
+# cap_memory_bytes  = 16384
+# cap_user_bytes    = 4096
+# cap_lessons_bytes = 16384
+
+# FLEXIBLE content policy (DESIGN-SPEC REQ-12). When `false`, MCP
+# `remember_*` handlers only log a warning if a payload looks like a bare
+# commit sha / ISO date / file path with no invariant. Set `true` to
+# reject such payloads with a structured error.
+# strict_content_policy = false
+
+[retrieve]
+# Post-fusion multiplier applied to every Markdown-sourced chunk
+# (MEMORY.md / LESSONS.md). Values > 1.0 lift facts/lessons over code
+# for prose queries; < 1.0 pushes markdown down; 0.0 hides it.
+# Clamped to [0.0, 10.0] at load time so a typo (18.0 vs 1.8) cannot
+# shadow the entire code corpus. Default: 1.0 (no-op).
+# rerank_markdown_boost = 1.0
+
+[watch]
+# Auto-watch the project source tree from inside the MCP server, so
+# source edits are reindexed without a separate `hoangsa-memory watch`
+# process. Default: false.
+# enabled = false
+
+# Debounce window (ms). Events arriving within this window after the
+# first change are batched into a single reindex pass. Default: 300.
+# debounce_ms = 300
+
+[chroma]
+# Enable ChromaDB semantic search alongside the built-in retrieval.
+# Default: false.
+# enabled = false
+
+# Custom ChromaDB data path. When unset, falls back to
+# `StoreRoot::chroma_path()` under the memory root.
+# data_path = "/absolute/path/to/chroma"
+
+[curation]
+# Ask for a `memory_grounding_check` on any load-bearing factual claim
+# in the assistant's response. Slowest of the curation knobs — opt-in.
+# Default: false.
+# grounding_check = false
+
+# How new facts and lessons land in memory:
+#   "auto"   — writes go straight to MEMORY.md / LESSONS.md (default).
+#   "review" — writes land in *.pending.md; a human must `memory_promote`
+#              (or the CLI equivalent) before they stick.
+# memory_mode = "auto"
+
+# Lessons whose failure ratio exceeds this (once they have at least
+# `quarantine_min_attempts` attempts) are moved to LESSONS.quarantined.md
+# during the forget pass. Default: 0.66 (≈ twice as many failures as
+# successes).
+# quarantine_failure_ratio = 0.66
+# quarantine_min_attempts  = 5
+
 [output]
 # Recall/impact text-rendering budgets. Structured JSON (`--json` /
 # MCP `data`) is never truncated — only the human-readable text
