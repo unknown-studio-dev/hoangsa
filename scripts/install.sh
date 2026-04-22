@@ -54,6 +54,43 @@ have() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Resolve the path we should read interactive input from. Sets $_TTY_IN.
+# Empty result = no interactive input available (caller must fall back).
+#
+# Three cases:
+#   1. stdin IS a TTY (normal `sh scripts/install.sh` from checkout) → ""
+#      (let `read` use default stdin).
+#   2. stdin is piped BUT /dev/tty is usable and stdout is a TTY — this is
+#      the curl|sh case: we open /dev/tty explicitly so prompts work.
+#   3. Neither: truly non-interactive (CI, redirected stdout, no /dev/tty).
+resolve_tty_in() {
+    if [ -t 0 ]; then
+        _TTY_IN=""
+        return 0
+    fi
+    if [ -c /dev/tty ] && [ -t 1 ] && : < /dev/tty 2>/dev/null; then
+        _TTY_IN=/dev/tty
+        return 0
+    fi
+    _TTY_IN=""
+    return 1
+}
+
+# Read one line of input, honoring resolve_tty_in. Returns 1 when no
+# interactive source is available (caller should take the non-interactive
+# branch); returns 0 with $REPLY set otherwise.
+read_user() {
+    resolve_tty_in || return 1
+    REPLY=""
+    if [ -n "$_TTY_IN" ]; then
+        # shellcheck disable=SC2039  # `read -r` is POSIX
+        read -r REPLY < "$_TTY_IN" || return 1
+    else
+        # shellcheck disable=SC2039  # `read -r` is POSIX
+        read -r REPLY || return 1
+    fi
+}
+
 usage() {
     cat <<'EOF'
 hoangsa installer — POSIX sh bootstrap
@@ -344,19 +381,20 @@ edit_path_in_rc() {
         return 0
     fi
 
-    # Non-TTY → curl|sh pipeline or other non-interactive shell. Never edit
-    # rc files silently; surface the manual line instead.
-    if [ ! -t 0 ] || [ ! -t 1 ]; then
+    # Try to prompt. Uses /dev/tty under curl|sh; falls back to the
+    # manual-export line when truly non-interactive.
+    if ! resolve_tty_in; then
         info "non-interactive shell detected — skipping rc file edit"
         print_manual_export
         return 0
     fi
 
-    # Interactive: prompt before touching the rc file.
-    printf 'Add ~/.hoangsa/bin to PATH in %s? [Y/n] ' "$_rc"
-    REPLY=""
-    # shellcheck disable=SC2039  # `read -r` is POSIX
-    read -r REPLY || REPLY=""
+    printf 'Add ~/.hoangsa/bin to PATH in %s? [Y/n] ' "$_rc" >&2
+    if ! read_user; then
+        info "non-interactive shell detected — skipping rc file edit"
+        print_manual_export
+        return 0
+    fi
     case "$REPLY" in
         n*|N*)
             info "skipped rc file edit (user declined)"
@@ -434,7 +472,10 @@ pick_claude_dir() {
         return 0
     fi
 
-    if [ ! -t 0 ] || [ ! -t 1 ]; then
+    # No interactive input available anywhere (piped stdin + no /dev/tty
+    # + redirected stdout). Fall back to the first candidate and log the
+    # env-var override.
+    if ! resolve_tty_in; then
         CLAUDE_DIR_PICK=$(printf '%s\n' "$CLAUDE_CANDIDATES" | head -n 1)
         info "multiple Claude config dirs detected but non-interactive — defaulting to $CLAUDE_DIR_PICK"
         info "override: CLAUDE_CONFIG_DIR=<dir> sh install.sh --global"
@@ -451,14 +492,18 @@ pick_claude_dir() {
     _custom_idx=$((_count + 1))
     printf '  %d) custom path\n' "$_custom_idx" >&2
     printf 'Pick [1]: ' >&2
-    _pick=""
-    # shellcheck disable=SC2039  # `read -r` is POSIX
-    read -r _pick || _pick=""
+    if ! read_user; then
+        die 2 "failed to read selection"
+    fi
+    _pick="$REPLY"
     [ -z "$_pick" ] && _pick=1
 
     if [ "$_pick" = "$_custom_idx" ]; then
         printf 'Enter path: ' >&2
-        read -r CLAUDE_DIR_PICK || CLAUDE_DIR_PICK=""
+        if ! read_user; then
+            die 2 "failed to read path"
+        fi
+        CLAUDE_DIR_PICK="$REPLY"
         [ -n "$CLAUDE_DIR_PICK" ] || die 2 "empty path"
         # shellcheck disable=SC2088
         case "$CLAUDE_DIR_PICK" in
