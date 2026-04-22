@@ -264,21 +264,25 @@ impl WatchConfig {
     }
 }
 
-/// ChromaDB integration config (`[chroma]` in `config.toml`).
+/// Vector store config (`[vector_store]` in `config.toml`; legacy key
+/// `[chroma]` still accepted for existing user configs).
+///
+/// Replaces the old `ChromaConfig`. The `enabled` flag gates opening
+/// the `vectors.sqlite` file and loading the fastembed ONNX model —
+/// when false, retrieval falls back to BM25 + graph only.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
-pub struct ChromaConfig {
-    /// Enable ChromaDB semantic search. Default `true` — retrieval quality
-    /// degrades noticeably without vector recall, so we opt users in by
-    /// default. When the Python sidecar or `chromadb` pkg is missing,
-    /// `open_chroma` falls back to a stderr warning and keyword-only search.
+pub struct VectorStoreConfig {
+    /// Enable the in-process vector store. Default `false` while Phase 2
+    /// is shaking out; flip to `true` in your project `config.toml`
+    /// once the first fastembed model download completes successfully.
     pub enabled: bool,
-    /// Custom ChromaDB data path. When `None`, falls back to
-    /// `StoreRoot::chroma_path()`.
+    /// Override the on-disk location of `vectors.sqlite`. When `None`,
+    /// falls back to `StoreRoot::vectors_path()`.
     pub data_path: Option<String>,
 }
 
-impl Default for ChromaConfig {
+impl Default for VectorStoreConfig {
     fn default() -> Self {
         Self {
             enabled: false,
@@ -287,10 +291,12 @@ impl Default for ChromaConfig {
     }
 }
 
-
-impl ChromaConfig {
-    /// Load `<root>/config.toml` if it exists, returning the `[chroma]`
-    /// table (or [`Self::default`] if the file / table are missing).
+impl VectorStoreConfig {
+    /// Load `<root>/config.toml` if it exists, returning the
+    /// `[vector_store]` table — or, for backward compatibility, the
+    /// legacy `[chroma]` table when `[vector_store]` is absent. Returns
+    /// [`Self::default`] if both the file and the relevant tables are
+    /// missing or malformed.
     pub async fn load_or_default(root: &Path) -> Self {
         let path = root.join("config.toml");
         let text = match tokio::fs::read_to_string(&path).await {
@@ -298,18 +304,11 @@ impl ChromaConfig {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Self::default(),
             Err(e) => {
                 tracing::warn!(error = %e, path = %path.display(),
-                    "chroma: could not read config.toml, using defaults");
+                    "vector_store: could not read config.toml, using defaults");
                 return Self::default();
             }
         };
-        match toml::from_str::<ConfigFile>(&text) {
-            Ok(cf) => cf.chroma.unwrap_or_default(),
-            Err(e) => {
-                tracing::warn!(error = %e, path = %path.display(),
-                    "chroma: config.toml parse error, using defaults");
-                Self::default()
-            }
-        }
+        Self::from_toml_text(&text, &path)
     }
 
     /// Sync twin of [`Self::load_or_default`].
@@ -320,15 +319,19 @@ impl ChromaConfig {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Self::default(),
             Err(e) => {
                 tracing::warn!(error = %e, path = %path.display(),
-                    "chroma: could not read config.toml, using defaults");
+                    "vector_store: could not read config.toml, using defaults");
                 return Self::default();
             }
         };
-        match toml::from_str::<ConfigFile>(&text) {
-            Ok(cf) => cf.chroma.unwrap_or_default(),
+        Self::from_toml_text(&text, &path)
+    }
+
+    fn from_toml_text(text: &str, path: &Path) -> Self {
+        match toml::from_str::<ConfigFile>(text) {
+            Ok(cf) => cf.vector_store.or(cf.chroma).unwrap_or_default(),
             Err(e) => {
                 tracing::warn!(error = %e, path = %path.display(),
-                    "chroma: config.toml parse error, using defaults");
+                    "vector_store: config.toml parse error, using defaults");
                 Self::default()
             }
         }
@@ -336,9 +339,10 @@ impl ChromaConfig {
 }
 
 /// TOML file schema — the outer document. We only care about `[index]`,
-/// `[output]`, `[retrieve]`, `[watch]`, and `[chroma]`; other tables
-/// (e.g. `[memory]`, read by `hoangsa-memory-policy`) are left to their owners,
-/// so we tolerate them instead of `deny_unknown_fields` here.
+/// `[output]`, `[retrieve]`, `[watch]`, `[vector_store]`, and the legacy
+/// `[chroma]`; other tables (e.g. `[memory]`, read by
+/// `hoangsa-memory-policy`) are left to their owners, so we tolerate
+/// them instead of `deny_unknown_fields` here.
 #[derive(Debug, Default, Deserialize)]
 struct ConfigFile {
     #[serde(default)]
@@ -350,7 +354,12 @@ struct ConfigFile {
     #[serde(default)]
     watch: Option<WatchConfig>,
     #[serde(default)]
-    chroma: Option<ChromaConfig>,
+    vector_store: Option<VectorStoreConfig>,
+    /// Legacy key — read when `[vector_store]` is absent so existing
+    /// `config.toml` files keep working during the Chroma → fastembed
+    /// migration.
+    #[serde(default)]
+    chroma: Option<VectorStoreConfig>,
 }
 
 impl IndexConfig {

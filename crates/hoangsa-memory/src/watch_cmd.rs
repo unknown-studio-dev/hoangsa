@@ -9,7 +9,7 @@ use hoangsa_memory_retrieve::Indexer;
 use hoangsa_memory_store::StoreRoot;
 use tracing::warn;
 
-use crate::{index_cmd::make_progress_bar, open_chroma};
+use crate::{index_cmd::make_progress_bar, open_vector_store};
 
 pub async fn run_watch(root: &Path, src: &Path, debounce: Duration) -> Result<()> {
     // If the MCP daemon is running it holds the redb exclusive lock.
@@ -39,24 +39,25 @@ pub async fn run_watch(root: &Path, src: &Path, debounce: Duration) -> Result<()
     let store = StoreRoot::open(root).await?;
     let cfg = hoangsa_memory_retrieve::IndexConfig::load_or_default(root).await;
     let mut idx = Indexer::new(store.clone(), LanguageRegistry::new()).with_config(&cfg);
-    // Shared chroma lock — see `crate::acquire_chroma_lock`. Held for the
-    // watcher's lifetime so concurrent hook-triggered ingests don't stand
-    // up a second Python sidecar alongside ours.
-    let _chroma_lock = match crate::acquire_chroma_lock() {
+    // Shared vector lock — see `crate::acquire_vector_lock`. Held for
+    // the watcher's lifetime so concurrent hook-triggered ingests
+    // don't load a second copy of the fastembed ONNX model alongside
+    // ours.
+    let _vector_lock = match crate::acquire_vector_lock() {
         Ok(Some(lock)) => {
-            if let Some(col) = open_chroma(&store).await {
-                idx = idx.with_chroma(col);
+            if let Some(col) = open_vector_store(&store).await {
+                idx = idx.with_vector_store(col);
             }
             Some(lock)
         }
         Ok(None) => {
             eprintln!(
-                "hoangsa-memory: another chroma-using command is running; watching without embeddings."
+                "hoangsa-memory: another vector-using command is running; watching without embeddings."
             );
             None
         }
         Err(e) => {
-            tracing::warn!(error = %e, "failed to acquire chroma lock; proceeding without embeddings");
+            tracing::warn!(error = %e, "failed to acquire vector lock; proceeding without embeddings");
             None
         }
     };

@@ -16,8 +16,8 @@ use hoangsa_memory_policy::{
     MemoryKind as MdKind,
 };
 use hoangsa_memory_parse::LanguageRegistry;
-use hoangsa_memory_retrieve::{ChromaConfig, Indexer, RetrieveConfig, Retriever};
-use hoangsa_memory_store::{ChromaCol, ChromaStore, StoreRoot};
+use hoangsa_memory_retrieve::{Indexer, RetrieveConfig, Retriever, VectorStoreConfig};
+use hoangsa_memory_store::{EmbeddedVectorStore, StoreRoot, VectorCol, VectorStore};
 use time::OffsetDateTime;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, warn};
@@ -52,21 +52,29 @@ pub(crate) struct Inner {
     indexer: Indexer,
     retriever: Retriever,
     graph: hoangsa_memory_graph::Graph,
-    chroma: tokio::sync::OnceCell<Option<ChromaStore>>,
-    chroma_enabled: bool,
+    /// Lazy handle to the in-process vector store. Holds the ONNX
+    /// embedder + SQLite BLOB connection, both of which are expensive
+    /// to initialise, so we only pay for them on the first tool call
+    /// that actually needs embeddings.
+    vector_store: tokio::sync::OnceCell<Option<EmbeddedVectorStore>>,
+    /// Mirror of `[vector_store] enabled` at server-open time. When
+    /// false, `get_vector_store` short-circuits without even trying to
+    /// init — useful on machines where fastembed's model download
+    /// would time out.
+    vector_store_enabled: bool,
 }
 
 impl Server {
     /// Open a server rooted at `path` (the `.hoangsa/memory/` directory).
     ///
-    /// ChromaDB (and its ONNX embedder) is **not** loaded here — it is
-    /// lazily initialized on first use to avoid the ~2 GB RSS hit when
-    /// no vector operation is needed.
+    /// The fastembed ONNX model is **not** loaded here — it is lazily
+    /// initialized on first use to avoid the ~130 MB RSS hit when no
+    /// vector operation is needed.
     pub async fn open(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let root = path.as_ref().to_path_buf();
         let store = StoreRoot::open(&root).await?;
         let retrieve_cfg = RetrieveConfig::load_or_default(&root).await;
-        let chroma_enabled = Self::is_chroma_enabled(&root).await;
+        let vector_store_enabled = Self::is_vector_store_enabled(&root).await;
 
         let indexer = Indexer::new(store.clone(), LanguageRegistry::new());
         let retriever =
@@ -80,38 +88,37 @@ impl Server {
                 indexer,
                 retriever,
                 graph,
-                chroma: tokio::sync::OnceCell::new(),
-                chroma_enabled,
+                vector_store: tokio::sync::OnceCell::new(),
+                vector_store_enabled,
             }),
         })
     }
 
-    async fn is_chroma_enabled(root: &Path) -> bool {
-        ChromaConfig::load_or_default(root).await.enabled
+    async fn is_vector_store_enabled(root: &Path) -> bool {
+        VectorStoreConfig::load_or_default(root).await.enabled
     }
 
-    async fn get_chroma(&self) -> Option<&ChromaStore> {
-        if !self.inner.chroma_enabled {
+    async fn get_vector_store(&self) -> Option<&EmbeddedVectorStore> {
+        if !self.inner.vector_store_enabled {
             return None;
         }
         let root = self.inner.root.clone();
         let store = self
             .inner
-            .chroma
+            .vector_store
             .get_or_init(|| async {
-                let cfg = ChromaConfig::load_or_default(&root).await;
-                let path = cfg.data_path.unwrap_or_else(|| {
-                    StoreRoot::chroma_path(&root)
-                        .to_string_lossy()
-                        .to_string()
-                });
-                match ChromaStore::open(&path).await {
+                let cfg = VectorStoreConfig::load_or_default(&root).await;
+                let path = cfg
+                    .data_path
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| StoreRoot::vectors_path(&root));
+                match EmbeddedVectorStore::open(&path).await {
                     Ok(s) => {
-                        tracing::info!(path = %path, "ChromaDB sidecar started (lazy init)");
+                        tracing::info!(path = %path.display(), "embedded vector store opened (lazy init)");
                         Some(s)
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "ChromaDB sidecar init failed");
+                        tracing::warn!(error = %e, "embedded vector store init failed");
                         None
                     }
                 }
@@ -403,10 +410,11 @@ impl Server {
             }
         };
 
-        // Semantic memory search via ChromaDB — best-effort, failures are
-        // silent so recall degrades gracefully when ChromaDB is down.
+        // Semantic memory search via the in-process vector store —
+        // best-effort, failures are silent so recall degrades gracefully
+        // when the store is disabled or the embedder failed to load.
         if include_curated
-            && let Ok(col) = self.open_memory_chroma().await
+            && let Ok(col) = self.open_memory_vector().await
             && let Ok(hits) = col.query_text(&query, 5, None).await
         {
             for h in hits {
@@ -433,9 +441,10 @@ impl Server {
             }
         }
 
-        // Archive search — exchange-pair conversation chunks from ChromaDB.
+        // Archive search — exchange-pair conversation chunks from the
+        // in-process vector store.
         if include_archive
-            && let Ok(col) = self.open_archive_chroma().await
+            && let Ok(col) = self.open_archive_vector().await
             && let Ok(hits) = col.query_text(&query, 5, None).await
         {
             for h in hits {
@@ -513,11 +522,12 @@ impl Server {
         }
         let Args { path } = serde_json::from_value(args).unwrap_or_default();
         let src = PathBuf::from(path.unwrap_or_else(|| ".".to_string()));
-        // Wire the code-chunk ChromaDB collection if available, so this
-        // run actually embeds chunks. The stored `self.inner.indexer` is
-        // kept chroma-less so server startup doesn't pay the sidecar
-        // init cost up front; we upgrade per-index here on demand.
-        let stats = if let Some(col) = self.open_code_chroma().await {
+        // Wire the code-chunk vector collection if available, so this
+        // run actually embeds chunks. The stored `self.inner.indexer`
+        // is kept vector-less so server startup doesn't pay the
+        // embedder init cost up front; we upgrade per-index here on
+        // demand.
+        let stats = if let Some(col) = self.open_code_vector().await {
             let retrieve_cfg =
                 hoangsa_memory_retrieve::IndexConfig::load_or_default(&self.inner.root).await;
             let mut idx = hoangsa_memory_retrieve::Indexer::new(
@@ -525,7 +535,7 @@ impl Server {
                 hoangsa_memory_parse::LanguageRegistry::new(),
             )
             .with_config(&retrieve_cfg);
-            idx = idx.with_chroma(std::sync::Arc::new(col));
+            idx = idx.with_vector_store(col);
             idx.index_path(&src).await?
         } else {
             self.inner.indexer.index_path(&src).await?
@@ -615,7 +625,7 @@ impl Server {
             .await
         {
             Ok(()) => {
-                self.upsert_memory_chroma("fact", &fact.text, &fact.tags)
+                self.upsert_memory_vector("fact", &fact.text, &fact.tags)
                     .await;
                 let path = self.inner.root.join("MEMORY.md");
                 let text = format!("committed to MEMORY.md: {}", first_line(&fact.text));
@@ -746,7 +756,7 @@ impl Server {
         {
             Ok(()) => {
                 let combined = format!("WHEN: {}\nDO: {}", lesson.trigger, lesson.advice);
-                self.upsert_memory_chroma("lesson", &combined, &[]).await;
+                self.upsert_memory_vector("lesson", &combined, &[]).await;
                 let path = self.inner.root.join("LESSONS.md");
                 let text = format!("committed to LESSONS.md: {}", lesson.trigger);
                 let data = json!({
@@ -1917,7 +1927,7 @@ impl Server {
         let project = args.get("project").and_then(|v| v.as_str());
         let topic = args.get("topic").and_then(|v| v.as_str());
 
-        let col = self.open_archive_chroma().await?;
+        let col = self.open_archive_vector().await?;
 
         let mut filter = None;
         if project.is_some() || topic.is_some() {
@@ -1974,11 +1984,12 @@ impl Server {
     }
 
     /// Run an archive ingest inside the daemon process so the existing
-    /// ChromaDB sidecar is reused. This is the memory-pressure fix:
-    /// PreCompact / SessionEnd hooks used to spawn a detached CLI which
-    /// booted a fresh ~500 MB Python sidecar per invocation. Concurrent
-    /// Claude Code sessions would pile those up and OOM the machine.
-    /// Forwarding to this tool via the daemon socket keeps the sidecar
+    /// vector store handle (embedder + SQLite connection) is reused.
+    /// This is the memory-pressure fix: PreCompact / SessionEnd hooks
+    /// used to spawn a detached CLI which booted a fresh ~500 MB Python
+    /// sidecar per invocation. Concurrent Claude Code sessions would
+    /// pile those up and OOM the machine. Forwarding to this tool via
+    /// the daemon socket keeps the embedder
     /// count at one.
     async fn tool_archive_ingest(&self, args: Value) -> anyhow::Result<ToolOutput> {
         #[derive(Deserialize)]
@@ -2002,12 +2013,12 @@ impl Server {
         let tracker_path = StoreRoot::archive_path(&self.inner.root);
         let tracker = hoangsa_memory_store::ArchiveTracker::open(&tracker_path).await?;
 
-        // Daemon-side ingest requires the already-running ChromaDB
-        // sidecar. If it's not enabled we bail via ToolOutput::error so
+        // Daemon-side ingest requires the already-running vector
+        // store. If it's not enabled we bail via ToolOutput::error so
         // the caller can fall back to spawning the CLI.
-        let col = match self.get_chroma().await {
-            Some(_) => self.open_archive_chroma().await?,
-            None => return Ok(ToolOutput::error("ChromaDB not enabled")),
+        let col = match self.get_vector_store().await {
+            Some(_) => self.open_archive_vector().await?,
+            None => return Ok(ToolOutput::error("vector store not enabled")),
         };
 
         let opts = hoangsa_memory_retrieve::archive::IngestOpts {
@@ -2016,31 +2027,32 @@ impl Server {
             refresh,
             limit,
         };
-        let stats = hoangsa_memory_retrieve::archive::run_ingest(&tracker, &col, opts).await?;
+        let stats =
+            hoangsa_memory_retrieve::archive::run_ingest(&tracker, col.as_ref(), opts).await?;
 
         let text = format!(
-            "Ingested {} sessions ({} chunks), skipped {} already-ingested. Retention trimmed {} session(s), cleaned {} from ChromaDB.",
+            "Ingested {} sessions ({} chunks), skipped {} already-ingested. Retention trimmed {} session(s), cleaned {} from vector store.",
             stats.total_sessions,
             stats.total_chunks,
             stats.skipped,
             stats.retention_trimmed,
-            stats.retention_chroma_cleaned,
+            stats.retention_vector_cleaned,
         );
         let data = json!({
             "total_sessions": stats.total_sessions,
             "total_chunks": stats.total_chunks,
             "skipped": stats.skipped,
             "retention_trimmed": stats.retention_trimmed,
-            "retention_chroma_cleaned": stats.retention_chroma_cleaned,
+            "retention_vector_cleaned": stats.retention_vector_cleaned,
         });
         Ok(ToolOutput::new(data, text))
     }
 
-    async fn upsert_memory_chroma(&self, kind: &str, text: &str, tags: &[String]) {
-        let col = match self.open_memory_chroma().await {
+    async fn upsert_memory_vector(&self, kind: &str, text: &str, tags: &[String]) {
+        let col = match self.open_memory_vector().await {
             Ok(c) => c,
             Err(e) => {
-                tracing::debug!(error = %e, "ChromaDB memory upsert skipped (server unavailable)");
+                tracing::debug!(error = %e, "vector memory upsert skipped (store unavailable)");
                 return;
             }
         };
@@ -2054,43 +2066,44 @@ impl Server {
             .upsert(vec![id], Some(vec![text.to_string()]), Some(vec![meta]))
             .await
         {
-            tracing::debug!(error = %e, "ChromaDB memory upsert failed");
+            tracing::debug!(error = %e, "vector memory upsert failed");
         }
     }
 
-    async fn open_memory_chroma(&self) -> anyhow::Result<ChromaCol> {
-        let cs = self
-            .get_chroma()
+    async fn open_memory_vector(&self) -> anyhow::Result<Arc<dyn VectorCol>> {
+        let vs = self
+            .get_vector_store()
             .await
-            .ok_or_else(|| anyhow::anyhow!("ChromaDB not configured"))?;
-        let (col, _info) = cs.ensure_collection("hoangsa_memory_policy").await?;
+            .ok_or_else(|| anyhow::anyhow!("vector store not configured"))?;
+        let (col, _info) = vs.ensure_collection("hoangsa_memory_policy").await?;
         Ok(col)
     }
 
     /// Code-chunk collection used by the indexer to embed source chunks.
-    /// Mirrors the CLI's `open_chroma` helper so MCP-driven indexing
-    /// produces embeddings instead of silently skipping the vector stage.
-    async fn open_code_chroma(&self) -> Option<ChromaCol> {
-        let cs = self.get_chroma().await?;
-        match cs.ensure_collection("hoangsa_memory_code").await {
+    /// Mirrors the CLI's `open_vector_store` helper so MCP-driven
+    /// indexing produces embeddings instead of silently skipping the
+    /// vector stage.
+    async fn open_code_vector(&self) -> Option<Arc<dyn VectorCol>> {
+        let vs = self.get_vector_store().await?;
+        match vs.ensure_collection("hoangsa_memory_code").await {
             Ok((col, _info)) => Some(col),
             Err(e) => {
-                // Sidecar came up but the collection handshake failed — this
+                // Store opened but the collection handshake failed — this
                 // means embeddings will be skipped for this index run. Emit
                 // a warning so operators can debug instead of staring at a
                 // stats line that shows `embedded: 0` with no explanation.
-                tracing::warn!(error = %e, "chroma: ensure_collection(hoangsa_memory_code) failed — embeddings disabled for this run");
+                tracing::warn!(error = %e, "vector: ensure_collection(hoangsa_memory_code) failed — embeddings disabled for this run");
                 None
             }
         }
     }
 
-    async fn open_archive_chroma(&self) -> anyhow::Result<ChromaCol> {
-        let cs = self
-            .get_chroma()
+    async fn open_archive_vector(&self) -> anyhow::Result<Arc<dyn VectorCol>> {
+        let vs = self
+            .get_vector_store()
             .await
-            .ok_or_else(|| anyhow::anyhow!("ChromaDB not configured"))?;
-        let (col, _info) = cs.ensure_collection("hoangsa_memory_archive").await?;
+            .ok_or_else(|| anyhow::anyhow!("vector store not configured"))?;
+        let (col, _info) = vs.ensure_collection("hoangsa_memory_archive").await?;
         Ok(col)
     }
 }
@@ -2596,9 +2609,9 @@ fn tools_catalog() -> Vec<Tool> {
         },
         Tool {
             name: "memory_archive_search".to_string(),
-            description: "Semantic search across archived verbatim conversations stored in \
-                          ChromaDB. Returns the most relevant conversation turns. Use this to \
-                          find past discussions, decisions, and context."
+            description: "Semantic search across archived verbatim conversations stored in the \
+                          in-process vector store. Returns the most relevant conversation turns. \
+                          Use this to find past discussions, decisions, and context."
                 .to_string(),
             input_schema: json!({
                 "type": "object",
@@ -2614,9 +2627,9 @@ fn tools_catalog() -> Vec<Tool> {
         Tool {
             name: "memory_archive_ingest".to_string(),
             description: "Ingest Claude Code conversation sessions into the archive via the \
-                          daemon, reusing the running ChromaDB sidecar. Invoked by hook \
+                          daemon, reusing the already-initialised embedder. Invoked by hook \
                           forwarding (PreCompact / SessionEnd) so concurrent Claude Code \
-                          sessions don't each spawn their own ~500 MB Python sidecar."
+                          sessions don't each reload the fastembed ONNX model."
                 .to_string(),
             input_schema: json!({
                 "type": "object",

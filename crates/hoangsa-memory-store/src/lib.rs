@@ -8,8 +8,8 @@
 //! |------------|---------------------------------------------------|
 //! | `redb`     | graph nodes / edges + symbol lookup + metadata    |
 //! | `tantivy`  | BM25 full-text index                              |
-//! | `sqlite`   | episodic FTS5 log                                 |
-//! | `chromadb` | semantic vector search (server-side embedding)    |
+//! | `sqlite`   | episodic FTS5 log + vector BLOB storage           |
+//! | `fastembed`| semantic embeddings (ONNX, in-process, no Python) |
 //! | `markdown` | MEMORY.md / LESSONS.md readers + writers           |
 //!
 //! See `DESIGN.md` §3 and §7.
@@ -25,7 +25,7 @@
 //!   graph.redb         (symbol + call graph)
 //!   fts.tantivy/       (BM25 index)
 //!   episodes.db        (SQLite + FTS5 episodic log)
-//!   chroma/            (ChromaDB persistence — managed by chroma server)
+//!   vectors.sqlite     (fastembed vectors as BLOBs; replaces chroma/)
 //! ```
 //!
 //! For backward compat, [`StoreRoot::open`] auto-migrates the old
@@ -37,22 +37,24 @@
 #![warn(missing_docs)]
 
 pub mod archive;
-pub mod chroma;
 pub mod episodes;
 pub mod fts;
 pub mod kv;
 pub mod markdown;
+pub mod vector;
 
 use std::path::{Path, PathBuf};
 
 use hoangsa_memory_core::Result;
 
 pub use archive::{ArchiveSession, ArchiveTracker, TopicSummary};
-pub use chroma::{ChromaCol, ChromaHit, ChromaStore, CollectionInfo};
 pub use episodes::{EpisodeHit, EpisodeLog};
 pub use fts::{ChunkDoc, FtsHit, FtsIndex};
 pub use kv::{BfsDir, EdgeRow, KvStore, NodeRow, SymbolRow};
 pub use markdown::MarkdownStore;
+pub use vector::{
+    vectors_path, CollectionInfo, EmbeddedVectorStore, VectorCol, VectorHit, VectorStore,
+};
 
 /// Root handle bundling every backend living under a `.hoangsa/memory/` dir.
 ///
@@ -86,9 +88,10 @@ impl StoreRoot {
     pub fn episodes_path(root: &Path) -> PathBuf {
         root.join("episodes.db")
     }
-    /// Canonical path for ChromaDB persistence directory.
-    pub fn chroma_path(root: &Path) -> PathBuf {
-        root.join("chroma")
+    /// Canonical path for the fastembed-backed vectors SQLite file.
+    /// Replaces the old `chroma/` subdirectory.
+    pub fn vectors_path(root: &Path) -> PathBuf {
+        vector::vectors_path(root)
     }
     /// Canonical path for the archive session tracker.
     pub fn archive_path(root: &Path) -> PathBuf {
@@ -97,8 +100,9 @@ impl StoreRoot {
 
     /// Open (or create) every backend under `path`.
     ///
-    /// ChromaDB is an external service and is NOT opened here — use
-    /// [`ChromaStore::open`] separately when needed.
+    /// The vector store is opened lazily — its embedder takes seconds
+    /// to initialise on first use — so callers that need it must open
+    /// it via [`EmbeddedVectorStore::open`] separately.
     ///
     /// If the legacy `<root>/index/` subdir layout from earlier versions is
     /// present, it is migrated in-place before opening so existing users

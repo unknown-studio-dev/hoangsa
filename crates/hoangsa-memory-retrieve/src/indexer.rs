@@ -25,7 +25,7 @@ use hoangsa_memory_parse::{
     LanguageRegistry, SourceChunk, SymbolKind, crate_qualified_module_path,
     walk::{WalkOptions, walk_sources, walk_text_sources},
 };
-use hoangsa_memory_store::{ChromaCol, ChunkDoc, StoreRoot, SymbolRow};
+use hoangsa_memory_store::{ChunkDoc, StoreRoot, SymbolRow, VectorCol};
 use tracing::debug;
 
 /// How many chunks to embed in one `embed_batch` call. Each provider adapter
@@ -59,8 +59,8 @@ pub struct IndexStats {
     pub calls: usize,
     /// Import edges inserted during this run.
     pub imports: usize,
-    /// Chunks embedded into ChromaDB during this run. `0` unless
-    /// ChromaDB is configured.
+    /// Chunks embedded into the vector store during this run. `0`
+    /// unless a vector store is attached.
     pub embedded: usize,
 }
 
@@ -99,8 +99,8 @@ pub struct Indexer {
     store: StoreRoot,
     graph: Graph,
     registry: LanguageRegistry,
-    /// Optional ChromaDB collection for semantic search.
-    chroma: Option<Arc<ChromaCol>>,
+    /// Optional vector-collection handle for semantic search.
+    vector_store: Option<Arc<dyn VectorCol>>,
     /// Optional per-file progress callback.
     on_progress: Option<ProgressFn>,
     /// Max concurrent per-file pipelines during [`Indexer::index_path`].
@@ -119,7 +119,7 @@ impl Indexer {
             store,
             graph,
             registry,
-            chroma: None,
+            vector_store: None,
             on_progress: None,
             concurrency: default_concurrency(),
             walk_opts: WalkOptions::default(),
@@ -170,9 +170,9 @@ impl Indexer {
         self
     }
 
-    /// Attach a ChromaDB collection for semantic indexing.
-    pub fn with_chroma(mut self, col: Arc<ChromaCol>) -> Self {
-        self.chroma = Some(col);
+    /// Attach a vector-collection handle for semantic indexing.
+    pub fn with_vector_store(mut self, col: Arc<dyn VectorCol>) -> Self {
+        self.vector_store = Some(col);
         self
     }
     /// Register a progress callback fired once per file during
@@ -226,7 +226,7 @@ impl Indexer {
         // flattened after all tasks complete.
         let stats = Arc::new(Mutex::new(IndexStats::default()));
         let done = Arc::new(AtomicUsize::new(0));
-        let want_embed = self.chroma.is_some();
+        let want_embed = self.vector_store.is_some();
 
         let tasks: Vec<_> = stream::iter(files)
             .map(|path| {
@@ -442,8 +442,8 @@ impl Indexer {
             let _ = self.store.kv.delete_edges_touching(&symbol_fqns).await?;
         }
 
-        // 4. ChromaDB vectors — delete chunks for this path.
-        if let Some(col) = &self.chroma {
+        // 4. Vector store — delete chunks for this path.
+        if let Some(col) = &self.vector_store {
             let filter = serde_json::json!({"path": {"$eq": path_str}});
             let _ = col.delete_by_filter(filter).await;
         }
@@ -755,9 +755,11 @@ impl Indexer {
         Ok((s, chunks))
     }
 
-    /// Upsert chunks into ChromaDB (server-side embedding).
+    /// Upsert chunks into the attached vector store. The embedder is
+    /// invoked in-process by the store implementation (fastembed), not
+    /// here.
     async fn embed_chunks(&self, chunks: &[SourceChunk]) -> Result<Option<usize>> {
-        let Some(col) = self.chroma.as_ref() else {
+        let Some(col) = self.vector_store.as_ref() else {
             return Ok(None);
         };
         if chunks.is_empty() {

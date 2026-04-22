@@ -26,7 +26,7 @@ use hoangsa_memory_core::{
     Chunk, Prompt, Query, QueryScope, Result, Retrieval, RetrievalSource, Synthesizer,
 };
 use hoangsa_memory_graph::Graph;
-use hoangsa_memory_store::{ChromaCol, FtsHit, KvStore, MarkdownStore, StoreRoot, SymbolRow};
+use hoangsa_memory_store::{FtsHit, KvStore, MarkdownStore, StoreRoot, SymbolRow, VectorCol};
 use uuid::Uuid;
 
 use crate::indexer::{chunk_id, read_span};
@@ -47,7 +47,7 @@ const RRF_K: f32 = 10.0;
 pub struct Retriever {
     store: StoreRoot,
     graph: Graph,
-    chroma: Option<Arc<ChromaCol>>,
+    vector_store: Option<Arc<dyn VectorCol>>,
     synthesizer: Option<Arc<dyn Synthesizer>>,
     /// Multiplier applied to the fused score of every
     /// `RetrievalSource::Markdown` hit after RRF, before top-K selection.
@@ -58,14 +58,14 @@ pub struct Retriever {
 }
 
 impl Retriever {
-    /// Create a Mode::Zero retriever — no synthesis. ChromaDB is used for
-    /// semantic search if configured.
+    /// Create a Mode::Zero retriever — no synthesis. The vector store is
+    /// used for semantic search if configured.
     pub fn new(store: StoreRoot) -> Self {
         let graph = Graph::new(store.kv.clone());
         Self {
             store,
             graph,
-            chroma: None,
+            vector_store: None,
             synthesizer: None,
             markdown_boost: 1.0,
         }
@@ -74,22 +74,22 @@ impl Retriever {
     /// Create a Mode::Full retriever with any of the optional providers.
     pub fn with_full(
         store: StoreRoot,
-        chroma: Option<Arc<ChromaCol>>,
+        vector_store: Option<Arc<dyn VectorCol>>,
         synthesizer: Option<Arc<dyn Synthesizer>>,
     ) -> Self {
         let graph = Graph::new(store.kv.clone());
         Self {
             store,
             graph,
-            chroma,
+            vector_store,
             synthesizer,
             markdown_boost: 1.0,
         }
     }
 
-    /// Attach a ChromaDB store + collection ID for semantic vector search.
-    pub fn with_chroma(mut self, chroma: Option<Arc<ChromaCol>>) -> Self {
-        self.chroma = chroma;
+    /// Attach a vector-collection handle for semantic search.
+    pub fn with_vector_store(mut self, vector_store: Option<Arc<dyn VectorCol>>) -> Self {
+        self.vector_store = vector_store;
         self
     }
 
@@ -410,10 +410,10 @@ impl Retriever {
     // without adding retrieval signal. Use `memory_turns_search` for
     // explicit conversation-archive lookup instead.
 
-    /// Semantic vector search via ChromaDB. Returns `Ok(None)` when
-    /// ChromaDB is not configured.
+    /// Semantic vector search via the in-process embedder. Returns
+    /// `Ok(None)` when no vector store is attached to this retriever.
     async fn vector_stage(&self, text: &str, k: usize) -> Result<Option<Vec<Candidate>>> {
-        let Some(col) = self.chroma.as_ref() else {
+        let Some(col) = self.vector_store.as_ref() else {
             return Ok(None);
         };
         let hits = col.query_text(text, k, None).await?;

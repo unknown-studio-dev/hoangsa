@@ -81,7 +81,7 @@ pub enum ArchiveCmd {
 
 use anyhow::{Context, Result, bail};
 use hoangsa_memory_retrieve::archive::{IngestOpts, run_ingest};
-use hoangsa_memory_store::{ArchiveTracker, ChromaCol, ChromaStore, StoreRoot};
+use hoangsa_memory_store::{ArchiveTracker, EmbeddedVectorStore, StoreRoot, VectorCol, VectorStore};
 
 // ---------------------------------------------------------------------------
 // ingest command — thin CLI wrapper around `hoangsa_memory_retrieve::archive::run_ingest`
@@ -90,9 +90,10 @@ use hoangsa_memory_store::{ArchiveTracker, ChromaCol, ChromaStore, StoreRoot};
 /// Ingest conversation sessions from Claude Code into the archive.
 ///
 /// Acquires the advisory flock so concurrent hook fires (PreCompact /
-/// SessionEnd from multiple Claude Code sessions) don't pile up Python
-/// ChromaDB sidecars, opens the tracker + collection, then delegates
-/// to [`hoangsa_memory_retrieve::archive::run_ingest`] for the actual work.
+/// SessionEnd from multiple Claude Code sessions) don't each spin up
+/// the fastembed ONNX model at the same time, opens the tracker +
+/// collection, then delegates to
+/// [`hoangsa_memory_retrieve::archive::run_ingest`] for the actual work.
 pub async fn cmd_archive_ingest(
     root: &Path,
     project_filter: Option<&str>,
@@ -100,29 +101,29 @@ pub async fn cmd_archive_ingest(
     refresh: bool,
     limit: Option<usize>,
 ) -> Result<()> {
-    // Advisory flock — PreCompact/SessionEnd hooks fire-and-forget a detached
-    // ingest subprocess, and each one spins up its own ChromaDB Python sidecar
-    // (~500 MB RSS per process). The lock is shared with `index` and `watch`
-    // (see `crate::acquire_chroma_lock`) so any one chroma-using command
-    // blocks the others and we never have two sidecars alive at once. If the
-    // lock is held we exit cleanly — the running command will pick up any new
-    // turns on its next pass anyway, so there's nothing to retry.
-    let _lock: Option<std::fs::File> = match crate::acquire_chroma_lock() {
+    // Advisory flock — PreCompact/SessionEnd hooks fire-and-forget a
+    // detached ingest subprocess; when the daemon isn't running each
+    // one would reload the ONNX embedder from scratch. The lock is
+    // shared with `index` and `watch` (see `crate::acquire_vector_lock`)
+    // so only one writer ever holds the embedder at a time. If the lock
+    // is held we exit cleanly — the running command will pick up any
+    // new turns on its next pass anyway, so there's nothing to retry.
+    let _lock: Option<std::fs::File> = match crate::acquire_vector_lock() {
         Ok(Some(l)) => Some(l),
         Ok(None) => {
             eprintln!(
-                "hoangsa-memory: another chroma-using command is running; skipping archive ingest."
+                "hoangsa-memory: another vector-using command is running; skipping archive ingest."
             );
             return Ok(());
         }
         Err(e) => {
-            tracing::warn!(error = %e, "failed to acquire chroma lock; proceeding anyway");
+            tracing::warn!(error = %e, "failed to acquire vector lock; proceeding anyway");
             None
         }
     };
 
     let tracker = open_tracker(root).await?;
-    let col = open_archive_chroma(root).await?;
+    let col = open_archive_vector_col(root).await?;
 
     let opts = IngestOpts {
         project_filter: project_filter.map(str::to_string),
@@ -131,7 +132,7 @@ pub async fn cmd_archive_ingest(
         limit,
     };
 
-    let stats = run_ingest(&tracker, &col, opts).await?;
+    let stats = run_ingest(&tracker, col.as_ref(), opts).await?;
 
     println!(
         "\nIngested {total_sessions} sessions ({total_chunks} chunks), skipped {skipped} already-ingested.",
@@ -143,8 +144,8 @@ pub async fn cmd_archive_ingest(
     if stats.retention_trimmed > 0 {
         const MAX_ARCHIVE_SESSIONS: i64 = 500;
         println!(
-            "Retention: trimmed {} oldest session(s), cleaned {} from ChromaDB (cap = {MAX_ARCHIVE_SESSIONS}).",
-            stats.retention_trimmed, stats.retention_chroma_cleaned,
+            "Retention: trimmed {} oldest session(s), cleaned {} from vector store (cap = {MAX_ARCHIVE_SESSIONS}).",
+            stats.retention_trimmed, stats.retention_vector_cleaned,
         );
     }
     Ok(())
@@ -209,7 +210,7 @@ pub async fn cmd_archive_search(
     topic: Option<&str>,
     json: bool,
 ) -> Result<()> {
-    let col = open_archive_chroma(root).await?;
+    let col = open_archive_vector_col(root).await?;
 
     let mut filter = None;
     if project.is_some() || topic.is_some() {
@@ -391,14 +392,14 @@ pub async fn cmd_archive_purge(
         return Ok(());
     }
 
-    // Best-effort ChromaDB cleanup for the removed sessions.
-    let chroma_removed = match open_archive_chroma(root).await {
+    // Best-effort vector cleanup for the removed sessions.
+    let vector_removed = match open_archive_vector_col(root).await {
         Ok(col) => {
             let mut removed = 0u64;
             for sid in &ids {
                 let filter = serde_json::json!({ "session_id": { "$eq": sid } });
                 if let Err(e) = col.delete_by_filter(filter).await {
-                    tracing::warn!(session = %sid, error = %e, "chroma delete failed");
+                    tracing::warn!(session = %sid, error = %e, "vector delete failed");
                 } else {
                     removed += 1;
                 }
@@ -406,7 +407,7 @@ pub async fn cmd_archive_purge(
             removed
         }
         Err(e) => {
-            tracing::warn!(error = %e, "chroma unreachable — leaving archive chunks orphaned");
+            tracing::warn!(error = %e, "vector store unreachable — leaving archive chunks orphaned");
             0
         }
     };
@@ -416,15 +417,15 @@ pub async fn cmd_archive_purge(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "removed_sessions": ids.len(),
-                "chroma_sessions_cleaned": chroma_removed,
+                "vector_sessions_cleaned": vector_removed,
                 "ids": ids,
             }))?
         );
     } else {
         println!(
-            "Purged {} session(s) from tracker, {} from ChromaDB.",
+            "Purged {} session(s) from tracker, {} from vector store.",
             ids.len(),
-            chroma_removed
+            vector_removed
         );
     }
     Ok(())
@@ -441,20 +442,21 @@ async fn open_tracker(root: &Path) -> Result<ArchiveTracker> {
         .context("opening archive tracker")
 }
 
-async fn open_archive_chroma(root: &Path) -> Result<ChromaCol> {
-    let path = load_chroma_data_path(root).await;
-    let store = ChromaStore::open(&path)
+async fn open_archive_vector_col(root: &Path) -> Result<std::sync::Arc<dyn VectorCol>> {
+    let path = load_vectors_data_path(root).await;
+    let store = EmbeddedVectorStore::open(&path)
         .await
-        .context("starting ChromaDB sidecar")?;
+        .context("starting embedded vector store")?;
     let (col, _info) = store
         .ensure_collection("hoangsa_memory_archive")
         .await
-        .context("ensuring hoangsa_memory_archive collection in ChromaDB")?;
+        .context("ensuring hoangsa_memory_archive collection in vector store")?;
     Ok(col)
 }
 
-async fn load_chroma_data_path(root: &Path) -> String {
-    let cfg = hoangsa_memory_retrieve::ChromaConfig::load_or_default(root).await;
+async fn load_vectors_data_path(root: &Path) -> std::path::PathBuf {
+    let cfg = hoangsa_memory_retrieve::VectorStoreConfig::load_or_default(root).await;
     cfg.data_path
-        .unwrap_or_else(|| StoreRoot::chroma_path(root).to_string_lossy().to_string())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| StoreRoot::vectors_path(root))
 }

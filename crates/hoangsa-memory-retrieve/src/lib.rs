@@ -13,6 +13,10 @@
 //!       → Retrieval
 //! ```
 //!
+//! Vector recall runs in-process via fastembed (see
+//! `hoangsa_memory_store::vector`); the old ChromaDB Python sidecar has
+//! been removed.
+//!
 //! This crate also hosts the [`Indexer`], which walks a source tree and
 //! populates every backend behind a [`StoreRoot`]. The retriever assumes an
 //! indexer has already run.
@@ -27,7 +31,7 @@ pub mod indexer;
 pub mod retriever;
 
 pub use archive::{IngestOpts, IngestStats, run_ingest};
-pub use config::{ChromaConfig, IndexConfig, OutputConfig, RetrieveConfig, WatchConfig};
+pub use config::{IndexConfig, OutputConfig, RetrieveConfig, VectorStoreConfig, WatchConfig};
 pub use enrich::{enrich_chunks, extract_docstring};
 pub use indexer::{IndexProgress, IndexStats, Indexer, chunk_id, read_span};
 pub use retriever::Retriever;
@@ -37,7 +41,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, RwLock};
 
 use hoangsa_memory_core::{Mode, Query, Result, Retrieval, Synthesizer};
-use hoangsa_memory_store::{ChromaCol, ChromaStore, StoreRoot};
+use hoangsa_memory_store::{EmbeddedVectorStore, StoreRoot, VectorCol, VectorStore};
 
 /// Process-lifetime cache for [`RetrieveConfig`], keyed by store root path.
 ///
@@ -72,23 +76,23 @@ async fn cached_retrieve_config(root: &std::path::Path) -> RetrieveConfig {
 /// Convenience wrapper: opens the right extra backends for the requested
 /// [`Mode`] and runs a single recall.
 ///
-/// In Mode::Zero the synthesizer and vector stages are skipped but ChromaDB
-/// semantic search is used if configured. In Mode::Full the ChromaDB stage
+/// In Mode::Zero the synthesizer and vector stages are skipped but the
+/// vector store is used if configured. In Mode::Full the vector stage
 /// always runs and the caller-supplied synthesizer is plugged in.
 pub async fn recall(store: StoreRoot, q: Query, mode: Mode) -> Result<Retrieval> {
     let retrieve_cfg = cached_retrieve_config(&store.path).await;
-    let chroma = chroma_from_config(&store.path).await;
+    let vectors = vector_col_from_config(&store.path).await;
     match mode {
         Mode::Zero => {
             Retriever::new(store)
-                .with_chroma(chroma)
+                .with_vector_store(vectors)
                 .with_markdown_boost(retrieve_cfg.rerank_markdown_boost)
                 .recall(&q)
                 .await
         }
         Mode::Full { synthesizer } => {
             let synth: Option<Arc<dyn Synthesizer>> = synthesizer.map(Arc::from);
-            Retriever::with_full(store, chroma, synth)
+            Retriever::with_full(store, vectors, synth)
                 .with_markdown_boost(retrieve_cfg.rerank_markdown_boost)
                 .recall_full(&q)
                 .await
@@ -96,17 +100,19 @@ pub async fn recall(store: StoreRoot, q: Query, mode: Mode) -> Result<Retrieval>
     }
 }
 
-/// Try to connect to ChromaDB using config. Returns None if ChromaDB is
-/// not configured or unreachable.
-async fn chroma_from_config(root: &std::path::Path) -> Option<Arc<ChromaCol>> {
-    let cfg = ChromaConfig::load_or_default(root).await;
+/// Try to open the project's vector collection. Returns `None` when the
+/// store is disabled in config or when opening it fails (e.g. embedder
+/// model download hasn't happened yet) — callers fall back to BM25.
+async fn vector_col_from_config(root: &std::path::Path) -> Option<Arc<dyn VectorCol>> {
+    let cfg = VectorStoreConfig::load_or_default(root).await;
     if !cfg.enabled {
         return None;
     }
     let path = cfg
         .data_path
-        .unwrap_or_else(|| StoreRoot::chroma_path(root).to_string_lossy().to_string());
-    let store = ChromaStore::open(&path).await.ok()?;
+        .map(PathBuf::from)
+        .unwrap_or_else(|| StoreRoot::vectors_path(root));
+    let store = EmbeddedVectorStore::open(&path).await.ok()?;
     let (col, _info) = store.ensure_collection("hoangsa_memory_code").await.ok()?;
-    Some(Arc::new(col))
+    Some(col)
 }

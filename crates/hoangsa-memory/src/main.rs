@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use hoangsa_memory_core::Synthesizer;
-use hoangsa_memory_retrieve::ChromaConfig;
-use hoangsa_memory_store::{ChromaStore, StoreRoot};
+use hoangsa_memory_retrieve::VectorStoreConfig;
+use hoangsa_memory_store::{EmbeddedVectorStore, StoreRoot, VectorCol, VectorStore};
 
 mod archive_cmd;
 mod daemon;
@@ -268,28 +268,33 @@ pub(crate) fn build_synth(kind: Option<SynthKind>) -> anyhow::Result<Option<Arc<
     }
 }
 
-/// Process-wide advisory flock serialising any CLI subcommand that boots
-/// its own ChromaDB Python sidecar (`archive ingest`, `index`, `watch`).
-/// When the daemon isn't running, two of these in parallel would each
-/// spin up a separate ~500 MB sidecar; hook-triggered ingests piled on
-/// top of a running `index` is how the 164GB disk-fill incident
-/// happened (see RESEARCH.md). Returns `Ok(Some(file))` when this
-/// process owns the lock (caller keeps the handle alive until its
-/// chroma work finishes), `Ok(None)` when another process already holds
-/// it, and `Err` when the lockfile itself can't be opened.
+/// Process-wide advisory flock serialising any CLI subcommand that
+/// loads the embedder (`archive ingest`, `index`, `watch`). The ONNX
+/// model fastembed pulls in is ~130 MB RSS when hot, and the embedder
+/// itself holds a `&mut self` lock — running two concurrently would
+/// either deadlock or double the footprint. Before Phase 2 this same
+/// lock fenced off the Python ChromaDB sidecar; see
+/// `.hoangsa/sessions/fix/memory-4bugs/RESEARCH.md` for the incident
+/// that motivated it.
+///
+/// Returns `Ok(Some(file))` when this process owns the lock (caller
+/// keeps the handle alive until vector work finishes), `Ok(None)` when
+/// another process already holds it, and `Err` when the lockfile
+/// itself can't be opened.
 ///
 /// Read paths (`query`) intentionally do *not* acquire this lock: the
-/// point is preventing sidecar pile-up, and queries are short-lived
-/// enough that blocking them on a long-running index would be worse
-/// than letting a second read-only sidecar exist briefly.
-pub(crate) fn acquire_chroma_lock() -> anyhow::Result<Option<std::fs::File>> {
+/// point is preventing embedder pile-up on write-heavy commands, and
+/// queries already serialise through the in-process embedder mutex.
+pub(crate) fn acquire_vector_lock() -> anyhow::Result<Option<std::fs::File>> {
     use anyhow::Context;
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
-        .context("cannot determine home directory for chroma lock")?;
+        .context("cannot determine home directory for vector lock")?;
     let dir = PathBuf::from(home).join(".hoangsa").join("memory");
     std::fs::create_dir_all(&dir)
-        .with_context(|| format!("create {} for chroma lock", dir.display()))?;
+        .with_context(|| format!("create {} for vector lock", dir.display()))?;
+    // Keep the old filename so an in-flight hook from before the upgrade
+    // still serialises against us.
     let path = dir.join("archive-ingest.lock");
 
     let file = std::fs::OpenOptions::new()
@@ -297,7 +302,7 @@ pub(crate) fn acquire_chroma_lock() -> anyhow::Result<Option<std::fs::File>> {
         .write(true)
         .truncate(false)
         .open(&path)
-        .with_context(|| format!("open chroma lock {}", path.display()))?;
+        .with_context(|| format!("open vector lock {}", path.display()))?;
 
     match file.try_lock() {
         Ok(()) => Ok(Some(file)),
@@ -305,35 +310,36 @@ pub(crate) fn acquire_chroma_lock() -> anyhow::Result<Option<std::fs::File>> {
     }
 }
 
-pub(crate) async fn open_chroma(store: &StoreRoot) -> Option<Arc<hoangsa_memory_store::ChromaCol>> {
-    let cfg = ChromaConfig::load_or_default(&store.path).await;
+pub(crate) async fn open_vector_store(
+    store: &StoreRoot,
+) -> Option<Arc<dyn VectorCol>> {
+    let cfg = VectorStoreConfig::load_or_default(&store.path).await;
     if !cfg.enabled {
         return None;
     }
-    let path = cfg.data_path.unwrap_or_else(|| {
-        StoreRoot::chroma_path(&store.path)
-            .to_string_lossy()
-            .to_string()
-    });
+    let path = cfg
+        .data_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| StoreRoot::vectors_path(&store.path));
     // enabled=true → user wants embeddings, so a failure here is *not* a
-    // silent "feature off" — it's a missing dependency or misconfiguration
-    // the operator needs to fix. Surface the underlying error on stderr
-    // instead of dropping `Err` on the floor with `.ok()?`.
-    let chroma = match ChromaStore::open(&path).await {
-        Ok(c) => c,
+    // silent "feature off" — it's a missing model download or a broken
+    // ONNX runtime the operator needs to see. Surface the underlying
+    // error on stderr instead of dropping `Err` on the floor.
+    let vectors = match EmbeddedVectorStore::open(&path).await {
+        Ok(v) => v,
         Err(e) => {
             eprintln!(
-                "hoangsa-memory: chroma enabled in config but failed to start — embeddings disabled for this run.\n  cause: {e}\n  hint:  `pip install chromadb` into the python at $HOANGSA_MEMORY_PYTHON \
-                 or ~/.hoangsa/memory/venv/bin/python3, or set `[chroma] enabled = false` to silence this warning."
+                "hoangsa-memory: vector_store enabled in config but failed to start — embeddings disabled for this run.\n  cause: {e}\n  hint:  first run downloads the `multilingual-e5-small` ONNX weights (~118MB). \
+                 Check network + disk, or set `[vector_store] enabled = false` to silence this warning."
             );
             return None;
         }
     };
-    match chroma.ensure_collection("hoangsa_memory_code").await {
-        Ok((col, _info)) => Some(Arc::new(col)),
+    match vectors.ensure_collection("hoangsa_memory_code").await {
+        Ok((col, _info)) => Some(col),
         Err(e) => {
             eprintln!(
-                "hoangsa-memory: chroma sidecar started but `ensure_collection(hoangsa_memory_code)` failed: {e}"
+                "hoangsa-memory: vector store opened but `ensure_collection(hoangsa_memory_code)` failed: {e}"
             );
             None
         }

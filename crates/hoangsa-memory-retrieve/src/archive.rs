@@ -5,8 +5,9 @@
 //! `archive ingest` subprocess previously spun up its own Python
 //! ChromaDB sidecar (~500 MB RSS). When the MCP daemon routes ingests
 //! through [`run_ingest`] it reuses its lazy-initialised
-//! [`hoangsa_memory_store::ChromaStore`], so concurrent hook fires no longer
-//! pile up sidecars.
+//! [`hoangsa_memory_store::EmbeddedVectorStore`], so concurrent hook
+//! fires no longer pile up sidecars — and, as of Phase 2, there is no
+//! Python sidecar to pile up in the first place.
 //!
 //! The parsing / chunking / topic-detection pipeline is verbatim from
 //! `archive_cmd.rs` — conversation mining still follows the MemPalace
@@ -20,7 +21,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use hoangsa_memory_store::{ArchiveTracker, ChromaCol};
+use hoangsa_memory_store::{ArchiveTracker, VectorCol};
 
 // ---------------------------------------------------------------------------
 // constants
@@ -771,15 +772,15 @@ pub struct IngestStats {
     pub total_chunks: u64,
     pub skipped: u64,
     pub retention_trimmed: u64,
-    pub retention_chroma_cleaned: u64,
+    pub retention_vector_cleaned: u64,
 }
 
 /// Ingest conversation sessions from Claude Code into the archive.
 ///
 /// Pulled out of `cmd_archive_ingest` so the MCP daemon can run this
-/// inside its existing process (reusing its lazy ChromaDB sidecar)
+/// inside its existing process (reusing its lazy vector-store handle)
 /// instead of each hook-spawned CLI subprocess starting its own. The
-/// flock, tracker open, and chroma collection open are caller
+/// flock, tracker open, and vector collection open are caller
 /// responsibilities — this function takes already-opened handles.
 ///
 /// Returns aggregate [`IngestStats`]. All per-session progress is
@@ -787,7 +788,7 @@ pub struct IngestStats {
 /// the CLI, not library code).
 pub async fn run_ingest(
     tracker: &ArchiveTracker,
-    col: &ChromaCol,
+    col: &dyn VectorCol,
     opts: IngestOpts,
 ) -> Result<IngestStats> {
     let IngestOpts {
@@ -958,7 +959,7 @@ pub async fn run_ingest(
                 tracing::warn!(
                     session = %session_id,
                     error = %e,
-                    "refresh: chroma delete failed — chunks will be upserted but orphans may remain",
+                    "refresh: vector delete failed — chunks will be upserted but orphans may remain",
                 );
             }
         }
@@ -1054,23 +1055,23 @@ pub async fn run_ingest(
     }
 
     // Retention cap: keep only the most recent MAX_ARCHIVE_SESSIONS.
-    // Oldest rows get dropped from the tracker; their ChromaDB chunks
-    // are cleaned best-effort against the SAME `col` handle (avoid
-    // standing up a second Python sidecar just for cleanup).
+    // Oldest rows get dropped from the tracker; their vector chunks
+    // are cleaned best-effort against the SAME `col` handle so we
+    // don't pay the embedder-init cost twice.
     let (sessions, _, _) = tracker.status()?;
     if sessions > MAX_ARCHIVE_SESSIONS {
         let excess = sessions - MAX_ARCHIVE_SESSIONS;
         let to_drop = tracker.oldest_sessions(excess)?;
-        let mut chroma_cleaned = 0u64;
+        let mut vector_cleaned = 0u64;
         for sid in &to_drop {
             tracker.delete_session(sid)?;
             let filter = serde_json::json!({ "session_id": { "$eq": sid } });
             if col.delete_by_filter(filter).await.is_ok() {
-                chroma_cleaned += 1;
+                vector_cleaned += 1;
             }
         }
         stats.retention_trimmed = to_drop.len() as u64;
-        stats.retention_chroma_cleaned = chroma_cleaned;
+        stats.retention_vector_cleaned = vector_cleaned;
     }
 
     Ok(stats)

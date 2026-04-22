@@ -116,17 +116,16 @@ const DEFAULT_CONFIG_TOML: &str = r#"# hoangsa-memory config. All fields are opt
 # first change are batched into a single reindex pass. Default: 300.
 # debounce_ms = 300
 
-[chroma]
-# Enable ChromaDB semantic search alongside the built-in retrieval.
-# Default: true. Retrieval quality degrades sharply without vector recall,
-# so we opt users in by default. If the Python sidecar or `chromadb` pkg
-# is unavailable, `hoangsa-memory` emits a stderr warning once and falls
-# back to keyword-only search — disabling here silences the warning.
-# enabled = true
+[vector_store]
+# Enable the in-process semantic vector store (fastembed + SQLite BLOBs).
+# Default: false while Phase 2 is shaking out. Flip to `true` after the
+# first run has successfully downloaded the `multilingual-e5-small`
+# ONNX weights (~118 MB). Legacy `[chroma]` table is still accepted.
+# enabled = false
 
-# Custom ChromaDB data path. When unset, falls back to
-# `StoreRoot::chroma_path()` under the memory root.
-# data_path = "/absolute/path/to/chroma"
+# Custom path for the vectors SQLite file. When unset, falls back to
+# `StoreRoot::vectors_path()` under the memory root.
+# data_path = "/absolute/path/to/vectors.sqlite"
 
 [curation]
 # Ask for a `memory_grounding_check` on any load-bearing factual claim

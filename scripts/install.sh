@@ -70,9 +70,8 @@ USAGE:
 FLAGS (forwarded to `hoangsa-cli install`):
     --global            Install globally for the current user (default)
     --local             Install for the current project (cwd)
-    --no-chroma         Skip the ChromaDB sidecar venv bootstrap
-                        (default is to provision it — retrieval quality
-                        degrades sharply without it).
+    --no-chroma         Legacy no-op. The vector store is now in-process
+                        (fastembed) and needs no external bootstrap.
     --dry-run           Print actions without writing files
     --help, -h          Show this help and exit
 
@@ -525,50 +524,19 @@ resolve_tag() {
 }
 
 # ---------------------------------------------------------------------------
-# ChromaDB sidecar venv bootstrap
+# Vector store bootstrap (no-op)
 # ---------------------------------------------------------------------------
 #
-# `hoangsa-memory` optionally calls into a Python ChromaDB sidecar for
-# semantic retrieval. Without it, recall quality drops to BM25 + graph
-# only. We provision `$HOANGSA_INSTALL_DIR/memory/venv` with `chromadb`
-# installed so the default `enabled = true` config just works.
+# As of Phase 2 of `fix/memory-4bugs` the semantic vector store runs
+# in-process via `fastembed`. There is no Python sidecar to provision.
+# Weights for `multilingual-e5-small` (~118 MB) are downloaded lazily
+# on first use into the fastembed cache.
 #
-# Non-fatal: a missing python3, network failure, or pip error logs a warning
-# and skips the step. `hoangsa-memory` degrades gracefully on its own.
+# The old `install_chroma_venv` function is retained only as a no-op so
+# existing shell wrappers that call it don't break. `--install-chroma`
+# / `--no-chroma` flags are accepted silently for backward compat.
 install_chroma_venv() {
-    _venv_dir="$HOANGSA_INSTALL_DIR/memory/venv"
-    if [ -x "$_venv_dir/bin/python3" ] \
-        && "$_venv_dir/bin/python3" -c "import chromadb" >/dev/null 2>&1; then
-        info "chroma venv already provisioned at $_venv_dir"
-        return 0
-    fi
-
-    if ! have python3; then
-        warn "python3 not found on PATH — skipping ChromaDB venv bootstrap."
-        warn "install python3 and rerun with --install-chroma, or set"
-        warn "[chroma] enabled = false in ~/.hoangsa/memory/config.toml."
-        return 0
-    fi
-
-    info "provisioning ChromaDB venv at $_venv_dir (≈300MB, one-time)"
-    mkdir -p "$HOANGSA_INSTALL_DIR/memory"
-    if ! python3 -m venv "$_venv_dir" >/dev/null 2>&1; then
-        warn "python3 -m venv failed — ChromaDB will stay disabled until you run"
-        warn "    python3 -m venv \"$_venv_dir\" && \"$_venv_dir/bin/pip\" install chromadb"
-        return 0
-    fi
-
-    if ! "$_venv_dir/bin/pip" install --quiet --upgrade pip >/dev/null 2>&1; then
-        warn "pip upgrade failed (continuing with bundled pip)"
-    fi
-
-    if "$_venv_dir/bin/pip" install --quiet chromadb; then
-        info "chromadb installed into $_venv_dir"
-    else
-        warn "pip install chromadb failed — retry manually:"
-        warn "    \"$_venv_dir/bin/pip\" install chromadb"
-        warn "or disable with [chroma] enabled = false in config.toml."
-    fi
+    info "vector store: fastembed (in-process) — model weights download on first use"
 }
 
 # ---------------------------------------------------------------------------

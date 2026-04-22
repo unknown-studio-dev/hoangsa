@@ -9,7 +9,7 @@ use hoangsa_memory_parse::LanguageRegistry;
 use hoangsa_memory_retrieve::{IndexProgress, Indexer};
 use hoangsa_memory_store::StoreRoot;
 
-use crate::open_chroma;
+use crate::open_vector_store;
 
 pub async fn run_index(root: &Path, src: &Path, json: bool) -> Result<()> {
     if let Some(mut d) = crate::daemon::DaemonClient::try_connect(root).await {
@@ -38,26 +38,27 @@ pub async fn run_index(root: &Path, src: &Path, json: bool) -> Result<()> {
     // size, hidden-dir / symlink toggles. Missing file → defaults.
     let cfg = hoangsa_memory_retrieve::IndexConfig::load_or_default(root).await;
     let mut idx = Indexer::new(store.clone(), LanguageRegistry::new()).with_config(&cfg);
-    // Hold the process-wide chroma lock for the duration of this run so
-    // a hook-triggered `archive ingest` can't boot a second sidecar on
-    // top of ours. If another chroma command is already running we skip
-    // embeddings rather than aborting the whole index — BM25/graph
-    // indexing is still useful without them.
-    let _chroma_lock = match crate::acquire_chroma_lock() {
+    // Hold the process-wide vector lock for the duration of this run
+    // so a hook-triggered `archive ingest` can't load a second copy of
+    // the fastembed ONNX model on top of ours. If another vector-using
+    // command is already running we skip embeddings rather than aborting
+    // the whole index — BM25/graph indexing is still useful without
+    // them.
+    let _vector_lock = match crate::acquire_vector_lock() {
         Ok(Some(lock)) => {
-            if let Some(col) = open_chroma(&store).await {
-                idx = idx.with_chroma(col);
+            if let Some(col) = open_vector_store(&store).await {
+                idx = idx.with_vector_store(col);
             }
             Some(lock)
         }
         Ok(None) => {
             eprintln!(
-                "hoangsa-memory: another chroma-using command is running; indexing without embeddings."
+                "hoangsa-memory: another vector-using command is running; indexing without embeddings."
             );
             None
         }
         Err(e) => {
-            tracing::warn!(error = %e, "failed to acquire chroma lock; proceeding without embeddings");
+            tracing::warn!(error = %e, "failed to acquire vector lock; proceeding without embeddings");
             None
         }
     };

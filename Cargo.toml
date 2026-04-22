@@ -64,6 +64,11 @@ redb         = "4.0.0"
 tantivy      = "0.26.0"
 rusqlite     = { version = "0.39.0", features = ["bundled"] }
 
+# Embeddings (replaces Python ChromaDB sidecar).
+# `fastembed` runs ONNX in-process via `ort`; we pin to the multilingual
+# model family so Vietnamese retrieval quality matches English.
+fastembed    = "5"
+
 # HTTP (provider adapters; rustls so no OpenSSL headers on CI boxes)
 reqwest      = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip"] }
 

@@ -8,7 +8,7 @@ use hoangsa_memory_retrieve::{RetrieveConfig, Retriever};
 use hoangsa_memory_store::StoreRoot;
 use tracing::warn;
 
-use crate::{SynthKind, build_synth, open_chroma};
+use crate::{SynthKind, build_synth, open_vector_store};
 
 pub async fn run_query(
     root: &Path,
@@ -51,15 +51,15 @@ pub async fn run_query(
     let synth = build_synth(synth_kind)?;
     let is_full = synth.is_some();
 
-    let chroma = open_chroma(&store).await;
+    let vectors = open_vector_store(&store).await;
 
     let retrieve_cfg = RetrieveConfig::load_or_default(root).await;
     let r = if is_full {
-        Retriever::with_full(store, chroma, synth)
+        Retriever::with_full(store, vectors, synth)
             .with_markdown_boost(retrieve_cfg.rerank_markdown_boost)
     } else {
         Retriever::new(store)
-            .with_chroma(chroma)
+            .with_vector_store(vectors)
             .with_markdown_boost(retrieve_cfg.rerank_markdown_boost)
     };
 
