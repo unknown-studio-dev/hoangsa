@@ -132,6 +132,9 @@ fn main() {
         ("hook", "session-archive") => {
             cmd::hook::cmd_session_archive();
         }
+        ("hook", "session-start") => {
+            cmd::hook::cmd_session_start(&cwd);
+        }
         ("hook", "state-record") => {
             cmd::hook::cmd_state_record(&cwd);
         }
@@ -208,6 +211,12 @@ fn main() {
             cmd::budget::cmd_estimate(rest.first().copied(), rest.get(1).copied())
         }
         ("budget", "breakdown") => cmd::budget::cmd_breakdown(rest.first().copied()),
+        ("bootstrap", _) => {
+            // Everything after "bootstrap" is a flag token; bootstrap
+            // does its own parsing (sub may be a flag).
+            let rest_all: Vec<&str> = args.iter().skip(1).map(|s| s.as_str()).collect();
+            cmd::bootstrap::cmd_bootstrap(&rest_all, &cwd);
+        }
         ("install", _) => {
             // Collect every arg after "install" as flag tokens so the
             // subcommand can do its own parsing (sub may be a flag like
@@ -265,6 +274,7 @@ Usage:
   stats summary [--last N] [--complexity low|medium|high]
   stats cache [-n top] [-s session_id]
   install [--global|--local] [--no-chroma] [--dry-run] [--task-manager=<clickup|asana|none>] [--no-memory] [--skip-path-edit]
+  bootstrap [--project <path>] [--force] [--json]
 "
             );
             std::process::exit(1);

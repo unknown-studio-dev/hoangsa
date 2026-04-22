@@ -556,6 +556,38 @@ pub fn cmd_session_archive() {
     out(&json!({"decision": "approve"}));
 }
 
+/// `hook session-start`
+///
+/// Fires on Claude Code SessionStart. Decides whether the project needs
+/// a one-shot post-install bootstrap (source index + archive ingest +
+/// memory skeleton seed) and spawns a detached worker if so.
+///
+/// MUST return in <100 ms — opt-out checks + sentinel read + spawn are
+/// all pure file-system ops. Failures (no memory bin, HOME unset,
+/// spawn error) degrade gracefully: we emit `approve` and skip, never
+/// block the session. Rationale in
+/// `.hoangsa/sessions/brainstorm/post-install-onboarding/BRAINSTORM.md`.
+pub fn cmd_session_start(cwd: &str) {
+    use crate::cmd::bootstrap;
+    let project = std::path::Path::new(cwd);
+    let reason = match bootstrap::should_bootstrap(project) {
+        Ok(()) => {
+            if bootstrap::spawn_detached_worker(project) {
+                "spawned"
+            } else {
+                "spawn_failed"
+            }
+        }
+        Err(r) => {
+            // Leak the string into a &'static for the JSON response
+            // below — keep cmd output minimal, matching session-archive.
+            let _ = r;
+            "skipped"
+        }
+    };
+    out(&json!({"decision": "approve", "bootstrap": reason}));
+}
+
 /// Count tasks with status other than "completed", "done", "skipped".
 fn count_incomplete_tasks(plan: &serde_json::Value) -> usize {
     let tasks = match plan["tasks"].as_array() {

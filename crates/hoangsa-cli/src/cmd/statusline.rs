@@ -328,6 +328,58 @@ fn truncate_path(path: &str, max: usize) -> String {
     format!("{head}/…/{tail}")
 }
 
+/// Render the post-install bootstrap indicator: `⏳ hoangsa indexing 1m07s`
+/// while a worker is running, `⚠ hoangsa bootstrap failed` on error.
+/// Returns None when no state file exists or phase is `done`.
+///
+/// We deliberately show elapsed wall time rather than a percent:
+/// `hoangsa-memory index` doesn't stream progress to us, so a percent
+/// would be fake (0 for the entire indexing phase, then jump to 50).
+/// Elapsed seconds at least moves monotonically and makes "alive vs
+/// stuck" obvious at a glance.
+fn seg_bootstrap(env: &Env, cwd: &Path) -> Option<String> {
+    use crate::cmd::bootstrap;
+    let state = bootstrap::read_state(cwd)?;
+    let phase = state.get("phase").and_then(|v| v.as_str()).unwrap_or("");
+    let g = env.glyphs;
+    match phase {
+        bootstrap::PHASE_INDEXING | bootstrap::PHASE_INGESTING | bootstrap::PHASE_SEEDING => {
+            if !bootstrap::state_is_active(&state) {
+                return None;
+            }
+            let started = state
+                .get("started_at_epoch")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let elapsed = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+                .saturating_sub(started);
+            let label = format!("⏳ hoangsa {phase} {}", format_elapsed(elapsed));
+            Some(env.theme.cyan(&label))
+        }
+        bootstrap::PHASE_ERROR => Some(format!(
+            "{} {}",
+            g.warn,
+            env.theme.red("hoangsa bootstrap failed")
+        )),
+        _ => None,
+    }
+}
+
+/// `42s` / `1m23s` / `12m05s` — compact elapsed-time label. Seconds are
+/// zero-padded once we're past a minute so the width stays stable.
+fn format_elapsed(secs: u64) -> String {
+    if secs < 60 {
+        format!("{secs}s")
+    } else {
+        let m = secs / 60;
+        let s = secs % 60;
+        format!("{m}m{s:02}s")
+    }
+}
+
 fn seg_memory(env: &Env, cwd: &Path) -> Option<String> {
     let manifest = cwd.join(".hoangsa-memory").join("index.manifest");
     if !manifest.exists() {
@@ -372,6 +424,9 @@ fn render(env: &Env, input: &Input) -> String {
     }
 
     let mut line2 = vec![seg_model_cost(env, input), seg_path(env, &cwd)];
+    if let Some(b) = seg_bootstrap(env, &cwd) {
+        line2.push(b);
+    }
     if let Some(m) = seg_memory(env, &cwd) {
         line2.push(m);
     }
@@ -411,6 +466,15 @@ fn cache_key(input: &Input, cwd: &Path, env: &Env) -> String {
         }
         h.update(b"|");
     }
+    // Bootstrap state lives outside cwd (under ~/.hoangsa/memory/…);
+    // hash its mtime so the statusline invalidates when phase advances.
+    if let Some(bs) = crate::cmd::bootstrap::state_path(cwd)
+        && let Ok(m) = fs::metadata(&bs).and_then(|m| m.modified())
+        && let Ok(d) = m.duration_since(UNIX_EPOCH)
+    {
+        h.update(d.as_nanos().to_le_bytes());
+    }
+    h.update(b"|");
     let sessions = cwd.join(".hoangsa").join("sessions");
     if let Ok(rd) = fs::read_dir(&sessions) {
         for t in rd.filter_map(|e| e.ok()) {
@@ -497,6 +561,20 @@ mod tests {
         assert_eq!(shorten_model("claude-opus-4-7"), "opus-4-7");
         assert_eq!(shorten_model("Claude Opus 4.7"), "opus-4.7");
         assert_eq!(shorten_model("gpt-4"), "gpt-4");
+    }
+
+    #[test]
+    fn format_elapsed_sub_minute() {
+        assert_eq!(format_elapsed(0), "0s");
+        assert_eq!(format_elapsed(42), "42s");
+        assert_eq!(format_elapsed(59), "59s");
+    }
+
+    #[test]
+    fn format_elapsed_minutes_pad_seconds() {
+        assert_eq!(format_elapsed(60), "1m00s");
+        assert_eq!(format_elapsed(67), "1m07s");
+        assert_eq!(format_elapsed(605), "10m05s");
     }
 
     #[test]
