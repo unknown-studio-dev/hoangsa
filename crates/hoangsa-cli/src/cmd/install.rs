@@ -96,7 +96,6 @@ fn backup_timestamp() -> String {
 struct InstallFlags {
     global: bool,
     local: bool,
-    install_chroma: bool,
     dry_run: bool,
     no_memory: bool,
     skip_path_edit: bool,
@@ -112,7 +111,6 @@ fn parse_flags(args: &[&str]) -> Result<InstallFlags, String> {
         match a {
             "--global" => f.global = true,
             "--local" => f.local = true,
-            "--install-chroma" => f.install_chroma = true,
             "--dry-run" => f.dry_run = true,
             "--no-memory" => f.no_memory = true,
             "--skip-path-edit" => f.skip_path_edit = true,
@@ -2289,7 +2287,6 @@ pub fn cmd_install(args: &[&str]) {
             "flags": {
                 "global": flags.global,
                 "local": flags.local,
-                "install_chroma": flags.install_chroma,
                 "no_memory": flags.no_memory,
                 "skip_path_edit": flags.skip_path_edit,
                 "task_manager": flags.task_manager

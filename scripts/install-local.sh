@@ -1,8 +1,8 @@
 #!/bin/sh
-# hoangsa local installer — build from source and run `hoangsa-cli install`
-# with the same HOANGSA_TEMPLATES_DIR / HOANGSA_STAGING_DIR handoff that
-# scripts/install.sh performs after downloading a release tarball. Also
-# installs the `hsp` proxy binary, which the CLI install flow does not own.
+# hoangsa local installer — build from source, install all four binaries
+# into `~/.hoangsa/bin/`, then run `hoangsa-cli install` with
+# HOANGSA_TEMPLATES_DIR pointing at the repo's templates/ tree so the CLI
+# copies the same template set that the release tarball would.
 #
 # To uninstall, use scripts/uninstall.sh.
 #
@@ -21,6 +21,9 @@ set -eu
 REPO_ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$REPO_ROOT"
 
+# Source shared UI lib (info/warn/err/section/render_summary/…).
+. "$REPO_ROOT/scripts/lib/ui.sh"
+
 CARGO_PROFILE="${CARGO_PROFILE:-release}"
 HOANGSA_INSTALL_DIR="${HOANGSA_INSTALL_DIR:-$HOME/.hoangsa}"
 HOANGSA_CLI_DIR="${HOANGSA_CLI_DIR:-$HOANGSA_INSTALL_DIR/bin}"
@@ -30,7 +33,7 @@ DRY_RUN=0
 IS_GLOBAL=0
 PASSTHROUGH=""
 HAS_MODE_FLAG=0
-SKIP_CHROMA=0
+SKIP_EMBED=0
 
 append_arg() {
     quoted=$(printf "%s" "$1" | sed "s/'/'\\\\''/g")
@@ -47,10 +50,7 @@ for arg in "$@"; do
         --dry-run)    DRY_RUN=1;    append_arg "$arg" ;;
         --global) IS_GLOBAL=1; HAS_MODE_FLAG=1; append_arg "$arg" ;;
         --local)  HAS_MODE_FLAG=1; append_arg "$arg" ;;
-        --install-chroma)
-            # Legacy: venv bootstrap is now the default; accept silently.
-            ;;
-        --no-chroma) SKIP_CHROMA=1 ;;
+        --no-embed) SKIP_EMBED=1 ;;
         -h|--help)
             sed -n '2,15p' "$0"
             exit 0
@@ -63,8 +63,9 @@ if [ "$HAS_MODE_FLAG" -eq 0 ]; then
     PASSTHROUGH="'--local' $PASSTHROUGH"
 fi
 
-info() { printf '==> %s\n' "$*"; }
-die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
+# info / warn / err are provided by lib/ui.sh; keep die() local because
+# install-local.sh uses the `die "msg"` single-arg signature.
+die()  { err "$*"; exit 1; }
 
 # --- Claude config dir picker -----------------------------------------------
 #
@@ -359,6 +360,9 @@ else
     CARGO_FLAGS=""
 fi
 
+ui_banner "local-dev"
+
+section "build"
 if [ "$SKIP_BUILD" -eq 0 ]; then
     info "building binaries (profile: $CARGO_PROFILE)"
     # shellcheck disable=SC2086
@@ -371,33 +375,38 @@ for b in $REQUIRED_BINS; do
     [ -x "$BIN_DIR/$b" ] || die "missing binary: $BIN_DIR/$b (drop --skip-build?)"
 done
 
-# --- Install CLI-tier binaries (hoangsa-cli, hsp) ---------------------------
+# --- Install binaries -------------------------------------------------------
 #
-# `hoangsa-cli install` itself owns templates + memory bins but does NOT copy
-# its own binary or hsp. We manage both here so a user running
-# `install-local.sh` ends up with every launcher reachable via
-# `~/.hoangsa/bin/` (matching the tarball layout from `scripts/install.sh`).
-# We touch HOANGSA_CLI_DIR *before* exec'ing the CLI so the CLI's own writes
-# to the same dir don't race with ours.
+# All four binaries land here so `install-local.sh` mirrors the layout the
+# tarball path produces: CLI-tier bins (hoangsa-cli, hsp) go to
+# $HOANGSA_CLI_DIR; memory bins (hoangsa-memory, hoangsa-memory-mcp) go to
+# $HOANGSA_INSTALL_DIR/bin. On the default layout these two dirs are the
+# same. Doing the copies here (instead of routing memory bins through the
+# CLI's relocate step) means the user sees every install action as one
+# contiguous block in the output.
 
-install_cli_bin() {
+install_bin() {
     _name="$1"
-    _dst="$HOANGSA_CLI_DIR/$_name"
+    _dst_dir="$2"
+    _dst="$_dst_dir/$_name"
     _src="$BIN_DIR/$_name"
     if [ "$DRY_RUN" -eq 1 ]; then
         info "dry-run: would install $_src -> $_dst"
         return 0
     fi
     info "installing $_name -> $_dst"
-    mkdir -p "$HOANGSA_CLI_DIR"
+    mkdir -p "$_dst_dir"
     _tmp="$_dst.new.$$"
     cp "$_src" "$_tmp"
     chmod 0755 "$_tmp"
     mv -f "$_tmp" "$_dst"
 }
 
-install_cli_bin hoangsa-cli
-install_cli_bin hsp
+section "install bins"
+install_bin hoangsa-cli        "$HOANGSA_CLI_DIR"
+install_bin hsp                "$HOANGSA_CLI_DIR"
+install_bin hoangsa-memory     "$HOANGSA_INSTALL_DIR/bin"
+install_bin hoangsa-memory-mcp "$HOANGSA_INSTALL_DIR/bin"
 
 # --- Pick target Claude config dir + PATH rc-file edit ----------------------
 #
@@ -415,37 +424,34 @@ if [ "$IS_GLOBAL" -eq 1 ]; then
     edit_path_in_rc
 fi
 
-# --- Stage templates + memory bins (mirrors install.sh layout) --------------
+# --- Stage templates for the CLI --------------------------------------------
+#
+# `hoangsa-cli install` copies templates from $HOANGSA_TEMPLATES_DIR into the
+# Claude config dir. Memory bins are already installed above, so staging is
+# templates-only (no $HOANGSA_STAGING_DIR needed).
 
+section "staging"
 STAGING=$(mktemp -d "${TMPDIR:-/tmp}/hoangsa-local.XXXXXX")
 trap 'rm -rf "$STAGING"' EXIT INT TERM
 
-info "staging into $STAGING"
+info "staging templates into $STAGING"
 cp -R "$REPO_ROOT/templates" "$STAGING/templates"
-mkdir -p "$STAGING/bin"
-cp "$BIN_DIR/hoangsa-memory"     "$STAGING/bin/"
-cp "$BIN_DIR/hoangsa-memory-mcp" "$STAGING/bin/"
 
 HOANGSA_TEMPLATES_DIR="$STAGING/templates"
-HOANGSA_STAGING_DIR="$STAGING"
-export HOANGSA_TEMPLATES_DIR HOANGSA_STAGING_DIR
+export HOANGSA_TEMPLATES_DIR
 
-# Drop trap before exec — the CLI owns $STAGING from here on (it moves bins
-# out of staging/bin into the install dirs, then cleans up). If we keep the
-# trap, the shell's EXIT handler would yank $STAGING before the CLI reads it.
+# Drop trap before the CLI runs — it reads $HOANGSA_TEMPLATES_DIR after we
+# return control, and we don't want EXIT to yank the dir mid-read.
 trap - EXIT INT TERM
 
 # --- Vector store ----------------------------------------------------------
 #
-# The fastembed-powered vector store runs entirely in-process; no Python
-# venv bootstrap is needed any more. `--no-chroma` / `--install-chroma`
-# flags are accepted silently for backward compatibility.
-#
-# We pre-download the `multilingual-e5-small` weights (~118 MB) into
+# The fastembed-powered vector store runs entirely in-process. We
+# pre-download the `multilingual-e5-small` weights (~118 MB) into
 # `$HOANGSA_INSTALL_DIR/cache/fastembed` so the first real `index` /
 # `query` / `archive ingest` call doesn't stall 30–60 s on a
 # HuggingFace fetch. Failure is non-fatal — the weights will be fetched
-# lazily on first use instead.
+# lazily on first use instead. Skipped when `--no-embed` is passed.
 prefetch_embed_model() {
     _bin="$BIN_DIR/hoangsa-memory"
     if [ "$DRY_RUN" -eq 1 ]; then
@@ -461,10 +467,11 @@ prefetch_embed_model() {
         || info "prefetch failed — weights will download on first use"
 }
 
-if [ "$SKIP_CHROMA" -eq 0 ]; then
+section "vector store"
+if [ "$SKIP_EMBED" -eq 0 ]; then
     prefetch_embed_model
 else
-    info "--no-chroma — skipping fastembed model pre-download"
+    info "--no-embed — skipping fastembed model pre-download"
 fi
 
 # --- Hand off to the CLI ----------------------------------------------------
@@ -474,6 +481,19 @@ if [ ! -x "$CLI" ]; then
     die "hoangsa-cli not found at $CLI (build first or drop --skip-build)"
 fi
 
+section "cli"
 info "running: $CLI install $PASSTHROUGH"
+
+# Capture stdout so render_summary / render_dry_run can pretty-print the
+# CLI's JSON output. Stderr stays attached so diagnostics stream live.
+_cli_out=""
+_cli_exit=0
 # shellcheck disable=SC2086
-eval exec "\"$CLI\"" install $PASSTHROUGH
+_cli_out=$(eval "\"$CLI\"" install $PASSTHROUGH) || _cli_exit=$?
+
+if [ "$DRY_RUN" -eq 1 ]; then
+    render_dry_run "$_cli_out"
+else
+    render_summary "$_cli_out"
+fi
+exit "$_cli_exit"

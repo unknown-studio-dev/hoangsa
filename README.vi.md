@@ -27,7 +27,7 @@ Installer tải sẵn binary native — **không cần Node, không cần `npm`,
 
 Nền tảng hỗ trợ: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `linux-x64-musl`.
 
-Flags (chuyển tiếp sang `hoangsa-cli install`): `--global` (mặc định), `--local`, `--install-chroma`, `--dry-run`.
+Flags: `--global` (mặc định), `--local`, `--dry-run`, `--no-embed` (bỏ qua pre-download weights fastembed; sẽ tải lazy khi dùng lần đầu).
 
 Để gỡ cài đặt: chạy `scripts/uninstall.sh --global` (hoặc `--local`) từ bản checkout của repo. Thêm `--purge` để xoá luôn `~/.hoangsa` (templates + memory data).
 
@@ -86,7 +86,7 @@ HOANGSA đi kèm **hoangsa-memory** — MCP server chạy local, cung cấp cho 
 - **Tự động cài** bởi installer: binary đặt tại `~/.hoangsa/bin/`, MCP server được đăng ký trong `.mcp.json` của project.
 - **State** theo từng project nằm trong `~/.hoangsa/memory/projects/<slug>/` (MEMORY.md, LESSONS.md, USER.md + index).
 - **Hooks** cài vào settings Claude Code: pre-edit rule enforcement, pre-edit lesson recall, post-tool event logging, và PreCompact / SessionEnd archive ingest để recall nội dung hội thoại.
-- **Archive search** (lịch sử hội thoại đầy đủ) cần chroma sidecar — tùy chọn, cài bằng `hoangsa-cli install --install-chroma`.
+- **Archive search** (lịch sử hội thoại đầy đủ) dùng fastembed vector store in-process — không cần sidecar. Installer pre-download `multilingual-e5-small` weights (~4xx MB) vào `~/.hoangsa/cache/fastembed/`; dùng `--no-embed` để bỏ qua và tải lazy khi dùng lần đầu.
 
 Reindex thủ công: `/hoangsa:index` hoặc `~/.hoangsa/bin/hoangsa-memory --json index .`
 

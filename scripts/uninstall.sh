@@ -33,6 +33,10 @@
 
 set -eu
 
+# Source shared UI lib (info/warn/err/section/render_*/…). Uninstall runs
+# only from a checkout, so runtime sourcing is always possible.
+. "$(dirname "$0")/lib/ui.sh"
+
 HOANGSA_INSTALL_DIR="${HOANGSA_INSTALL_DIR:-$HOME/.hoangsa}"
 HOANGSA_CLI_DIR="${HOANGSA_CLI_DIR:-$HOANGSA_INSTALL_DIR/bin}"
 HOANGSA_NO_PATH_EDIT="${HOANGSA_NO_PATH_EDIT:-}"
@@ -41,9 +45,9 @@ MODE=""
 DRY_RUN=0
 PURGE=0
 
-info() { printf '==> %s\n' "$*"; }
-warn() { printf 'warning: %s\n' "$*" >&2; }
-die()  { printf 'error: %s\n' "$1" >&2; exit "${2:-1}"; }
+# info / warn provided by lib/ui.sh. die() stays local because uninstall.sh
+# uses the `die "msg" [code]` 2-arg signature (exit code second).
+die() { err "$1"; exit "${2:-1}"; }
 
 usage() {
     cat <<'EOF'
@@ -438,10 +442,12 @@ purge_install_dir() {
 # --- main -------------------------------------------------------------------
 
 main() {
-    info "hoangsa uninstaller — mode: $MODE${DRY_RUN:+}"
-    [ "$DRY_RUN" -eq 1 ] && info "DRY-RUN: no files will be changed"
+    ui_banner "uninstaller"
+    info "mode: $MODE"
+    [ "$DRY_RUN" -eq 1 ] && warn "DRY-RUN: no files will be changed"
 
     if [ "$MODE" = "global" ]; then
+        section "target"
         pick_claude_dir
         _dst="$CLAUDE_DIR_PICK"
         _settings="$_dst/settings.json"
@@ -453,12 +459,20 @@ main() {
         _mcp="$PWD/.mcp.json"
     fi
 
+    section "templates"
     remove_templates "$_dst"
+    section "settings"
     strip_managed_hooks "$_settings"
+    section "mcp"
     strip_mcp_entry "$_mcp"
+    section "binaries"
     remove_binaries
-    [ "$MODE" = "global" ] && remove_fastembed_cache
-    [ "$MODE" = "global" ] && strip_all_rc_files
+    if [ "$MODE" = "global" ]; then
+        section "fastembed cache"
+        remove_fastembed_cache
+        section "PATH"
+        strip_all_rc_files
+    fi
 
     # Clean up now-empty bin dirs. $HOANGSA_CLI_DIR and $HOANGSA_INSTALL_DIR/bin
     # may be the same path — `rmdir_if_empty` is a no-op if already gone.
@@ -466,9 +480,11 @@ main() {
     rmdir_if_empty "$HOANGSA_INSTALL_DIR/bin"
 
     if [ "$PURGE" -eq 1 ]; then
+        section "purge"
         purge_install_dir
     fi
 
+    section "done"
     info "uninstall complete"
     if [ "$DRY_RUN" -eq 0 ] && [ "$MODE" = "global" ]; then
         info "open a new shell (or source your rc file) so PATH changes take effect"

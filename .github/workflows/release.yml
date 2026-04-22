@@ -98,7 +98,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          install -m 0755 scripts/install.sh dist/install.sh
+          # Bundle scripts/lib/ui.sh into dist/install.sh so the curl|sh
+          # endpoint stays a single self-contained file. The awk pass
+          # strips the runtime source line from the script body.
+          cat scripts/lib/ui.sh > dist/install.sh
+          awk '!/^\. "\$\(dirname "\$0"\)\/lib\/ui\.sh"$/' \
+              scripts/install.sh >> dist/install.sh
+          chmod 0755 dist/install.sh
+          sh -n dist/install.sh
 
           for triple in darwin-arm64 darwin-x64 linux-x64 linux-arm64 linux-x64-musl; do
             stage="stage/$triple"

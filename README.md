@@ -25,7 +25,7 @@ The installer ships pre-built native binaries — no Node, no `npm`, no `cargo` 
 
 Supported platforms: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `linux-x64-musl`.
 
-Flags (forwarded to `hoangsa-cli install`): `--global` (default), `--local`, `--install-chroma`, `--dry-run`.
+Flags: `--global` (default), `--local`, `--dry-run`, `--no-embed` (skip pre-downloading the fastembed weights; they fetch lazily on first use).
 
 To uninstall, run `scripts/uninstall.sh --global` (or `--local`) from a checkout of the repo. Pass `--purge` to also delete `~/.hoangsa` (templates + memory data).
 
@@ -84,7 +84,7 @@ HOANGSA ships with **hoangsa-memory**, a local MCP server that gives Claude pers
 - **Auto-installed** by the installer: binaries land in `~/.hoangsa/bin/` and the MCP server is registered in your project's `.mcp.json`.
 - **State** per project lives under `~/.hoangsa/memory/projects/<slug>/` (MEMORY.md, LESSONS.md, USER.md + index).
 - **Hooks** installed into Claude Code settings: pre-edit rule enforcement, pre-edit lesson recall, post-tool event logging, and PreCompact / SessionEnd archive ingest for conversation recall.
-- **Archive search** (full conversation history) needs a chroma sidecar — optional, provision with `hoangsa-cli install --install-chroma`.
+- **Archive search** (full conversation history) uses the in-process fastembed vector store — no sidecar required. The installer pre-downloads the `multilingual-e5-small` weights (~4xx MB) into `~/.hoangsa/cache/fastembed/`; pass `--no-embed` to skip and fetch lazily on first use.
 
 Manual reindex: `/hoangsa:index` or `~/.hoangsa/bin/hoangsa-memory --json index .`
 

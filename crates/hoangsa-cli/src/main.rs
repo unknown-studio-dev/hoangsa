@@ -273,7 +273,7 @@ Usage:
   stats record '<json>'
   stats summary [--last N] [--complexity low|medium|high]
   stats cache [-n top] [-s session_id]
-  install [--global|--local] [--no-chroma] [--dry-run] [--task-manager=<clickup|asana|none>] [--no-memory] [--skip-path-edit]
+  install [--global|--local] [--dry-run] [--task-manager=<clickup|asana|none>] [--no-memory] [--skip-path-edit]
   bootstrap [--project <path>] [--force] [--json]
 "
             );

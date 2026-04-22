@@ -21,6 +21,12 @@
 
 set -eu
 
+# Source the shared UI lib (info/warn/err/section/render_summary/…). The
+# release workflow inlines scripts/lib/ui.sh above this line and strips the
+# source statement below, so curl|sh consumers get a single self-contained
+# file. Checkout users read the lib at runtime.
+. "$(dirname "$0")/lib/ui.sh"
+
 # ---------------------------------------------------------------------------
 # Config / constants
 # ---------------------------------------------------------------------------
@@ -34,20 +40,8 @@ HOANGSA_NO_PATH_EDIT="${HOANGSA_NO_PATH_EDIT:-}"
 SUPPORTED_TRIPLES="darwin-arm64 darwin-x64 linux-x64 linux-arm64 linux-x64-musl"
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers (info/warn/err are provided by lib/ui.sh)
 # ---------------------------------------------------------------------------
-
-info() {
-    printf '==> %s\n' "$*"
-}
-
-warn() {
-    printf 'warning: %s\n' "$*" >&2
-}
-
-err() {
-    printf 'error: %s\n' "$*" >&2
-}
 
 die() {
     code="$1"
@@ -70,8 +64,8 @@ USAGE:
 FLAGS (forwarded to `hoangsa-cli install`):
     --global            Install globally for the current user (default)
     --local             Install for the current project (cwd)
-    --no-chroma         Legacy no-op. The vector store is now in-process
-                        (fastembed) and needs no external bootstrap.
+    --no-embed          Skip pre-downloading the fastembed model weights.
+                        Weights will fetch lazily on first index/query.
     --dry-run           Print actions without writing files
     --help, -h          Show this help and exit
 
@@ -98,7 +92,7 @@ EOF
 PASSTHROUGH=""
 HAS_MODE_FLAG=0
 IS_GLOBAL=0
-SKIP_CHROMA=0
+SKIP_EMBED=0
 
 append_arg() {
     # Append a shell-quoted arg to PASSTHROUGH so we can re-expand with `eval`.
@@ -126,14 +120,8 @@ for arg in "$@"; do
             HAS_MODE_FLAG=1
             append_arg "$arg"
             ;;
-        --install-chroma)
-            # Legacy flag: venv bootstrap is now the default. Keep accepting
-            # it silently so `--install-chroma` in existing scripts still
-            # works, but don't forward it — `hoangsa-cli install` no longer
-            # needs to know about it.
-            ;;
-        --no-chroma)
-            SKIP_CHROMA=1
+        --no-embed)
+            SKIP_EMBED=1
             ;;
         --dry-run)
             append_arg "$arg"
@@ -535,10 +523,7 @@ resolve_tag() {
 # `query` / `archive ingest` call doesn't stall 30–60 s on a
 # HuggingFace fetch. Failure is non-fatal — the weights will be fetched
 # lazily on first use instead.
-#
-# The old `install_chroma_venv` function name is preserved so existing
-# shell wrappers that call it don't break.
-install_chroma_venv() {
+prefetch_embed_model() {
     _bin="$HOANGSA_INSTALL_DIR/bin/hoangsa-memory"
     if [ ! -x "$_bin" ]; then
         info "vector store: hoangsa-memory not found at $_bin — skipping prefetch"
@@ -554,7 +539,8 @@ install_chroma_venv() {
 # ---------------------------------------------------------------------------
 
 main() {
-    info "hoangsa installer starting"
+    ui_banner "${HOANGSA_VERSION}"
+    section "detect"
     detect_triple
     check_prereqs
     resolve_tag
@@ -572,6 +558,7 @@ main() {
     TARBALL_URL="$BASE_URL/$TARBALL_NAME"
     SUMS_URL="$BASE_URL/SHA256SUMS"
 
+    section "download"
     info "downloading $TARBALL_NAME"
     fetch_to "$TARBALL_URL" "$TMP/$TARBALL_NAME" \
         || die 1 "failed to download $TARBALL_URL"
@@ -612,7 +599,7 @@ main() {
     fi
 
     # Install destinations — memory bins are per-user shared, CLI goes to its own dir.
-    info "installing binaries"
+    section "install bins"
     mkdir -p "$HOANGSA_INSTALL_DIR/bin" "$HOANGSA_CLI_DIR"
 
     CLI_SRC="$PKG_DIR/bin/hoangsa-cli"
@@ -628,6 +615,7 @@ main() {
             warn "missing binary $_src (skipping)"
             return 0
         fi
+        info "installing $(basename "$_src") -> $_dst"
         _tmp="$_dst.new.$$"
         cp "$_src" "$_tmp"
         chmod 0755 "$_tmp"
@@ -665,18 +653,13 @@ main() {
         export CLAUDE_CONFIG_DIR
     fi
 
-    # Stage templates + memory bins in a persistent directory OUTSIDE $TMP so
-    # the exec'd CLI can read them after the shell-exit trap fires. (Bug G:
-    # `exec` replaces this shell with the Rust CLI; the EXIT trap fires right
-    # before the exec completes and races against the CLI's reads of
-    # HOANGSA_TEMPLATES_DIR / HOANGSA_STAGING_DIR.)
-    #
-    # Layout after staging (matches relocate::staging_dir_from_env's contract):
-    #     $STAGING/templates/   <- HOANGSA_TEMPLATES_DIR
-    #     $STAGING/bin/         <- hoangsa-memory, hoangsa-memory-mcp
+    # Stage templates in a persistent directory OUTSIDE $TMP so the CLI can
+    # read them after our $TMP cleanup. The memory bins were already installed
+    # to their final home above, so only templates need staging.
     #
     # Cleanup is the CLI's responsibility. On systems with `/tmp` cleanup
     # (macOS, systemd-tmpfiles on Linux) a leaked staging dir is benign.
+    section "staging"
     STAGING=$(mktemp -d "${TMPDIR:-/tmp}/hoangsa-staging.XXXXXX" 2>/dev/null \
         || mktemp -d -t hoangsa-staging)
     if [ -z "$STAGING" ] || [ ! -d "$STAGING" ]; then
@@ -684,47 +667,47 @@ main() {
     fi
 
     if [ -d "$PKG_DIR/templates" ]; then
-        mkdir -p "$STAGING"
         mv "$PKG_DIR/templates" "$STAGING/templates" \
             || die 1 "failed to stage templates into $STAGING/templates"
         HOANGSA_TEMPLATES_DIR="$STAGING/templates"
         export HOANGSA_TEMPLATES_DIR
+        info "staged templates -> $STAGING/templates"
     fi
 
-    # Move memory bins into $STAGING/bin so relocate::source_memory_bins can
-    # find them via the staging/bin/ convention. Only move what's present —
-    # install_bin earlier just warns for missing bins.
-    mkdir -p "$STAGING/bin"
-    for _bin in hoangsa-memory hoangsa-memory-mcp; do
-        if [ -f "$PKG_DIR/bin/$_bin" ]; then
-            mv "$PKG_DIR/bin/$_bin" "$STAGING/bin/$_bin" \
-                || die 1 "failed to stage $_bin into $STAGING/bin"
-        fi
-    done
-
-    HOANGSA_STAGING_DIR="$STAGING"
-    export HOANGSA_STAGING_DIR
-
-    # Provision the ChromaDB sidecar venv unless --no-chroma was passed.
-    # Runs before the exec so the CLI inherits a ready-to-use environment.
-    if [ "$SKIP_CHROMA" -eq 0 ]; then
-        install_chroma_venv
+    # Pre-download the fastembed model weights unless --no-embed was passed.
+    # Runs before the CLI hand-off so the CLI inherits a warm cache.
+    if [ "$SKIP_EMBED" -eq 0 ]; then
+        prefetch_embed_model
     else
-        info "--no-chroma — skipping ChromaDB venv bootstrap"
+        info "--no-embed — skipping fastembed model pre-download"
     fi
 
-    # Clear the cleanup trap before `exec`. $TMP still gets rm'd here because
-    # we drop the trap only after consuming everything we needed from it; the
-    # tarball + checksums are no longer referenced.
+    # Clear the cleanup trap now that we're done with $TMP. We drop the trap
+    # only after consuming everything we needed from it; the tarball +
+    # checksums are no longer referenced.
     rm -rf "$TMP"
     trap - EXIT INT TERM
 
-    # Hand off to the CLI for the real install work. Use eval to re-expand the
-    # quoted PASSTHROUGH string built during arg parse.
+    # Hand off to the CLI for the real install work. Unlike the old `exec`
+    # path, we capture stdout so the final JSON summary can be rendered as
+    # pretty UI via render_summary / render_dry_run. Stderr stays attached to
+    # the user's terminal so CLI diagnostics stream in real time.
     HOANGSA_CLI="$HOANGSA_CLI_DIR/hoangsa-cli"
-    info "executing: $HOANGSA_CLI install $PASSTHROUGH"
+    section "cli"
+    info "running: $HOANGSA_CLI install $PASSTHROUGH"
+
+    _cli_out=""
+    _cli_exit=0
     # shellcheck disable=SC2086
-    eval exec "\"$HOANGSA_CLI\"" install $PASSTHROUGH
+    _cli_out=$(eval "\"$HOANGSA_CLI\"" install $PASSTHROUGH) || _cli_exit=$?
+
+    # Dispatch on --dry-run because the preview JSON has a different shape
+    # (status=preview, actions[]) than the final summary.
+    case " $PASSTHROUGH " in
+        *\'--dry-run\'*) render_dry_run "$_cli_out" ;;
+        *)               render_summary "$_cli_out" ;;
+    esac
+    exit "$_cli_exit"
 }
 
 # Allow sourcing for tests without running main.
