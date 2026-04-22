@@ -5,6 +5,7 @@ pub mod commit;
 pub mod config;
 pub mod context;
 pub mod dag;
+pub mod guidance;
 pub mod hook;
 pub mod install;
 #[cfg(feature = "media")]

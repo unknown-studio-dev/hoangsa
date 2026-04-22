@@ -943,8 +943,9 @@ impl Server {
         let mut text = String::new();
         let mut memory_md: Option<String> = None;
         let mut lessons_md: Option<String> = None;
+        let mut user_md: Option<String> = None;
 
-        for name in ["MEMORY.md", "LESSONS.md"] {
+        for name in ["MEMORY.md", "LESSONS.md", "USER.md"] {
             text.push_str(&format!("─── {name} ───\n"));
             let p = self.inner.root.join(name);
             let body = match tokio::fs::read_to_string(&p).await {
@@ -960,12 +961,14 @@ impl Server {
             match name {
                 "MEMORY.md" => memory_md = body,
                 "LESSONS.md" => lessons_md = body,
+                "USER.md" => user_md = body,
                 _ => {}
             }
         }
         let data = json!({
             "memory_md": memory_md,
             "lessons_md": lessons_md,
+            "user_md": user_md,
         });
         Ok(ToolOutput::new(data, text))
     }

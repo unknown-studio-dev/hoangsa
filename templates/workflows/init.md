@@ -1200,6 +1200,24 @@ Project mới — skip indexing. Chạy /hoangsa:index sau khi có code.
 
 ---
 
+## Step 7b: Seed memory-guidance pointer
+
+Seed `.hoangsa/memory-guidance.md` and inject the pointer block into
+project-level `CLAUDE.md` + `AGENTS.md` so Claude Code and subagents load
+hoangsa-memory usage instructions at SessionStart. Idempotent — re-running
+replaces the block between `<!-- hoangsa-memory-start -->` / `<!-- hoangsa-memory-end -->`
+markers without touching anything else.
+
+```bash
+"$HOANGSA_ROOT/bin/hoangsa-cli" memory-guidance sync .
+```
+
+Run in both Flow A and Flow B — an empty project still benefits from the
+pointer so the first agent to land on the repo knows the memory tools are
+available.
+
+---
+
 ## Step 8: Report
 
 Retrieve memory and skills data for the report:

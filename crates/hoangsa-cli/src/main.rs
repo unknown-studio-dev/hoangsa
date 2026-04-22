@@ -188,6 +188,13 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        ("memory-guidance", "sync") => {
+            let dir = rest.first().copied().unwrap_or(&cwd);
+            if let Err(e) = cmd::guidance::cmd_sync(dir) {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
         ("stats", "record") => {
             cmd::stats::cmd_record(rest.first().copied());
         }
@@ -249,6 +256,7 @@ Usage:
   hook stop-check [sessions_dir]
   hook lesson-guard
   rule list|add|remove|enable|disable|sync|gate [projectDir] [args...]
+  memory-guidance sync [projectDir]
   verify [projectDir]
   media probe|frames|montage|diff|check-ffmpeg|install-ffmpeg
   budget estimate <plan_path> <task_id>

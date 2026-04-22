@@ -48,8 +48,8 @@ pub async fn run_show(root: &Path) -> Result<()> {
 
     // No daemon — read the files directly. We deliberately do NOT call
     // `StoreRoot::open` here: that would acquire the redb lock just to
-    // read two markdown files, and collide with a daemon that raced us.
-    for name in ["MEMORY.md", "LESSONS.md"] {
+    // read the markdown files, and collide with a daemon that raced us.
+    for name in ["MEMORY.md", "LESSONS.md", "USER.md"] {
         let p = root.join(name);
         println!("─── {name} ───");
         match tokio::fs::read_to_string(&p).await {
