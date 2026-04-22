@@ -22,9 +22,7 @@
 
 pub mod cap;
 pub mod config;
-pub mod lesson_matcher;
 pub mod manager;
-pub mod rules;
 pub mod text_sim;
 pub mod working;
 
