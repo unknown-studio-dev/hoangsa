@@ -10,8 +10,9 @@ use std::path::Path;
 /// fix/research/audit sessions from menu sessions.
 ///
 /// Logic:
-///   - No session or no state.json → approve
-///   - status="cooking" + plan.json has pending/running tasks → block
+///   - status="cooking" + plan.json has pending/running tasks → approve-with-warning
+///   - session did real work (enforcement.events non-empty) + no sentinel +
+///     stop_hook_active=false → block with memory-reflect prompt, write sentinel
 ///   - Everything else → approve
 ///
 /// Archival NOT triggered here — Stop fires every turn and the
@@ -20,6 +21,11 @@ use std::path::Path;
 /// and SessionEnd (see `cmd_session_archive`) where each fire does real
 /// work.
 pub fn cmd_stop_check(sessions_dir: Option<&str>, cwd: &str) {
+    // Drain stdin once — Claude Code pipes the Stop payload here.
+    // `read_to_string` returns at EOF, which Claude Code closes after sending.
+    let mut stdin_raw = String::new();
+    let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut stdin_raw);
+
     let dir = sessions_dir.map(|s| s.to_string()).unwrap_or_else(|| {
         Path::new(cwd)
             .join(".hoangsa")
@@ -28,53 +34,102 @@ pub fn cmd_stop_check(sessions_dir: Option<&str>, cwd: &str) {
             .to_string()
     });
 
-    let latest = find_latest_session(&dir);
-    let session_dir = match latest {
-        Some(d) => d,
-        None => {
-            out(&json!({"decision": "approve"}));
-            return;
-        }
-    };
-
-    let state_path = Path::new(&session_dir).join("state.json");
-    if !state_path.exists() {
-        out(&json!({"decision": "approve"}));
-        return;
-    }
-
-    let state = read_json(state_path.to_str().unwrap_or(""));
-    if state.get("error").is_some() {
-        // Can't read state → don't block
-        out(&json!({"decision": "approve"}));
-        return;
-    }
-
-    let status = state["status"].as_str().unwrap_or("");
-
-    // Only block during active cooking with incomplete tasks
-    if status == "cooking" {
-        let plan_path = Path::new(&session_dir).join("plan.json");
-        if plan_path.exists() {
-            let plan = read_json(plan_path.to_str().unwrap_or(""));
-            if plan.get("error").is_none() {
-                let pending = count_incomplete_tasks(&plan);
-                if pending > 0 {
-                    out(&json!({
-                        "decision": "approve",
-                        "reason": format!(
-                            "⚠️ HOANGSA: Workflow incomplete — {} task(s) still pending/running in session {}. You MUST complete all tasks before finishing. If you need user input, ask and then continue working.",
-                            pending,
-                            state["session_id"].as_str().unwrap_or("unknown")
-                        )
-                    }));
-                    return;
+    if let Some(session_dir) = find_latest_session(&dir) {
+        let state_path = Path::new(&session_dir).join("state.json");
+        if state_path.exists() {
+            let state = read_json(state_path.to_str().unwrap_or(""));
+            if state.get("error").is_none() && state["status"].as_str() == Some("cooking") {
+                let plan_path = Path::new(&session_dir).join("plan.json");
+                if plan_path.exists() {
+                    let plan = read_json(plan_path.to_str().unwrap_or(""));
+                    if plan.get("error").is_none() {
+                        let pending = count_incomplete_tasks(&plan);
+                        if pending > 0 {
+                            out(&json!({
+                                "decision": "approve",
+                                "reason": format!(
+                                    "⚠️ HOANGSA: Workflow incomplete — {} task(s) still pending/running in session {}. You MUST complete all tasks before finishing. If you need user input, ask and then continue working.",
+                                    pending,
+                                    state["session_id"].as_str().unwrap_or("unknown")
+                                )
+                            }));
+                            return;
+                        }
+                    }
                 }
             }
         }
     }
 
-    out(&json!({"decision": "approve"}));
+    match evaluate_reflect_prompt(cwd, &stdin_raw) {
+        ReflectOutcome::Skip => out(&json!({"decision": "approve"})),
+        ReflectOutcome::Prompt(reason) => out(&json!({
+            "decision": "block",
+            "reason": reason,
+        })),
+    }
+}
+
+/// Reason text injected into the Stop hook when the session did real work
+/// but the agent hasn't reflected yet. Surfaces as a system message the
+/// agent must respond to before the conversation can terminate.
+const REFLECT_REASON: &str = "HOANGSA MEMORY: Before stopping, invoke the `memory-reflect` skill to distill durable learnings from this session into `memory_remember_fact` / `memory_remember_lesson` / `memory_remember_preference`. See `templates/snippets/memory-reflect-end.md` for the decision checklist. If nothing is worth persisting, briefly say so and stop.";
+
+enum ReflectOutcome {
+    /// No prompt needed — approve the Stop.
+    Skip,
+    /// Block the Stop and inject `reason` as a system message so the
+    /// agent runs memory-reflect before terminating.
+    Prompt(String),
+}
+
+/// Pure-ish decision for the reflect prompt. Writes the sentinel as a
+/// side effect when it returns `Prompt` so the next Stop in this session
+/// short-circuits to `Skip`.
+fn evaluate_reflect_prompt(cwd: &str, stdin_raw: &str) -> ReflectOutcome {
+    let payload: serde_json::Value =
+        serde_json::from_str(stdin_raw.trim()).unwrap_or(json!({}));
+
+    // Claude Code sets stop_hook_active=true while it is already continuing
+    // from a previous Stop-hook block. Re-blocking here would loop forever.
+    let stop_hook_active = payload
+        .get("stop_hook_active")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if stop_hook_active {
+        return ReflectOutcome::Skip;
+    }
+
+    let sentinel = reflect_sentinel_path(cwd);
+    if sentinel.exists() {
+        return ReflectOutcome::Skip;
+    }
+
+    // `state-clear` wipes enforcement.events at SessionStart, so a
+    // non-empty file means the agent did impact/recall/detect_changes or
+    // an Edit/Write that produced a drift event this session. That's the
+    // cheapest "real work happened" signal available without reading
+    // episodes.db or shelling out to git.
+    let has_work = fs::metadata(enforcement_events_path(cwd))
+        .map(|m| m.len() > 0)
+        .unwrap_or(false);
+    if !has_work {
+        return ReflectOutcome::Skip;
+    }
+
+    if let Some(parent) = sentinel.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(&sentinel, "");
+
+    ReflectOutcome::Prompt(REFLECT_REASON.to_string())
+}
+
+fn reflect_sentinel_path(cwd: &str) -> std::path::PathBuf {
+    Path::new(cwd)
+        .join(".hoangsa")
+        .join("state")
+        .join("reflected.sentinel")
 }
 
 /// `hook lesson-guard`
@@ -558,9 +613,15 @@ pub fn cmd_session_archive() {
 
 /// `hook session-start`
 ///
-/// Fires on Claude Code SessionStart. Decides whether the project needs
-/// a one-shot post-install bootstrap (source index + archive ingest +
-/// memory skeleton seed) and spawns a detached worker if so.
+/// Fires on Claude Code SessionStart. Two responsibilities:
+///
+/// 1. Decide whether the project needs a one-shot post-install bootstrap
+///    (source index + archive ingest + memory skeleton seed) and spawn a
+///    detached worker if so.
+/// 2. Emit `hookSpecificOutput.additionalContext` with the current
+///    USER.md + MEMORY.md + LESSONS.md content so the agent sees
+///    preferences / facts / lessons at the top of every session. Previously
+///    the docs claimed this happened but no code path did it.
 ///
 /// MUST return in <100 ms — opt-out checks + sentinel read + spawn are
 /// all pure file-system ops. Failures (no memory bin, HOME unset,
@@ -579,13 +640,89 @@ pub fn cmd_session_start(cwd: &str) {
             }
         }
         Err(r) => {
-            // Leak the string into a &'static for the JSON response
-            // below — keep cmd output minimal, matching session-archive.
             let _ = r;
             "skipped"
         }
     };
-    out(&json!({"decision": "approve", "bootstrap": reason}));
+
+    let additional_context = hoangsa_memory_root(cwd)
+        .as_deref()
+        .and_then(compose_session_start_context);
+
+    let mut response = json!({"decision": "approve", "bootstrap": reason});
+    if let Some(ctx) = additional_context {
+        response["hookSpecificOutput"] = json!({
+            "hookEventName": "SessionStart",
+            "additionalContext": ctx,
+        });
+    }
+    out(&response);
+}
+
+/// Resolve the same memory root the MCP server uses. Kept in sync with
+/// `hoangsa_memory::resolve::resolve_root` — `hoangsa-cli` can't depend
+/// on the full memory crate (would pull in graph, vector store, fastembed)
+/// just to read three markdown files, so the chain is duplicated.
+///
+/// Returns `None` if `HOME` is unset and no local/env root is populated.
+fn hoangsa_memory_root(cwd: &str) -> Option<std::path::PathBuf> {
+    if let Ok(env) = std::env::var("HOANGSA_MEMORY_ROOT") {
+        let p = std::path::PathBuf::from(env);
+        if !p.as_os_str().is_empty() {
+            return Some(p);
+        }
+    }
+    let local = Path::new(cwd).join(".hoangsa").join("memory");
+    let local_populated = local
+        .join("graph.redb")
+        .metadata()
+        .map(|m| m.is_file() && m.len() > 4096)
+        .unwrap_or(false);
+    if local_populated {
+        return Some(local);
+    }
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from)?;
+    let slug = project_slug(Path::new(cwd));
+    Some(
+        home.join(".hoangsa")
+            .join("memory")
+            .join("projects")
+            .join(slug),
+    )
+}
+
+/// Read `USER.md` + `MEMORY.md` + `LESSONS.md` from the memory root and
+/// compose them into a single `additionalContext` blob for the
+/// SessionStart hook. Returns `None` when all three files are missing or
+/// empty — we don't want to inject a header-only section.
+fn compose_session_start_context(root: &Path) -> Option<String> {
+    let surfaces = [
+        ("USER.md", "user preferences"),
+        ("MEMORY.md", "project facts"),
+        ("LESSONS.md", "project lessons"),
+    ];
+
+    let mut body = String::new();
+    let mut any = false;
+    for (filename, label) in surfaces {
+        let Ok(content) = fs::read_to_string(root.join(filename)) else {
+            continue;
+        };
+        if content.trim().is_empty() {
+            continue;
+        }
+        any = true;
+        body.push_str(&format!(
+            "─── {filename} ({label}) ───\n{}\n\n",
+            content.trim_end()
+        ));
+    }
+    if !any {
+        return None;
+    }
+    Some(format!(
+        "## hoangsa-memory (auto-injected at SessionStart)\n\n{body}"
+    ))
 }
 
 /// Count tasks with status other than "completed", "done", "skipped".
@@ -1596,6 +1733,7 @@ pub fn cmd_state_check(cwd: &str, args: &[&str]) {
 pub fn cmd_state_clear(cwd: &str) {
     let events_path = enforcement_events_path(cwd);
     let _ = fs::remove_file(&events_path);
+    let _ = fs::remove_file(reflect_sentinel_path(cwd));
 
     // Best-effort: read SessionStart payload (if any) and handle /clear.
     let mut raw = String::new();
@@ -2038,6 +2176,160 @@ mod tests {
         assert_eq!(
             p.to_string_lossy(),
             "/tmp/project/.hoangsa/state/enforcement.events"
+        );
+    }
+
+    // ── reflect prompt ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_reflect_sentinel_path() {
+        let p = reflect_sentinel_path("/tmp/project");
+        assert_eq!(
+            p.to_string_lossy(),
+            "/tmp/project/.hoangsa/state/reflected.sentinel"
+        );
+    }
+
+    fn seed_events_file(cwd: &std::path::Path) {
+        let events = enforcement_events_path(cwd.to_str().unwrap());
+        fs::create_dir_all(events.parent().unwrap()).unwrap();
+        fs::write(&events, "{\"event\":\"impact\"}\n").unwrap();
+    }
+
+    #[test]
+    fn reflect_prompts_when_work_done_and_no_sentinel() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().to_str().unwrap();
+        seed_events_file(tmp.path());
+
+        let outcome = evaluate_reflect_prompt(cwd, "{}");
+        match outcome {
+            ReflectOutcome::Prompt(reason) => {
+                assert!(reason.contains("memory-reflect"), "reason: {reason}");
+            }
+            ReflectOutcome::Skip => panic!("expected Prompt, got Skip"),
+        }
+        // Sentinel must be written so the next Stop short-circuits.
+        assert!(reflect_sentinel_path(cwd).exists());
+    }
+
+    #[test]
+    fn reflect_skips_when_stop_hook_active() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().to_str().unwrap();
+        seed_events_file(tmp.path());
+
+        let outcome =
+            evaluate_reflect_prompt(cwd, r#"{"stop_hook_active":true}"#);
+        assert!(matches!(outcome, ReflectOutcome::Skip));
+        // Must NOT write the sentinel — avoids suppressing the next session.
+        assert!(!reflect_sentinel_path(cwd).exists());
+    }
+
+    #[test]
+    fn reflect_skips_when_sentinel_already_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().to_str().unwrap();
+        seed_events_file(tmp.path());
+        let sentinel = reflect_sentinel_path(cwd);
+        fs::create_dir_all(sentinel.parent().unwrap()).unwrap();
+        fs::write(&sentinel, "").unwrap();
+
+        let outcome = evaluate_reflect_prompt(cwd, "{}");
+        assert!(matches!(outcome, ReflectOutcome::Skip));
+    }
+
+    #[test]
+    fn reflect_skips_when_no_work_recorded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().to_str().unwrap();
+        // No events file at all.
+        let outcome = evaluate_reflect_prompt(cwd, "{}");
+        assert!(matches!(outcome, ReflectOutcome::Skip));
+        assert!(!reflect_sentinel_path(cwd).exists());
+    }
+
+    #[test]
+    fn reflect_skips_when_events_file_is_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().to_str().unwrap();
+        let events = enforcement_events_path(cwd);
+        fs::create_dir_all(events.parent().unwrap()).unwrap();
+        fs::write(&events, "").unwrap();
+
+        let outcome = evaluate_reflect_prompt(cwd, "{}");
+        assert!(matches!(outcome, ReflectOutcome::Skip));
+        assert!(!reflect_sentinel_path(cwd).exists());
+    }
+
+    #[test]
+    fn reflect_tolerates_malformed_stdin() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().to_str().unwrap();
+        seed_events_file(tmp.path());
+        // Garbage stdin falls back to default payload → stop_hook_active=false.
+        let outcome = evaluate_reflect_prompt(cwd, "not-json-at-all");
+        assert!(matches!(outcome, ReflectOutcome::Prompt(_)));
+    }
+
+    // ── SessionStart inject ──────────────────────────────────────────────────
+
+    #[test]
+    fn compose_session_start_context_none_when_all_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(compose_session_start_context(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn compose_session_start_context_skips_empty_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Whitespace-only file must be treated as empty.
+        fs::write(tmp.path().join("MEMORY.md"), "   \n\n").unwrap();
+        assert!(compose_session_start_context(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn compose_session_start_context_includes_present_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp.path().join("USER.md"),
+            "# USER.md\n### prefer Vietnamese responses\ntags: language\n",
+        )
+        .unwrap();
+        fs::write(
+            tmp.path().join("LESSONS.md"),
+            "# LESSONS.md\n### editing migrations\nrun sqlx prepare after\n",
+        )
+        .unwrap();
+        // MEMORY.md intentionally missing.
+
+        let ctx = compose_session_start_context(tmp.path()).expect("ctx");
+        assert!(ctx.contains("hoangsa-memory"));
+        assert!(ctx.contains("USER.md"));
+        assert!(ctx.contains("prefer Vietnamese responses"));
+        assert!(ctx.contains("LESSONS.md"));
+        assert!(ctx.contains("editing migrations"));
+        assert!(
+            !ctx.contains("─── MEMORY.md"),
+            "missing file must not produce a header"
+        );
+    }
+
+    #[test]
+    fn state_clear_removes_reflect_sentinel() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().to_str().unwrap();
+        let sentinel = reflect_sentinel_path(cwd);
+        fs::create_dir_all(sentinel.parent().unwrap()).unwrap();
+        fs::write(&sentinel, "").unwrap();
+        seed_events_file(tmp.path());
+
+        cmd_state_clear(cwd);
+
+        assert!(!sentinel.exists(), "sentinel must be wiped on SessionStart");
+        assert!(
+            !enforcement_events_path(cwd).exists(),
+            "events file must be wiped on SessionStart"
         );
     }
 

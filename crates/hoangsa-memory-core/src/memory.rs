@@ -130,6 +130,17 @@ pub struct Lesson {
     pub block_message: Option<String>,
 }
 
+/// A user preference recorded in `USER.md`. First-person, cross-project
+/// workflow choices written by `memory_remember_preference`. No enforcement
+/// tier, no counters, no scope — preferences are always visible.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Preference {
+    /// Human-readable preference text (first line = title).
+    pub text: String,
+    /// Optional tags for filtering.
+    pub tags: Vec<String>,
+}
+
 /// A procedural skill — stored as a directory under `.hoangsa/memory/skills/`,
 /// compatible with the `agentskills.io` standard.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -59,7 +59,9 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use hoangsa_memory_core::{Enforcement, Fact, FactScope, Lesson, MemoryKind, MemoryMeta, Result, Skill};
+use hoangsa_memory_core::{
+    Enforcement, Fact, FactScope, Lesson, MemoryKind, MemoryMeta, Preference, Result, Skill,
+};
 use time::OffsetDateTime;
 use tokio::io::AsyncWriteExt;
 
@@ -125,6 +127,7 @@ impl From<&HistoryEntry> for HistoryEntryOnDisk {
 
 const MEMORY_MD: &str = "MEMORY.md";
 const LESSONS_MD: &str = "LESSONS.md";
+const USER_MD: &str = "USER.md";
 const MEMORY_PENDING_MD: &str = "MEMORY.pending.md";
 const LESSONS_PENDING_MD: &str = "LESSONS.pending.md";
 const LESSONS_QUARANTINED_MD: &str = "LESSONS.quarantined.md";
@@ -305,6 +308,48 @@ impl MarkdownStore {
     async fn append_lesson_to_file(&self, l: &Lesson) -> Result<()> {
         let path = self.root.join(LESSONS_MD);
         append_atomic(&path, &render_lesson(l)).await
+    }
+
+    // -- USER.md --------------------------------------------------------
+
+    /// Read every preference currently on disk.
+    ///
+    /// Writes to USER.md live in `hoangsa-memory-policy::cap::append_preference`;
+    /// this reader is what retrieval (`memory_recall`) and session-start
+    /// injection consume. No-op return on missing file.
+    pub async fn read_preferences(&self) -> Result<Vec<Preference>> {
+        let path = self.root.join(USER_MD);
+        let text = read_or_empty(&path).await?;
+        Ok(parse_preferences(&text))
+    }
+
+    /// Multi-token substring filter over [`Self::read_preferences`].
+    ///
+    /// Reads USER.md once and returns every preference that matches at
+    /// least one needle in text or tags. Same O(file_size + N) shape as
+    /// [`Self::grep_facts_multi`].
+    pub async fn grep_preferences_multi(
+        &self,
+        needles: &[impl AsRef<str>],
+    ) -> Result<Vec<Preference>> {
+        if needles.is_empty() {
+            return Ok(Vec::new());
+        }
+        let lowered: Vec<String> =
+            needles.iter().map(|n| n.as_ref().to_lowercase()).collect();
+        let all = self.read_preferences().await?;
+        Ok(all
+            .into_iter()
+            .filter(|p| {
+                let text_lc = p.text.to_lowercase();
+                lowered.iter().any(|needle| {
+                    text_lc.contains(needle.as_str())
+                        || p.tags
+                            .iter()
+                            .any(|t| t.to_lowercase().contains(needle.as_str()))
+                })
+            })
+            .collect())
     }
 
     /// Rewrite `MEMORY.md` from scratch with the given facts in order.
@@ -770,6 +815,49 @@ fn parse_facts(text: &str) -> Vec<Fact> {
             text: fact_text,
             tags,
             scope,
+        });
+    }
+    out
+}
+
+fn parse_preferences(text: &str) -> Vec<Preference> {
+    let mut out = Vec::new();
+    let mut iter = text.lines().peekable();
+
+    while let Some(line) = iter.next() {
+        let Some(title) = line.strip_prefix("### ") else {
+            continue;
+        };
+        let mut body = String::new();
+        let mut tags = Vec::new();
+
+        while let Some(next) = iter.peek() {
+            if next.starts_with("### ") || next.starts_with("## ") || next.starts_with("# ") {
+                break;
+            }
+            let n = iter.next().unwrap();
+            if let Some(rest) = n.strip_prefix("tags:") {
+                tags = rest
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned)
+                    .collect();
+            } else if !n.trim().is_empty() || !body.is_empty() {
+                body.push_str(n);
+                body.push('\n');
+            }
+        }
+
+        let pref_text = if body.trim().is_empty() {
+            title.trim().to_string()
+        } else {
+            format!("{}\n{}", title.trim(), body.trim_end())
+        };
+
+        out.push(Preference {
+            text: pref_text,
+            tags,
         });
     }
     out
@@ -1326,6 +1414,89 @@ mod single_pass_grep_tests {
             results.is_empty(),
             "empty needle list must return empty results"
         );
+    }
+}
+
+#[cfg(test)]
+mod preference_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    async fn open_store() -> (TempDir, MarkdownStore) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MarkdownStore::open(dir.path()).await.unwrap();
+        (dir, store)
+    }
+
+    #[test]
+    fn parse_preferences_extracts_heading_body_tags() {
+        let text = "\
+# USER.md
+### prefer Vietnamese responses
+user is Vietnamese-native; translate long English tool output on request
+tags: language, workflow
+
+### never use git stash
+tags: git
+";
+        let prefs = parse_preferences(text);
+        assert_eq!(prefs.len(), 2);
+        assert!(prefs[0].text.starts_with("prefer Vietnamese responses"));
+        assert!(prefs[0].text.contains("Vietnamese-native"));
+        assert_eq!(prefs[0].tags, vec!["language", "workflow"]);
+        assert_eq!(prefs[1].text, "never use git stash");
+        assert_eq!(prefs[1].tags, vec!["git"]);
+    }
+
+    #[test]
+    fn parse_preferences_handles_empty_input() {
+        let prefs = parse_preferences("");
+        assert!(prefs.is_empty());
+    }
+
+    #[test]
+    fn parse_preferences_skips_preamble_without_heading() {
+        // Title-only file with no `### ` entries must yield nothing.
+        let prefs = parse_preferences("# USER.md\n\n");
+        assert!(prefs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn read_preferences_on_missing_file_returns_empty() {
+        let (_dir, store) = open_store().await;
+        let prefs = store.read_preferences().await.unwrap();
+        assert!(prefs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn grep_preferences_multi_matches_text_or_tags() {
+        let (dir, store) = open_store().await;
+        let path = dir.path().join("USER.md");
+        tokio::fs::write(
+            &path,
+            "# USER.md\n### prefer Vietnamese responses\ntags: language\n\n### use pnpm for installs\ntags: node\n",
+        )
+        .await
+        .unwrap();
+
+        // Text match
+        let hits = store.grep_preferences_multi(&["vietnamese"]).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].text.to_lowercase().contains("vietnamese"));
+
+        // Tag match
+        let hits = store.grep_preferences_multi(&["node"]).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].tags, vec!["node"]);
+
+        // Miss
+        let hits = store.grep_preferences_multi(&["nonexistent"]).await.unwrap();
+        assert!(hits.is_empty());
+
+        // Empty needles → empty result (not all preferences).
+        let empty: &[&str] = &[];
+        let hits = store.grep_preferences_multi(empty).await.unwrap();
+        assert!(hits.is_empty());
     }
 }
 

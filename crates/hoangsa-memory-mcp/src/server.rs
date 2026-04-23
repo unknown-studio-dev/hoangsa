@@ -801,6 +801,8 @@ impl Server {
             .await
         {
             Ok(()) => {
+                self.upsert_memory_vector("preference", &trimmed, &tags)
+                    .await;
                 let path = self.inner.root.join("USER.md");
                 let rendered = format!("committed to USER.md: {}", first_line(&trimmed));
                 let data = json!({
@@ -1063,12 +1065,32 @@ impl Server {
                     l.failure_count,
                 ));
             }
+            text.push('\n');
+        }
+
+        let mut preference_count = 0usize;
+        if scope == "all" || scope == "preferences" {
+            let preferences = md.read_preferences().await?;
+            preference_count = preferences.len();
+            text.push_str(&format!(
+                "=== PREFERENCES ({preference_count} preferences) ===\n"
+            ));
+            for (i, p) in preferences.iter().enumerate() {
+                let heading = first_nonempty_line(&p.text);
+                let tags = if p.tags.is_empty() {
+                    String::new()
+                } else {
+                    format!(" | tags: {}", p.tags.join(", "))
+                };
+                text.push_str(&format!("P{:02} | {heading}{tags}\n", i + 1));
+            }
         }
 
         let data = json!({
             "facts": fact_count,
             "facts_on_demand": on_demand_count,
             "lessons": lesson_count,
+            "preferences": preference_count,
         });
         Ok(ToolOutput::new(data, text))
     }
@@ -2406,7 +2428,7 @@ fn tools_catalog() -> Vec<Tool> {
         },
         Tool {
             name: "memory_show".to_string(),
-            description: "Return the current MEMORY.md and LESSONS.md as plain text. \
+            description: "Return the current MEMORY.md, LESSONS.md, and USER.md as plain text. \
                           For large memory sets, prefer memory_wakeup (compact index) + \
                           memory_detail (drill into specific entries)."
                 .to_string(),
@@ -2414,7 +2436,7 @@ fn tools_catalog() -> Vec<Tool> {
         },
         Tool {
             name: "memory_wakeup".to_string(),
-            description: "Compact one-line-per-entry index of facts and lessons. \
+            description: "Compact one-line-per-entry index of facts, lessons, and user preferences. \
                           By default only shows `always`-scope facts (core context). \
                           Pass `include_on_demand: true` to also show on-demand facts. \
                           Use at session start for a cheap overview, then call \
@@ -2425,7 +2447,7 @@ fn tools_catalog() -> Vec<Tool> {
                 "properties": {
                     "scope": {
                         "type": "string",
-                        "enum": ["all", "facts", "lessons"],
+                        "enum": ["all", "facts", "lessons", "preferences"],
                         "default": "all",
                         "description": "Which memory surface to index."
                     },

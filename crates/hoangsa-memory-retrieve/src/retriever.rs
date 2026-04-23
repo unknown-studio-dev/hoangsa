@@ -162,20 +162,22 @@ impl Retriever {
             .take(8)
             .collect();
 
-        // Stages 3 (graph), 4 (markdown), 4b (lessons) are independent
-        // once `seeds` are known — run them concurrently. Episodic is
-        // deliberately excluded from default recall: past-query echoes
-        // create a feedback loop (ask the same thing N times → own echoes
-        // rise to top-N) and add noise without signal. Callers who need
-        // episodic lookup use `memory_turns_search` explicitly.
-        let (graph_hits, md_hits, lesson_hits) = tokio::join!(
+        // Stages 3 (graph), 4 (markdown), 4b (lessons), 4c (preferences)
+        // are independent once `seeds` are known — run them concurrently.
+        // Episodic is deliberately excluded from default recall: past-query
+        // echoes create a feedback loop (ask the same thing N times → own
+        // echoes rise to top-N) and add noise without signal. Callers who
+        // need episodic lookup use `memory_turns_search` explicitly.
+        let (graph_hits, md_hits, lesson_hits, pref_hits) = tokio::join!(
             self.graph_stage(&seeds),
             self.markdown_stage(&search_text, &scope.tags),
             self.lessons_stage(&search_text),
+            self.preferences_stage(&search_text),
         );
         let graph_hits = filter_scope(graph_hits?, scope);
         let md_hits = md_hits?;
         let lesson_hits = lesson_hits?;
+        let pref_hits = pref_hits?;
 
         for (rank, cand) in graph_hits.iter().enumerate() {
             fuse(&mut fused, cand, rank);
@@ -192,6 +194,13 @@ impl Retriever {
         //     path (`LESSONS.md` vs `MEMORY.md`), which is enough for callers
         //     to tell them apart in renders.
         for (rank, cand) in lesson_hits.iter().enumerate() {
+            fuse(&mut fused, cand, rank);
+        }
+
+        // 4c. user preferences from USER.md — first-person workflow choices.
+        //     Fused alongside facts/lessons so recall surfaces them even
+        //     without tag filters.
+        for (rank, cand) in pref_hits.iter().enumerate() {
             fuse(&mut fused, cand, rank);
         }
 
@@ -396,6 +405,32 @@ impl Retriever {
             out.push(Candidate {
                 id,
                 path: PathBuf::from("LESSONS.md"),
+                start_line: 0,
+                end_line: 0,
+                symbol: None,
+                source: RetrievalSource::Markdown,
+                preview: Some(preview),
+            });
+        }
+        Ok(out)
+    }
+
+    /// Grep `USER.md` for preferences whose text or tags match any
+    /// meaningful token in the query. Same shape as [`Self::markdown_stage`]
+    /// but emits `preference — <title>` preview so callers can distinguish
+    /// the surface in renders. Ids are namespaced under `user.md:` so they
+    /// never collide with fact ids.
+    async fn preferences_stage(&self, text: &str) -> Result<Vec<Candidate>> {
+        let md: &MarkdownStore = &self.store.markdown;
+        let toks = tokens(text);
+        let prefs = md.grep_preferences_multi(&toks).await?;
+        let mut out = Vec::new();
+        for p in prefs {
+            let preview = format!("preference — {}", first_nonempty_line(&p.text));
+            let id = format!("user.md:{}", blake3::hash(p.text.as_bytes()).to_hex());
+            out.push(Candidate {
+                id,
+                path: PathBuf::from("USER.md"),
                 start_line: 0,
                 end_line: 0,
                 symbol: None,

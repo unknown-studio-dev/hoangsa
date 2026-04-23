@@ -21,7 +21,7 @@ pub mod query;
 pub use error::{Error, Result};
 pub use event::{Event, EventId, Outcome, UserSignal};
 pub use memory::{
-    Enforcement, Fact, FactScope, Lesson, LessonTrigger, MemoryKind, MemoryMeta, Skill,
+    Enforcement, Fact, FactScope, Lesson, LessonTrigger, MemoryKind, MemoryMeta, Preference, Skill,
 };
 pub use mode::Mode;
 pub use provider::{NudgeProposal, Prompt, Synthesis, Synthesizer};
