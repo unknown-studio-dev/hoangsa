@@ -29,6 +29,26 @@ fn main() {
         args.push(arg.clone());
     }
 
+    // ── --help / --version / help <topic> — handled before dispatch so every
+    // command gets a consistent `hoangsa-cli <cmd> --help` UX. Extracted early
+    // to keep the dispatch table below focused on real commands.
+    let is_help_flag = |a: &str| matches!(a, "--help" | "-h" | "help");
+    let is_version_flag = |a: &str| matches!(a, "--version" | "-V");
+
+    if args.iter().any(|a| is_version_flag(a)) {
+        println!("hoangsa-cli {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+    if args.is_empty() || args.iter().any(|a| is_help_flag(a)) {
+        // First non-flag, non-"help" token is the topic, if any.
+        let topic = args
+            .iter()
+            .find(|a| !is_help_flag(a) && !a.starts_with('-'))
+            .map(|s| s.as_str());
+        cmd::help::print_help(topic, false);
+        return;
+    }
+
     let cmd = args.first().map(|s| s.as_str()).unwrap_or("");
     let sub = args.get(1).map(|s| s.as_str()).unwrap_or("");
     let rest: Vec<&str> = args.iter().skip(2).map(|s| s.as_str()).collect();
@@ -264,49 +284,16 @@ fn main() {
             cmd::commit::cmd_commit(message, &files, &cwd);
         }
         _ => {
-            eprintln!("Unknown command: {cmd} {sub}");
-            eprintln!(
-                "
-Usage:
-  addon list <projectDir>
-  addon add <projectDir> '<json_array>'
-  addon remove <projectDir> '<json_array>'
-  plan task-ids <plan_path>
-  plan resolve <plan_path>
-  validate plan|spec|tests <path>
-  dag check|waves <plan_path>
-  session init <type> <name> [sessions_dir]
-  session latest|list [sessions_dir]
-  session usage [session_id] [sessions_dir]
-  commit \"<message>\" --files <f1> <f2> ...
-  resolve-model <role>
-  resolve-model --all
-  state init|get <sessionDir>
-  state update <sessionDir> <jsonPatch>
-  pref get [projectDir] [key]
-  pref set [projectDir] <key> <value>
-  config get|set <projectDir> [jsonPatch]
-  context pack|get <sessionDir> <taskId>
-  ctx <workflow> [session_id]
-  trust check <projectDir>
-  trust approve <fingerprint> <name>
-  trust revoke <fingerprint>
-  trust list
-  hook stop-check [sessions_dir]
-  hook lesson-guard
-  rule list|add|remove|enable|disable|sync|gate [projectDir] [args...]
-  memory-guidance sync [projectDir]
-  verify [projectDir]
-  media probe|frames|montage|diff|check-ffmpeg|install-ffmpeg
-  budget estimate <plan_path> <task_id>
-  budget breakdown <plan_path>
-  stats record '<json>'
-  stats summary [--last N] [--complexity low|medium|high]
-  stats cache [-n top] [-s session_id]
-  install [--global|--local] [--dry-run] [--task-manager=<clickup|asana|none>] [--no-memory] [--skip-path-edit]
-  bootstrap [--project <path>] [--force] [--json]
-"
-            );
+            eprintln!("Unknown command: {cmd} {sub}\n");
+            // If the user typed a real topic with a bogus subcommand (e.g.
+            // `hoangsa-cli rule foo`), show topic help. Otherwise the main
+            // banner.
+            let topic = if cmd::help::TOPICS.contains(&cmd) {
+                Some(cmd)
+            } else {
+                None
+            };
+            cmd::help::print_help(topic, true);
             std::process::exit(1);
         }
     }
