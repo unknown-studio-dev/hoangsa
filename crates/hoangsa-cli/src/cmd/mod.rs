@@ -8,6 +8,7 @@ pub mod context;
 pub mod ctx;
 pub mod dag;
 pub mod guidance;
+pub mod help;
 pub mod hook;
 pub mod install;
 #[cfg(feature = "media")]

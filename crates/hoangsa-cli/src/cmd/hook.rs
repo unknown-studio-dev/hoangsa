@@ -888,11 +888,17 @@ fn stateful_check(cwd: &str, tool_name: &str, tool_input: &serde_json::Value) ->
             }
         }
         "Bash" => {
-            if stateful_rule_enabled(cwd, "require-detect-changes") {
-                stateful_check_bash(cwd, tool_input)
-            } else {
-                None
+            if stateful_rule_enabled(cwd, "require-detect-changes")
+                && let Some(r) = stateful_check_bash(cwd, tool_input)
+            {
+                return Some(r);
             }
+            if stateful_rule_enabled(cwd, "no-git-add-ignored")
+                && let Some(r) = check_gitignore_add(cwd, tool_input)
+            {
+                return Some(r);
+            }
+            None
         }
         _ => None,
     }
@@ -944,6 +950,86 @@ fn stateful_check_bash(cwd: &str, tool_input: &serde_json::Value) -> Option<Enfo
         IntentOutcome::Block(reason) => Some(EnforceResult { decision: "block".to_string(), reason, warning: None }),
         IntentOutcome::Warn(w) => Some(EnforceResult { decision: "approve".to_string(), reason: String::new(), warning: Some(w) }),
     }
+}
+
+/// Rule `no-git-add-ignored`: Block `git add` of gitignored files early so
+/// the agent gets a specific error instead of a cryptic "git commit failed"
+/// after a silent `git add` exit 1.
+///
+/// Thin wrapper — does I/O (`git check-ignore`), delegates parsing to
+/// `parse_git_add_files` and the block message to `gitignore_block_reason`.
+fn check_gitignore_add(cwd: &str, tool_input: &serde_json::Value) -> Option<EnforceResult> {
+    let command = tool_input.get("command").and_then(|v| v.as_str())?;
+    let files = parse_git_add_files(command)?;
+    let reason = gitignore_block_reason(&files, |f| is_path_gitignored(cwd, f))?;
+    Some(EnforceResult { decision: "block".to_string(), reason, warning: None })
+}
+
+/// Pure: extract non-flag file args from a `git add ...` command.
+///
+/// Returns `None` when the command should not be checked by this rule:
+/// - Not a `git add` command (prefix mismatch).
+/// - Has `-f` / `--force` (covered by `no-git-add-force`).
+/// - Has `-A` / `--all` / `.` (covered by `warn-git-add-all`; enumerating
+///   ignored files in the working tree is out of scope for v1).
+/// - No file args.
+///
+/// Uses whitespace tokenisation — file paths with spaces (rare for source
+/// files) fall through this rule and hit the original git-add failure.
+fn parse_git_add_files(command: &str) -> Option<Vec<String>> {
+    let trimmed = command.trim_start();
+    let rest = trimmed.strip_prefix("git")?;
+    if !rest.starts_with(|c: char| c.is_whitespace()) {
+        return None;
+    }
+    let rest = rest.trim_start().strip_prefix("add")?;
+    if !rest.starts_with(|c: char| c.is_whitespace()) {
+        return None;
+    }
+    let tokens: Vec<&str> = rest.split_whitespace().collect();
+
+    let mut files: Vec<String> = Vec::new();
+    for tok in tokens {
+        if matches!(tok, "-f" | "--force" | "-A" | "--all" | ".") {
+            return None;
+        }
+        if tok.starts_with('-') {
+            continue;
+        }
+        files.push(tok.to_string());
+    }
+    if files.is_empty() {
+        None
+    } else {
+        Some(files)
+    }
+}
+
+/// Pure: given a list of file args and an `is_ignored` predicate, return the
+/// block reason if any file is ignored, else `None`.
+fn gitignore_block_reason<F: Fn(&str) -> bool>(files: &[String], is_ignored: F) -> Option<String> {
+    let ignored: Vec<&String> = files.iter().filter(|f| is_ignored(f)).collect();
+    if ignored.is_empty() {
+        return None;
+    }
+    let list = ignored.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
+    Some(format!(
+        "⛔ RULE VIOLATION: no-git-add-ignored\n\nRule: Block git add of gitignored files\nAction: BLOCK\n\ngit add contains gitignored files: {list}. Remove them from the command or update .gitignore."
+    ))
+}
+
+/// I/O: run `git check-ignore -q <path>` in `cwd`. Exit 0 = ignored.
+/// Any error (git missing, outside repo, etc.) → `false` (graceful degrade).
+fn is_path_gitignored(cwd: &str, path: &str) -> bool {
+    use std::process::{Command, Stdio};
+    Command::new("git")
+        .args(["check-ignore", "-q", path])
+        .current_dir(cwd)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 /// Outcome of a pure intent-guard check. Kept separate from `EnforceResult`
@@ -2413,5 +2499,99 @@ mod tests {
         assert_eq!(t.input, 10);
         assert_eq!(t.output, 20);
         assert_eq!(t.turns, 1);
+    }
+
+    // ── parse_git_add_files ──────────────────────────────────────────────────
+
+    #[test]
+    fn parse_git_add_files_simple() {
+        assert_eq!(
+            parse_git_add_files("git add foo.log").unwrap(),
+            vec!["foo.log".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_git_add_files_multiple() {
+        assert_eq!(
+            parse_git_add_files("git add foo.log bar.txt baz/qux.rs").unwrap(),
+            vec!["foo.log".to_string(), "bar.txt".to_string(), "baz/qux.rs".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_git_add_files_leading_whitespace() {
+        assert_eq!(
+            parse_git_add_files("   git add foo.log").unwrap(),
+            vec!["foo.log".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_git_add_files_not_git_add() {
+        assert!(parse_git_add_files("git commit -m 'hi'").is_none());
+        assert!(parse_git_add_files("git status").is_none());
+        assert!(parse_git_add_files("echo git add foo").is_none());
+        assert!(parse_git_add_files("gitadd foo").is_none()); // no space
+    }
+
+    #[test]
+    fn parse_git_add_files_skips_force() {
+        assert!(parse_git_add_files("git add -f foo.log").is_none());
+        assert!(parse_git_add_files("git add --force foo.log").is_none());
+    }
+
+    #[test]
+    fn parse_git_add_files_skips_all() {
+        assert!(parse_git_add_files("git add -A").is_none());
+        assert!(parse_git_add_files("git add --all").is_none());
+        assert!(parse_git_add_files("git add .").is_none());
+    }
+
+    #[test]
+    fn parse_git_add_files_empty_args() {
+        assert!(parse_git_add_files("git add").is_none());
+        assert!(parse_git_add_files("git add   ").is_none());
+    }
+
+    #[test]
+    fn parse_git_add_files_skips_other_flags() {
+        // -v is a real git-add flag; not covered by another rule — just pass through the files.
+        assert_eq!(
+            parse_git_add_files("git add -v foo.log").unwrap(),
+            vec!["foo.log".to_string()]
+        );
+    }
+
+    // ── gitignore_block_reason ───────────────────────────────────────────────
+
+    #[test]
+    fn gitignore_block_reason_none_when_clean() {
+        let files = vec!["a.rs".to_string(), "b.rs".to_string()];
+        assert!(gitignore_block_reason(&files, |_| false).is_none());
+    }
+
+    #[test]
+    fn gitignore_block_reason_blocks_on_any_ignored() {
+        let files = vec!["a.rs".to_string(), "foo.log".to_string()];
+        let reason = gitignore_block_reason(&files, |f| f.ends_with(".log")).expect("should block");
+        assert!(reason.contains("foo.log"), "reason should name the ignored file");
+        assert!(!reason.contains("a.rs"), "reason should not name clean files");
+        assert!(reason.contains("no-git-add-ignored"), "reason should cite the rule id");
+    }
+
+    #[test]
+    fn gitignore_block_reason_lists_all_ignored() {
+        let files = vec!["a.log".to_string(), "b.rs".to_string(), "c.log".to_string()];
+        let reason = gitignore_block_reason(&files, |f| f.ends_with(".log")).expect("should block");
+        assert!(reason.contains("a.log"));
+        assert!(reason.contains("c.log"));
+        assert!(!reason.contains("b.rs"));
+    }
+
+    #[test]
+    fn gitignore_block_reason_none_for_empty_files() {
+        let files: Vec<String> = vec![];
+        assert!(gitignore_block_reason(&files, |_| true).is_none());
     }
 }
