@@ -347,7 +347,10 @@ pub fn cmd_ctx(workflow: Option<&str>, session_id: Option<&str>, cwd: &str) {
             build_session_section(&session_dir.join("state.json")),
         ),
         ("Git context".to_string(), build_git_section(cwd)),
-        ("Project config (excerpt)".to_string(), build_config_section(cwd)),
+        (
+            "Project config (excerpt)".to_string(),
+            build_config_section(cwd),
+        ),
         (
             "Session artifacts".to_string(),
             build_artifacts_section(&session_dir),

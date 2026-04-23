@@ -2,6 +2,7 @@
 
 use std::path::Path;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use anyhow::Result;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -11,8 +12,21 @@ use hoangsa_memory_store::StoreRoot;
 
 use crate::open_vector_store;
 
+/// Window we wait for a booting daemon before falling through to
+/// direct mode. Covers the race between `Server::open` (store locks
+/// taken) and `UnixListener::bind` (socket accepting) at session start.
+const DAEMON_CONNECT_WAIT: Duration = Duration::from_secs(3);
+
+/// How long a direct-mode `index` waits on the per-project store lock
+/// before giving up. Long enough to sit behind a slow bootstrap on a
+/// large repo; short enough that a truly stuck writer reports instead
+/// of hanging forever.
+const STORE_LOCK_WAIT: Duration = Duration::from_secs(120);
+
 pub async fn run_index(root: &Path, src: &Path, json: bool) -> Result<()> {
-    if let Some(mut d) = crate::daemon::DaemonClient::try_connect(root).await {
+    if let Some(mut d) =
+        crate::daemon::DaemonClient::connect_or_wait(root, DAEMON_CONNECT_WAIT).await
+    {
         let result = d
             .call(
                 "memory_index",
@@ -32,6 +46,21 @@ pub async fn run_index(root: &Path, src: &Path, json: bool) -> Result<()> {
         }
         return Ok(());
     }
+
+    // Direct mode: no daemon to route through. Serialize with any
+    // other direct-mode CLI on the same project (typical case: the
+    // SessionStart bootstrap worker is still running).
+    let _store_lock = match crate::acquire_store_lock(root, STORE_LOCK_WAIT).await? {
+        Some(lock) => lock,
+        None => {
+            anyhow::bail!(
+                "another hoangsa-memory process has been indexing this project for >{}s; aborting. \
+                 If you believe it's stuck, remove {}/store.lock after confirming no index is running.",
+                STORE_LOCK_WAIT.as_secs(),
+                root.display()
+            );
+        }
+    };
 
     let store = StoreRoot::open(root).await?;
     // Honour `[index]` in `<root>/config.toml` — ignore patterns, max file
@@ -131,13 +160,16 @@ pub fn make_progress_bar() -> impl for<'a> Fn(IndexProgress<'a>) + Send + Sync +
             "embed" => {
                 if let Some(pb) = slot.as_ref() {
                     // First embed event resets the bar to chunk-scale.
+                    // `total` grows per event in streaming mode (phase A
+                    // hasn't finished when the first batch embeds), so
+                    // resize every tick — indicatif tolerates a growing
+                    // length without clobbering the position.
                     if ev.done == 0 {
-                        pb.set_length(ev.total as u64);
                         pb.set_position(0);
                         pb.set_message("embedding chunks");
-                    } else {
-                        pb.set_position(ev.done as u64);
                     }
+                    pb.set_length(ev.total as u64);
+                    pb.set_position(ev.done as u64);
                 }
             }
             "commit" => {
