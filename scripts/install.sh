@@ -675,6 +675,7 @@ main() {
     }
 
     install_bin "$CLI_SRC" "$HOANGSA_CLI_DIR/hoangsa-cli"
+    install_bin "$PKG_DIR/bin/hsp" "$HOANGSA_CLI_DIR/hsp"
     install_bin "$PKG_DIR/bin/hoangsa-memory" "$HOANGSA_INSTALL_DIR/bin/hoangsa-memory"
     install_bin "$PKG_DIR/bin/hoangsa-memory-mcp" "$HOANGSA_INSTALL_DIR/bin/hoangsa-memory-mcp"
 

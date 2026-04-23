@@ -48,7 +48,7 @@ jobs:
         shell: bash
         run: |
           cargo build --release --locked --target ${{ matrix.target }} \
-            -p hoangsa-cli -p hoangsa-memory -p hoangsa-memory-mcp
+            -p hoangsa-cli -p hoangsa-memory -p hoangsa-memory-mcp -p hoangsa-proxy
 
       - name: Stage binaries
         shell: bash
@@ -58,6 +58,7 @@ jobs:
           cp target/${{ matrix.target }}/release/hoangsa-cli         stage/bin/
           cp target/${{ matrix.target }}/release/hoangsa-memory      stage/bin/
           cp target/${{ matrix.target }}/release/hoangsa-memory-mcp  stage/bin/
+          cp target/${{ matrix.target }}/release/hsp                 stage/bin/
           chmod +x stage/bin/*
 
       - name: Upload artifact
@@ -104,6 +105,7 @@ jobs:
             cp "artifacts/hoangsa-$triple/hoangsa-cli"         "$stage/bin/hoangsa-cli"
             cp "artifacts/hoangsa-$triple/hoangsa-memory"      "$stage/bin/hoangsa-memory"
             cp "artifacts/hoangsa-$triple/hoangsa-memory-mcp"  "$stage/bin/hoangsa-memory-mcp"
+            cp "artifacts/hoangsa-$triple/hsp"                 "$stage/bin/hsp"
             chmod +x "$stage"/bin/*
 
             cp -r templates "$stage/templates"
