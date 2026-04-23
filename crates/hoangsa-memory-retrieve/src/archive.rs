@@ -171,6 +171,21 @@ fn strip_noise(text: &str) -> String {
 // tool use / tool result formatting
 // ---------------------------------------------------------------------------
 
+/// Truncate `s` to at most `max_bytes` bytes, snapping back to the
+/// previous char boundary so a multi-byte codepoint (em-dash, accented
+/// letter, emoji) is never split — slicing a `&str` on a non-boundary
+/// byte panics.
+fn truncate_on_char_boundary(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 fn format_tool_use(block: &serde_json::Value) -> Option<String> {
     let name = block.get("name")?.as_str()?;
     let input = block
@@ -181,7 +196,7 @@ fn format_tool_use(block: &serde_json::Value) -> Option<String> {
     Some(match name {
         "Bash" => {
             let cmd = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
-            let cmd = if cmd.len() > 200 { &cmd[..200] } else { cmd };
+            let cmd = truncate_on_char_boundary(cmd, 200);
             format!("[Bash] {cmd}")
         }
         "Read" => {
@@ -219,7 +234,7 @@ fn format_tool_use(block: &serde_json::Value) -> Option<String> {
         _ => {
             let summary = serde_json::to_string(&input).unwrap_or_default();
             let summary = if summary.len() > 200 {
-                format!("{}...", &summary[..200])
+                format!("{}...", truncate_on_char_boundary(&summary, 200))
             } else {
                 summary
             };
@@ -297,7 +312,11 @@ fn format_tool_result(content: &serde_json::Value, tool_name: &str) -> Option<St
         }
         _ => {
             if text.len() > 2048 {
-                format!("→ {}... [truncated, {} chars]", &text[..2048], text.len())
+                format!(
+                    "→ {}... [truncated, {} chars]",
+                    truncate_on_char_boundary(text, 2048),
+                    text.len()
+                )
             } else {
                 format!("→ {text}")
             }
@@ -311,11 +330,7 @@ fn format_tool_result(content: &serde_json::Value, tool_name: &str) -> Option<St
 
 fn detect_topic(text: &str) -> String {
     let lower = text.to_lowercase();
-    let sample = if lower.len() > 3000 {
-        &lower[..3000]
-    } else {
-        &lower
-    };
+    let sample = truncate_on_char_boundary(&lower, 3000);
 
     let keywords: &[(&str, &[&str])] = &[
         (
@@ -1075,4 +1090,45 @@ pub async fn run_ingest(
     }
 
     Ok(stats)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_on_char_boundary_snaps_back_on_multibyte() {
+        // `—` (U+2014 EM DASH) is 3 bytes. If max_bytes lands inside it,
+        // we must snap back to the previous boundary — the original bug
+        // was a raw `&s[..max_bytes]` which panicked here.
+        let s = "ab—cd";
+        assert_eq!(truncate_on_char_boundary(s, 3), "ab");
+        assert_eq!(truncate_on_char_boundary(s, 4), "ab");
+        assert_eq!(truncate_on_char_boundary(s, 5), "ab—");
+        assert_eq!(truncate_on_char_boundary(s, 100), s);
+    }
+
+    #[test]
+    fn truncate_on_char_boundary_handles_the_real_panic_input() {
+        // Regression: repro of the archive.rs:184 panic where byte 200
+        // fell inside an em-dash in a Bash command string.
+        let prefix = "x".repeat(198);
+        let s = format!("{prefix}—tail");
+        assert_eq!(s.len(), 198 + 3 + 4);
+        let out = truncate_on_char_boundary(&s, 200);
+        assert_eq!(out.len(), 198);
+        assert!(out.is_char_boundary(out.len()));
+    }
+
+    #[test]
+    fn format_tool_use_bash_with_multibyte_does_not_panic() {
+        let prefix = "x".repeat(198);
+        let cmd = format!("{prefix}— trailing comment past 200");
+        let block = serde_json::json!({
+            "name": "Bash",
+            "input": { "command": cmd },
+        });
+        let out = format_tool_use(&block).unwrap();
+        assert!(out.starts_with("[Bash] "));
+    }
 }

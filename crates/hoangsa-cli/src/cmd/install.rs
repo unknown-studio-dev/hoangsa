@@ -1698,6 +1698,14 @@ pnpm-lock.yaml
     /// (REQ-08, Decision #4). Emits a warning on stderr if the memory
     /// binary is absent — still writes the config so an ambient
     /// `PATH`-based bin keeps working.
+    ///
+    /// Also cleans up the orphan `$HOME/.claude/.claude.json` that pre-0.2.3
+    /// installers wrote when `CLAUDE_CONFIG_DIR` was auto-set to the default
+    /// `$HOME/.claude` — Claude Code without that env var reads
+    /// `$HOME/.claude.json`, so the MCP entry was invisible. Safe cleanup:
+    /// only removes the file when it matches the exact orphan signature
+    /// (top-level `{ "mcpServers": { "hoangsa-memory": { ... } } }` with
+    /// nothing else) and isn't the target we just wrote to.
     pub fn register_mcp_global() -> Result<(), String> {
         let claude_json = claude_json_path()?;
         let memory_bin = memory_mcp_bin()?;
@@ -1707,7 +1715,64 @@ pnpm-lock.yaml
                 memory_bin.display()
             );
         }
-        register_mcp_global_to(&claude_json, &memory_bin).map_err(|e| e.to_string())
+        register_mcp_global_to(&claude_json, &memory_bin).map_err(|e| e.to_string())?;
+
+        let orphan = super::home_path()?.join(".claude").join(".claude.json");
+        if let Err(e) = cleanup_orphan_claude_json(&orphan, &claude_json) {
+            eprintln!(
+                "install: warning — could not clean orphan {}: {}",
+                orphan.display(),
+                e
+            );
+        }
+        Ok(())
+    }
+
+    /// Remove `$HOME/.claude/.claude.json` when it is the stray file
+    /// written by pre-0.2.3 installs and is not the path we just wrote
+    /// to. Returns `Ok(true)` when a file was removed, `Ok(false)` when
+    /// the file is absent or does not match the orphan signature.
+    ///
+    /// Signature check: the root is a JSON object whose only key is
+    /// `mcpServers`, whose only key is `hoangsa-memory`. Any other
+    /// top-level key or any other MCP server means the user has
+    /// legitimate config there — never touch.
+    pub fn cleanup_orphan_claude_json(
+        orphan_path: &Path,
+        target_path: &Path,
+    ) -> io::Result<bool> {
+        if orphan_path == target_path {
+            return Ok(false);
+        }
+        let raw = match fs::read_to_string(orphan_path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(e),
+        };
+        let value: Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(_) => return Ok(false),
+        };
+        let root = match value.as_object() {
+            Some(o) => o,
+            None => return Ok(false),
+        };
+        if root.len() != 1 {
+            return Ok(false);
+        }
+        let servers = match root.get("mcpServers").and_then(|v| v.as_object()) {
+            Some(o) => o,
+            None => return Ok(false),
+        };
+        if servers.len() != 1 || !servers.contains_key("hoangsa-memory") {
+            return Ok(false);
+        }
+        fs::remove_file(orphan_path)?;
+        eprintln!(
+            "install: removed orphan MCP config at {} (pre-0.2.3 leftover)",
+            orphan_path.display()
+        );
+        Ok(true)
     }
 
     /// Error carrying an explicit exit code — used by `register_mcp_local`
@@ -2134,6 +2199,98 @@ pnpm-lock.yaml
                 target,
                 cwd.path()
             );
+        }
+
+        #[test]
+        fn cleanup_orphan_removes_exact_signature() {
+            let home = tempdir().expect("home tempdir");
+            let orphan = home.path().join(".claude").join(".claude.json");
+            fs::create_dir_all(orphan.parent().unwrap()).expect("mkdir");
+            let orphan_content = json!({
+                "mcpServers": {
+                    "hoangsa-memory": {
+                        "command": "/x/bin/hoangsa-memory-mcp",
+                        "args": [],
+                        "env": {}
+                    }
+                }
+            });
+            fs::write(
+                &orphan,
+                serde_json::to_string_pretty(&orphan_content).unwrap(),
+            )
+            .expect("write orphan");
+            let target = home.path().join(".claude.json");
+
+            let removed = cleanup_orphan_claude_json(&orphan, &target).expect("cleanup");
+            assert!(removed, "exact orphan signature must be removed");
+            assert!(!orphan.exists(), "orphan file should be gone");
+        }
+
+        #[test]
+        fn cleanup_orphan_preserves_when_extra_top_level_key() {
+            let home = tempdir().expect("home tempdir");
+            let orphan = home.path().join(".claude").join(".claude.json");
+            fs::create_dir_all(orphan.parent().unwrap()).expect("mkdir");
+            let content = json!({
+                "mcpServers": { "hoangsa-memory": { "command": "x" } },
+                "numStartups": 7
+            });
+            fs::write(&orphan, serde_json::to_string_pretty(&content).unwrap())
+                .expect("write");
+            let target = home.path().join(".claude.json");
+
+            let removed = cleanup_orphan_claude_json(&orphan, &target).expect("cleanup");
+            assert!(!removed, "extra top-level key means real config — keep");
+            assert!(orphan.exists(), "file must still be there");
+        }
+
+        #[test]
+        fn cleanup_orphan_preserves_when_other_mcp_server() {
+            let home = tempdir().expect("home tempdir");
+            let orphan = home.path().join(".claude").join(".claude.json");
+            fs::create_dir_all(orphan.parent().unwrap()).expect("mkdir");
+            let content = json!({
+                "mcpServers": {
+                    "hoangsa-memory": { "command": "x" },
+                    "other-mcp": { "command": "y" }
+                }
+            });
+            fs::write(&orphan, serde_json::to_string_pretty(&content).unwrap())
+                .expect("write");
+            let target = home.path().join(".claude.json");
+
+            let removed = cleanup_orphan_claude_json(&orphan, &target).expect("cleanup");
+            assert!(!removed, "second MCP entry means user config — keep");
+            assert!(orphan.exists());
+        }
+
+        #[test]
+        fn cleanup_orphan_never_removes_the_target_itself() {
+            // If CLAUDE_CONFIG_DIR is set to $HOME/.claude on purpose the
+            // target IS `$HOME/.claude/.claude.json` — the cleanup must
+            // not delete the file we just wrote.
+            let home = tempdir().expect("home tempdir");
+            let target = home.path().join(".claude").join(".claude.json");
+            fs::create_dir_all(target.parent().unwrap()).expect("mkdir");
+            let content = json!({
+                "mcpServers": { "hoangsa-memory": { "command": "x" } }
+            });
+            fs::write(&target, serde_json::to_string_pretty(&content).unwrap())
+                .expect("write");
+
+            let removed = cleanup_orphan_claude_json(&target, &target).expect("cleanup");
+            assert!(!removed, "must not remove the active target");
+            assert!(target.exists());
+        }
+
+        #[test]
+        fn cleanup_orphan_is_a_noop_when_absent() {
+            let home = tempdir().expect("home tempdir");
+            let orphan = home.path().join(".claude").join(".claude.json");
+            let target = home.path().join(".claude.json");
+            let removed = cleanup_orphan_claude_json(&orphan, &target).expect("cleanup");
+            assert!(!removed, "missing file = nothing to do");
         }
     }
 }

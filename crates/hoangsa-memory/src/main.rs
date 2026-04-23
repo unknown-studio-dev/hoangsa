@@ -35,11 +35,6 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
-    /// Mode::Full: LLM synthesizer. Requires the `anthropic` Cargo feature.
-    /// The API key is read from `ANTHROPIC_API_KEY`.
-    #[arg(long, global = true, value_enum)]
-    synth: Option<SynthKind>,
-
     /// Show internal debug logs. Without this the CLI only prints
     /// user-facing output; `tracing` events are hidden. Overrides `RUST_LOG`
     /// when passed. Repeat for more detail (`-v` = debug, `-vv` = trace).
@@ -82,22 +77,31 @@ enum Cmd {
 
     /// Parse + index a source tree.
     Index {
+        /// Source tree to index. Defaults to the current directory.
         #[arg(default_value = ".")]
         path: PathBuf,
     },
 
     /// Query the memory.
     Query {
+        /// Maximum number of chunks to return.
         #[arg(short = 'k', long, default_value_t = 8)]
         top_k: usize,
+        /// Query text (joined with spaces if multiple words).
         #[arg(required = true)]
         text: Vec<String>,
+        /// Optional LLM synthesizer to summarise the retrieved chunks.
+        /// Requires the `anthropic` Cargo feature and `ANTHROPIC_API_KEY`.
+        #[arg(long, value_enum)]
+        synth: Option<SynthKind>,
     },
 
     /// Watch a source tree and re-index on change.
     Watch {
+        /// Source tree to watch. Defaults to the current directory.
         #[arg(default_value = ".")]
         path: PathBuf,
+        /// Debounce window in milliseconds between re-index passes.
         #[arg(long, default_value_t = 300)]
         debounce_ms: u64,
     },
@@ -116,26 +120,33 @@ enum Cmd {
 
     /// Blast-radius analysis for a symbol FQN.
     Impact {
+        /// Fully-qualified symbol name (e.g. `crate::module::Type::method`).
         #[arg(required = true)]
         fqn: String,
+        /// Direction to walk the graph: `up` = callers, `down` = callees.
         #[arg(long, value_enum, default_value_t = ImpactDir::Up)]
         direction: ImpactDir,
+        /// Maximum traversal depth from the starting symbol.
         #[arg(short = 'd', long, default_value_t = 3)]
         depth: usize,
     },
 
     /// 360-degree context for a single symbol.
     Context {
+        /// Fully-qualified symbol name to inspect.
         #[arg(required = true)]
         fqn: String,
+        /// Maximum number of related edges to include per direction.
         #[arg(long, default_value_t = 32)]
         limit: usize,
     },
 
     /// Change-impact analysis over a unified diff.
     Changes {
+        /// Path to a unified-diff file. Reads stdin when omitted.
         #[arg(long)]
         from: Option<String>,
+        /// Maximum caller-graph depth walked from each changed symbol.
         #[arg(short = 'd', long, default_value_t = 2)]
         depth: usize,
     },
@@ -176,9 +187,11 @@ async fn main() -> anyhow::Result<()> {
     match cli.cmd {
         Cmd::Init => init_cmd::cmd_init(&root).await?,
         Cmd::Index { path } => index_cmd::run_index(&root, &path, cli.json).await?,
-        Cmd::Query { text, top_k } => {
-            query_cmd::run_query(&root, text.join(" "), top_k, cli.json, cli.synth).await?
-        }
+        Cmd::Query {
+            text,
+            top_k,
+            synth,
+        } => query_cmd::run_query(&root, text.join(" "), top_k, cli.json, synth).await?,
         Cmd::Watch { path, debounce_ms } => {
             watch_cmd::run_watch(&root, &path, std::time::Duration::from_millis(debounce_ms))
                 .await?

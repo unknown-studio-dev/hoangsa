@@ -465,7 +465,9 @@ $d"
     done
 }
 
-# Sets $CLAUDE_DIR_PICK. Caller is responsible for `export CLAUDE_CONFIG_DIR`.
+# Sets $CLAUDE_DIR_PICK. Caller is responsible for `export CLAUDE_CONFIG_DIR`
+# only when the value is non-empty — empty means "leave CLAUDE_CONFIG_DIR
+# unset so the CLI writes to Claude's implicit default `$HOME/.claude.json`".
 pick_claude_dir() {
     if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
         CLAUDE_DIR_PICK="$CLAUDE_CONFIG_DIR"
@@ -477,7 +479,19 @@ pick_claude_dir() {
     _count=$(printf '%s\n' "$CLAUDE_CANDIDATES" | wc -l | tr -d ' ')
 
     if [ "$_count" -le 1 ]; then
-        CLAUDE_DIR_PICK="$CLAUDE_CANDIDATES"
+        # Single candidate. When it's the default `$HOME/.claude` AND the
+        # user never set CLAUDE_CONFIG_DIR, we must leave PICK empty —
+        # Claude Code without CLAUDE_CONFIG_DIR reads `$HOME/.claude.json`
+        # (NOT `$HOME/.claude/.claude.json`). Exporting the env var would
+        # make the CLI write to the wrong path, leaving the MCP entry
+        # invisible to `claude`. See install.rs::claude_json_path for the
+        # path-resolution rule this mirrors.
+        if [ "$CLAUDE_CANDIDATES" = "$HOME/.claude" ]; then
+            CLAUDE_DIR_PICK=""
+            info "using Claude default config path \$HOME/.claude.json"
+        else
+            CLAUDE_DIR_PICK="$CLAUDE_CANDIDATES"
+        fi
         return 0
     fi
 
@@ -709,10 +723,18 @@ main() {
     # Pick the Claude config dir to install into and propagate to the CLI.
     # Only relevant for --global; --local writes everything under cwd/.claude/
     # and never touches a Claude profile dir.
+    #
+    # Empty PICK is a deliberate signal from `pick_claude_dir` that the user
+    # relies on Claude Code's implicit default (`$HOME/.claude.json`, outside
+    # any `.claude/` dir). Exporting `CLAUDE_CONFIG_DIR` in that case would
+    # redirect the CLI to `$HOME/.claude/.claude.json` — a file Claude never
+    # reads without the same env override — so we skip the export entirely.
     if [ "$IS_GLOBAL" -eq 1 ]; then
         pick_claude_dir
-        CLAUDE_CONFIG_DIR="$CLAUDE_DIR_PICK"
-        export CLAUDE_CONFIG_DIR
+        if [ -n "$CLAUDE_DIR_PICK" ]; then
+            CLAUDE_CONFIG_DIR="$CLAUDE_DIR_PICK"
+            export CLAUDE_CONFIG_DIR
+        fi
     fi
 
     # Stage templates in a persistent directory OUTSIDE $TMP so the CLI can
