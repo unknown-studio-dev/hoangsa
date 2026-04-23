@@ -327,6 +327,60 @@ pub(crate) fn acquire_vector_lock() -> anyhow::Result<Option<std::fs::File>> {
     }
 }
 
+/// Advisory flock serialising direct-mode CLIs that would otherwise
+/// race on the per-project store backends (`graph.redb`, `kv.redb`,
+/// `fts.tantivy/`, …). Scoped per-root: two different projects don't
+/// block each other.
+///
+/// Daemon does NOT acquire this — it opens the store for its lifetime
+/// via the backends' own locks. CLIs should prefer the daemon via
+/// [`daemon::DaemonClient::connect_or_wait`] and only fall through to
+/// direct mode + this lock when no daemon is running. Without it, two
+/// direct-mode CLIs (e.g. the session-start bootstrap worker plus a
+/// user-typed `hoangsa-memory index .`) would race on redb's exclusive
+/// lock and one would bail with the cryptic "Database already open".
+///
+/// Blocks up to `timeout`. `Ok(None)` means the timeout elapsed while
+/// another holder was still active — callers should emit a clear
+/// message. `Err` is reserved for filesystem failures.
+pub(crate) async fn acquire_store_lock(
+    root: &std::path::Path,
+    timeout: std::time::Duration,
+) -> anyhow::Result<Option<std::fs::File>> {
+    use anyhow::Context;
+    std::fs::create_dir_all(root)
+        .with_context(|| format!("create {} for store lock", root.display()))?;
+    let path = root.join("store.lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&path)
+        .with_context(|| format!("open store lock {}", path.display()))?;
+
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut informed = false;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(Some(file)),
+            Err(_) => {
+                if !informed {
+                    eprintln!(
+                        "hoangsa-memory: another process is indexing this project; waiting…"
+                    );
+                    informed = true;
+                }
+                let now = tokio::time::Instant::now();
+                if now >= deadline {
+                    return Ok(None);
+                }
+                let step = std::time::Duration::from_millis(250);
+                tokio::time::sleep(step.min(deadline - now)).await;
+            }
+        }
+    }
+}
+
 pub(crate) async fn open_vector_store(
     store: &StoreRoot,
 ) -> Option<Arc<dyn VectorCol>> {
@@ -360,5 +414,68 @@ pub(crate) async fn open_vector_store(
             );
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn store_lock_serialises_contenders() {
+        // Two concurrent acquirers on the same root: the second must
+        // wait until the first drops its lock, then acquire
+        // successfully.
+        let dir = tempdir().unwrap();
+        let first = acquire_store_lock(dir.path(), Duration::from_secs(2))
+            .await
+            .expect("first acquire shouldn't error")
+            .expect("first acquire should get the lock");
+
+        let root = dir.path().to_path_buf();
+        let started = Instant::now();
+        let waiter = tokio::spawn(async move {
+            acquire_store_lock(&root, Duration::from_secs(5)).await
+        });
+
+        // Give the waiter a moment to enter the try_lock loop.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!waiter.is_finished(), "waiter should still be blocked");
+
+        // Drop the first lock — waiter should then succeed.
+        drop(first);
+        let result = waiter.await.unwrap().unwrap();
+        assert!(result.is_some(), "waiter should get the lock after drop");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(300),
+            "waiter should have blocked; elapsed {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "waiter shouldn't have hit its own timeout; elapsed {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn store_lock_times_out_when_holder_never_drops() {
+        let dir = tempdir().unwrap();
+        let _held = acquire_store_lock(dir.path(), Duration::from_secs(2))
+            .await
+            .unwrap()
+            .expect("first holder");
+
+        let started = Instant::now();
+        let result = acquire_store_lock(dir.path(), Duration::from_millis(600))
+            .await
+            .unwrap();
+        let elapsed = started.elapsed();
+        assert!(result.is_none(), "second call should time out to None");
+        assert!(
+            elapsed >= Duration::from_millis(500),
+            "should have waited roughly the full timeout; elapsed {elapsed:?}"
+        );
     }
 }

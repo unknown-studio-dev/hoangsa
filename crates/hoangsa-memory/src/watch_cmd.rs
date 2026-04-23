@@ -11,12 +11,22 @@ use tracing::warn;
 
 use crate::{index_cmd::make_progress_bar, open_vector_store};
 
+/// Mirrors `index_cmd::DAEMON_CONNECT_WAIT` — brief retry so a booting
+/// daemon wins the routing decision instead of watch falling through
+/// to direct mode and clashing on store locks.
+const DAEMON_CONNECT_WAIT: Duration = Duration::from_secs(3);
+
+/// Watch can wait longer than `index` on the store lock because the
+/// user has already committed to a long-running process; hanging a bit
+/// to avoid a spurious error is reasonable.
+const STORE_LOCK_WAIT: Duration = Duration::from_secs(300);
+
 pub async fn run_watch(root: &Path, src: &Path, debounce: Duration) -> Result<()> {
     // If the MCP daemon is running it holds the redb exclusive lock.
     // Instead of failing, fall back to a log-only mode: watch the
     // filesystem and print what changed, but don't index (the daemon's
     // auto-watch handles that when `[watch] enabled = true`).
-    if crate::daemon::DaemonClient::try_connect(root)
+    if crate::daemon::DaemonClient::connect_or_wait(root, DAEMON_CONNECT_WAIT)
         .await
         .is_some()
     {
@@ -35,6 +45,18 @@ pub async fn run_watch(root: &Path, src: &Path, debounce: Duration) -> Result<()
         }
         return run_watch_log_only(src, debounce).await;
     }
+
+    // Direct mode: serialize with other direct-mode CLIs so watch
+    // doesn't race a bootstrap `index` on store locks.
+    let _store_lock = match crate::acquire_store_lock(root, STORE_LOCK_WAIT).await? {
+        Some(lock) => lock,
+        None => {
+            anyhow::bail!(
+                "another hoangsa-memory process has been holding this project's store for >{}s; aborting watch",
+                STORE_LOCK_WAIT.as_secs()
+            );
+        }
+    };
 
     let store = StoreRoot::open(root).await?;
     let cfg = hoangsa_memory_retrieve::IndexConfig::load_or_default(root).await;

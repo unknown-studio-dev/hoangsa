@@ -53,6 +53,42 @@ impl DaemonClient {
         Some(Self { stream })
     }
 
+    /// Like [`Self::try_connect`] but retries briefly when the socket
+    /// file is present but not accepting (ConnectionRefused). Closes
+    /// the daemon-startup race where `Server::open` has taken redb's
+    /// exclusive lock but `UnixListener::bind` hasn't run yet — a CLI
+    /// that gave up on the socket at this moment would fall through to
+    /// direct mode and hit `Database already open`.
+    ///
+    /// Returns `None` immediately when the socket file doesn't exist
+    /// (no daemon expected) and after `wait` elapses for persistent
+    /// refusals (stale socket from a crashed daemon).
+    pub async fn connect_or_wait(root: &Path, wait: Duration) -> Option<Self> {
+        let sock = root.join("mcp.sock");
+        // Fast path: no socket file at all means no daemon is intended
+        // for this root. Don't waste the retry budget.
+        if tokio::fs::metadata(&sock).await.is_err() {
+            return None;
+        }
+        let deadline = tokio::time::Instant::now() + wait;
+        let mut backoff = Duration::from_millis(100);
+        loop {
+            match UnixStream::connect(&sock).await {
+                Ok(stream) => return Some(Self { stream }),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+                Err(_) => {
+                    let now = tokio::time::Instant::now();
+                    if now >= deadline {
+                        return None;
+                    }
+                    let sleep_for = backoff.min(deadline - now);
+                    tokio::time::sleep(sleep_for).await;
+                    backoff = (backoff * 2).min(Duration::from_millis(500));
+                }
+            }
+        }
+    }
+
     /// Call a named MCP tool and return the raw `ToolOutput` JSON.
     ///
     /// The returned `Value` has shape:
@@ -151,4 +187,52 @@ pub fn tool_is_error(result: &Value) -> bool {
         .get("isError")
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+    use tempfile::tempdir;
+    use tokio::net::UnixListener;
+
+    #[tokio::test]
+    async fn connect_or_wait_returns_none_fast_when_socket_missing() {
+        // No `mcp.sock` at all → should bail immediately, not exhaust
+        // the retry budget.
+        let dir = tempdir().unwrap();
+        let started = Instant::now();
+        let result = DaemonClient::connect_or_wait(dir.path(), Duration::from_secs(5)).await;
+        let elapsed = started.elapsed();
+        assert!(result.is_none());
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "expected fast return when socket missing; took {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_or_wait_retries_until_listener_binds() {
+        // Simulate the daemon-startup race: a stale socket file is
+        // present but nothing is listening. Partway through the retry
+        // window, bind a real listener. `connect_or_wait` must keep
+        // retrying and then succeed.
+        let dir = tempdir().unwrap();
+        let sock = dir.path().join("mcp.sock");
+        std::fs::write(&sock, b"").unwrap();
+
+        let sock_for_server = sock.clone();
+        let server = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            // Stale file would make `bind` fail with AddrInUse, so
+            // remove it first — this mirrors `run_socket`.
+            let _ = std::fs::remove_file(&sock_for_server);
+            let listener = UnixListener::bind(&sock_for_server).unwrap();
+            let _ = listener.accept().await;
+        });
+
+        let client = DaemonClient::connect_or_wait(dir.path(), Duration::from_secs(2)).await;
+        assert!(client.is_some(), "should connect once listener binds");
+        server.await.unwrap();
+    }
 }

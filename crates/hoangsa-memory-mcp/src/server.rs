@@ -62,6 +62,14 @@ pub(crate) struct Inner {
     /// init — useful on machines where fastembed's model download
     /// would time out.
     vector_store_enabled: bool,
+    /// Serialises `memory_index` calls against each other. Two
+    /// concurrent tool_index invocations on the same store would
+    /// double-parse and double-embed identical chunks (idempotent via
+    /// deterministic chunk ids, but wasteful). With this lock held, the
+    /// second call waits; when it runs most files are cache hits and
+    /// it finishes quickly. Doesn't block `memory_recall` or other
+    /// read-side tools.
+    index_mutex: tokio::sync::Mutex<()>,
 }
 
 impl Server {
@@ -90,6 +98,7 @@ impl Server {
                 graph,
                 vector_store: tokio::sync::OnceCell::new(),
                 vector_store_enabled,
+                index_mutex: tokio::sync::Mutex::new(()),
             }),
         })
     }
@@ -522,6 +531,9 @@ impl Server {
         }
         let Args { path } = serde_json::from_value(args).unwrap_or_default();
         let src = PathBuf::from(path.unwrap_or_else(|| ".".to_string()));
+        // Serialise concurrent index calls — see `Inner::index_mutex`.
+        // Released at the end of this function when `_index_guard` drops.
+        let _index_guard = self.inner.index_mutex.lock().await;
         // Wire the code-chunk vector collection if available, so this
         // run actually embeds chunks. The stored `self.inner.indexer`
         // is kept vector-less so server startup doesn't pay the
@@ -3127,6 +3139,69 @@ async fn handle_socket_conn(server: Server, stream: tokio::net::UnixStream) -> a
         }
     }
     Ok(())
+}
+
+// ===========================================================================
+// Index-mutex serialization test
+// ===========================================================================
+
+#[cfg(test)]
+mod index_mutex {
+    use super::*;
+    use serde_json::json;
+    use tempfile::tempdir;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn tool_index_serialises_concurrent_calls() {
+        // Two concurrent `memory_index` calls on the same source tree
+        // must not interleave: whichever runs first writes content-
+        // hash sentinels into kv, and the second call sees them and
+        // short-circuits every file as a cache hit. Without the
+        // `index_mutex` both calls would see "no sentinel" at start
+        // and both would re-parse every file.
+        let src_dir = tempdir().unwrap();
+        for i in 0..10 {
+            let body = format!(
+                "pub fn item_{i}(x: i32) -> i32 {{ x + {i} }}\n"
+            );
+            tokio::fs::write(src_dir.path().join(format!("m_{i}.rs")), body)
+                .await
+                .unwrap();
+        }
+
+        let mem_dir = tempdir().unwrap();
+        let srv = Server::open(mem_dir.path()).await.unwrap();
+
+        let args = json!({ "path": src_dir.path().to_string_lossy() });
+        let a = {
+            let srv = srv.clone();
+            let args = args.clone();
+            tokio::spawn(async move { srv.tool_index(args).await.unwrap() })
+        };
+        let b = {
+            let srv = srv.clone();
+            let args = args.clone();
+            tokio::spawn(async move { srv.tool_index(args).await.unwrap() })
+        };
+        let out_a = a.await.unwrap();
+        let out_b = b.await.unwrap();
+
+        let skipped_a = out_a.data["files_skipped"].as_u64().unwrap_or(0);
+        let skipped_b = out_b.data["files_skipped"].as_u64().unwrap_or(0);
+        let files_a = out_a.data["files"].as_u64().unwrap_or(0);
+        let files_b = out_b.data["files"].as_u64().unwrap_or(0);
+
+        assert!(files_a >= 10 && files_b >= 10, "both calls walked the tree");
+        // Serialization guarantee: the second-to-run call sees every
+        // file as a cache hit. Symmetric because we can't tell which
+        // task the runtime picked first.
+        let one_was_fully_cached = skipped_a == files_a || skipped_b == files_b;
+        assert!(
+            one_was_fully_cached,
+            "expected one call to see full cache hits (ran after the other); \
+             got skipped_a={skipped_a}/{files_a}, skipped_b={skipped_b}/{files_b}"
+        );
+    }
 }
 
 // ===========================================================================

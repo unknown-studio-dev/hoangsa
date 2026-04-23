@@ -197,10 +197,13 @@ impl Indexer {
     /// Pipeline:
     /// 1. Walk the source tree (synchronous; fast).
     /// 2. Fan out per-file parse + FTS/KV/graph writes over a bounded pool
-    ///    of concurrent tasks. Chunks are buffered for later embedding.
-    /// 3. If Mode::Full is configured, batch-embed every collected chunk in
-    ///    rounds of [`EMBED_BATCH_SIZE`] — one `embed_batch` call per round
-    ///    instead of one per file.
+    ///    of concurrent tasks.
+    /// 3. If a vector store is attached, stream parsed chunks into a
+    ///    bounded channel; a consumer task drains the channel, batches
+    ///    chunks up to [`EMBED_BATCH_SIZE`], and embeds each full batch.
+    ///    This gives constant-memory embedding and makes parse back off
+    ///    when fastembed can't keep up, instead of buffering every
+    ///    chunk in RAM before embedding starts.
     /// 4. Commit the BM25 writer so fresh docs become searchable.
     pub async fn index_path(&self, root: impl AsRef<Path>) -> Result<IndexStats> {
         self.check_parser_schema_version().await?;
@@ -220,21 +223,36 @@ impl Indexer {
             path: None,
         });
 
-        // Phase A: fan-out parse + writes.
-        // Each task returns its own Vec<SourceChunk> to avoid Mutex contention
-        // on a shared accumulator. Results are collected via join_all and
-        // flattened after all tasks complete.
+        // Phase A: fan-out parse + writes, streaming chunks into phase B
+        // over a bounded channel. When no vector store is attached we
+        // skip the channel entirely — parse-only callers pay nothing.
         let stats = Arc::new(Mutex::new(IndexStats::default()));
         let done = Arc::new(AtomicUsize::new(0));
         let want_embed = self.vector_store.is_some();
 
-        let tasks: Vec<_> = stream::iter(files)
-            .map(|path| {
+        // Channel carries one `Vec<SourceChunk>` per file. Capacity =
+        // concurrency × 2 lets producers burst past transient consumer
+        // stalls without unbounded buffering; once full, `send().await`
+        // backpressures parse. Steady-state resident chunks ≈
+        // `cap × avg_chunks_per_file + 2 × EMBED_BATCH_SIZE` (one batch
+        // being embedded plus the consumer's next-batch buffer).
+        let (tx, rx) = tokio::sync::mpsc::channel::<Vec<SourceChunk>>(self.concurrency * 2);
+        let consumer = if want_embed {
+            Some(tokio::spawn(embed_consumer(self.clone(), rx, stats.clone())))
+        } else {
+            // Drop the receiver immediately so any stray send fails fast
+            // rather than blocking forever.
+            drop(rx);
+            None
+        };
+
+        stream::iter(files)
+            .for_each_concurrent(self.concurrency, |path| {
                 let this = self.clone();
                 let stats = stats.clone();
                 let done = done.clone();
+                let tx = tx.clone();
                 async move {
-                    let mut local_chunks: Vec<SourceChunk> = Vec::new();
                     match this.index_file_no_embed(&path).await {
                         Ok((s, chunks)) => {
                             {
@@ -246,8 +264,10 @@ impl Indexer {
                                 st.calls += s.calls;
                                 st.imports += s.imports;
                             }
-                            if want_embed {
-                                local_chunks = chunks;
+                            if want_embed && !chunks.is_empty() {
+                                // A send error means the consumer died; the
+                                // join below will surface it.
+                                let _ = tx.send(chunks).await;
                             }
                         }
                         Err(e) => {
@@ -261,42 +281,17 @@ impl Indexer {
                         total,
                         path: Some(&path),
                     });
-                    local_chunks
                 }
             })
-            .buffer_unordered(self.concurrency)
-            .collect()
             .await;
 
-        // Phase B: batch embedding (Mode::Full only).
-        if want_embed {
-            let chunks: Vec<SourceChunk> = tasks.into_iter().flatten().collect::<Vec<_>>();
-            let total_embed = chunks.len();
-            self.emit(IndexProgress {
-                stage: "embed",
-                done: 0,
-                total: total_embed,
-                path: None,
-            });
-            let mut embedded = 0usize;
-            for (i, batch) in chunks.chunks(EMBED_BATCH_SIZE).enumerate() {
-                match self.embed_chunks(batch).await {
-                    Ok(Some(n)) => embedded += n,
-                    Ok(None) => {}
-                    Err(e) => {
-                        // Don't abort the whole run — log, skip this batch.
-                        debug!(error = %e, batch = i, "skip: embed error");
-                    }
-                }
-                let done_count = ((i + 1) * EMBED_BATCH_SIZE).min(total_embed);
-                self.emit(IndexProgress {
-                    stage: "embed",
-                    done: done_count,
-                    total: total_embed,
-                    path: None,
-                });
-            }
-            stats.lock().embedded += embedded;
+        // Close the channel so the consumer flushes its partial batch
+        // and exits; then wait for it before moving on.
+        drop(tx);
+        if let Some(handle) = consumer
+            && let Err(e) = handle.await
+        {
+            debug!(error = %e, "embed consumer panicked");
         }
 
         // Phase B2: non-code text files (markdown, shell, TOML, etc.).
@@ -795,6 +790,77 @@ impl Indexer {
 }
 
 // ---- helpers ---------------------------------------------------------------
+
+/// Drain parsed chunks from `rx` and embed them in batches of
+/// [`EMBED_BATCH_SIZE`]. Runs in its own task so phase A's parse loop
+/// can feed chunks continuously without holding the whole set in RAM.
+///
+/// Progress: emits one `stage = "embed"` event at start (`done = 0`) and
+/// one per batch. `total` tracks the number of chunks seen so far — it
+/// grows with `done` until phase A finishes, at which point they agree.
+/// The CLI progress bar interprets `total` dynamically and resizes as
+/// `total` grows.
+async fn embed_consumer(
+    indexer: Indexer,
+    mut rx: tokio::sync::mpsc::Receiver<Vec<SourceChunk>>,
+    stats: Arc<Mutex<IndexStats>>,
+) {
+    indexer.emit(IndexProgress {
+        stage: "embed",
+        done: 0,
+        total: 0,
+        path: None,
+    });
+
+    let mut buf: Vec<SourceChunk> = Vec::with_capacity(EMBED_BATCH_SIZE);
+    let mut embedded = 0usize;
+    let mut seen = 0usize;
+    let mut batch_idx = 0usize;
+
+    while let Some(file_chunks) = rx.recv().await {
+        buf.extend(file_chunks);
+        while buf.len() >= EMBED_BATCH_SIZE {
+            let rest = buf.split_off(EMBED_BATCH_SIZE);
+            let batch = std::mem::replace(&mut buf, rest);
+            seen += batch.len();
+            match indexer.embed_chunks(&batch).await {
+                Ok(Some(n)) => embedded += n,
+                Ok(None) => {}
+                Err(e) => {
+                    // Don't abort the whole run — log, skip this batch.
+                    debug!(error = %e, batch = batch_idx, "skip: embed error");
+                }
+            }
+            batch_idx += 1;
+            indexer.emit(IndexProgress {
+                stage: "embed",
+                done: seen,
+                total: seen,
+                path: None,
+            });
+        }
+    }
+
+    // Flush the tail — last partial batch < EMBED_BATCH_SIZE.
+    if !buf.is_empty() {
+        seen += buf.len();
+        match indexer.embed_chunks(&buf).await {
+            Ok(Some(n)) => embedded += n,
+            Ok(None) => {}
+            Err(e) => {
+                debug!(error = %e, batch = batch_idx, "skip: embed error");
+            }
+        }
+        indexer.emit(IndexProgress {
+            stage: "embed",
+            done: seen,
+            total: seen,
+            path: None,
+        });
+    }
+
+    stats.lock().embedded += embedded;
+}
 
 /// Stable chunk id — the tantivy delete key on re-index.
 pub fn chunk_id(path: &Path, start: u32, end: u32) -> String {
