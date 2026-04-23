@@ -64,16 +64,52 @@ fn claude_json_path() -> Result<PathBuf, String> {
     }
 }
 
+/// Derive an install root from a binary path. Returns `Some` only when
+/// the binary lives in an installed layout `<root>/bin/<name>` — i.e.
+/// the immediate parent is literally named `bin`. This guard prevents
+/// `cargo run -- install` (binary at `target/debug/hoangsa-cli`) from
+/// accidentally reporting `target/debug` as the install root.
+///
+/// Pure function on paths so it's unit-testable without touching
+/// `std::env::current_exe`.
+fn derive_install_root_from_exe(exe: &Path) -> Option<PathBuf> {
+    let parent = exe.parent()?;
+    if parent.file_name()?.to_str()? != "bin" {
+        return None;
+    }
+    parent.parent().map(Path::to_path_buf)
+}
+
 /// Root directory for the installed `hoangsa-memory` tree (bins + manifest).
-/// Honors the `HOANGSA_INSTALL_DIR` env var (set by `scripts/install.sh`) so
-/// a user who points the installer at a non-default location still gets MCP
-/// entries whose `command` field matches where the bins actually landed.
-/// Falls back to `$HOME/.hoangsa` when the env var is unset or empty.
+///
+/// Resolution order (first match wins):
+///   1. `HOANGSA_INSTALL_DIR` env var — explicit override, honored verbatim.
+///      Users who want per-Claude-profile installs (e.g. alongside
+///      `zclaude='CLAUDE_CONFIG_DIR=~/.zclaude claude'`) set this inline
+///      in their alias, NOT in `.zshrc` (the installer deliberately does
+///      not persist this to rc — a global env would collide across
+///      profiles).
+///   2. Derive from `current_exe()` — canonicalize to resolve PATH
+///      shim symlinks (e.g. `/usr/local/bin/hoangsa-cli` →
+///      `~/.hoangsa/bin/hoangsa-cli`), then accept only when the parent
+///      is literally `bin` (see `derive_install_root_from_exe`).
+///      Makes non-default installs work in fresh shells without any env.
+///   3. `$HOME/.hoangsa` — last-resort default for dev runs
+///      (`cargo run`), exotic layouts, or when `current_exe` fails.
 fn memory_install_dir() -> Result<PathBuf, String> {
     if let Some(raw) = std::env::var_os("HOANGSA_INSTALL_DIR") {
         let s = raw.to_string_lossy().into_owned();
         if !s.is_empty() {
             return Ok(PathBuf::from(s));
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        // canonicalize follows symlinks so PATH shims resolve to the
+        // real installed binary; fall back to the raw path if
+        // canonicalize fails (e.g. deleted file races).
+        let resolved = std::fs::canonicalize(&exe).unwrap_or(exe);
+        if let Some(root) = derive_install_root_from_exe(&resolved) {
+            return Ok(root);
         }
     }
     Ok(home_path()?.join(".hoangsa"))
@@ -620,10 +656,11 @@ pub mod hooks {
             managed_entry(format!("{cli} hook enforce"), 10, Some("Edit|Write|Bash|NotebookEdit")),
         ];
 
-        // hsp ships alongside hoangsa-cli in local-dev installs but is absent
-        // from release tarballs — register the rewrite hook only when the
-        // binary is actually present, so we never leave a dangling command
-        // pointing at a missing executable.
+        // `hsp` normally ships alongside the memory bins in both release
+        // tarballs and local-dev installs. We still gate the hook on the
+        // file actually being present so test fixtures, partial installs,
+        // or users who manually removed `hsp` never leave a dangling
+        // command pointing at a missing executable.
         if let Some(hsp) = install_root
             .map(|d| d.join("bin").join("hsp"))
             .filter(|p| p.exists())
@@ -2534,6 +2571,47 @@ pub fn cmd_install(args: &[&str]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn derive_install_root_accepts_standard_bin_layout() {
+        let exe = PathBuf::from("/opt/hoangsa/bin/hoangsa-cli");
+        assert_eq!(
+            derive_install_root_from_exe(&exe),
+            Some(PathBuf::from("/opt/hoangsa"))
+        );
+    }
+
+    #[test]
+    fn derive_install_root_rejects_cargo_target_layout() {
+        // `cargo run -- install` binary lives at target/debug/hoangsa-cli
+        // (no `bin/` dir) — must NOT derive target/debug as install root.
+        let exe = PathBuf::from("/workspace/target/debug/hoangsa-cli");
+        assert_eq!(derive_install_root_from_exe(&exe), None);
+    }
+
+    #[test]
+    fn derive_install_root_rejects_wrong_parent_name() {
+        // Anything not literally named `bin` must be rejected (e.g. a
+        // user's `~/scripts/hoangsa-cli` wrapper).
+        let exe = PathBuf::from("/home/u/scripts/hoangsa-cli");
+        assert_eq!(derive_install_root_from_exe(&exe), None);
+    }
+
+    #[test]
+    fn derive_install_root_handles_nested_install_root() {
+        let exe = PathBuf::from("/tmp/profile-a/.hoangsa/bin/hoangsa-cli");
+        assert_eq!(
+            derive_install_root_from_exe(&exe),
+            Some(PathBuf::from("/tmp/profile-a/.hoangsa"))
+        );
+    }
+
+    #[test]
+    fn derive_install_root_rejects_root_level_binary() {
+        // `/hoangsa-cli` with no parent can never be in a <root>/bin layout.
+        let exe = PathBuf::from("/hoangsa-cli");
+        assert_eq!(derive_install_root_from_exe(&exe), None);
+    }
 
     #[test]
     fn parses_basic_flags() {

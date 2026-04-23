@@ -260,14 +260,37 @@ const EMBED_DIM: usize = 384;
 /// the MCP server process.
 const DEFAULT_MODEL: EmbeddingModel = EmbeddingModel::MultilingualE5Small;
 
+/// Derive an install root from a binary path. Returns `Some` only when
+/// the binary lives in an installed layout `<root>/bin/<name>` — i.e.
+/// the immediate parent is literally named `bin`. This guard prevents
+/// `cargo run` (binary at `target/debug/hoangsa-memory`) from
+/// accidentally reporting `target/debug` as the install root and
+/// writing the 118 MB fastembed cache into the build artefacts tree.
+fn derive_install_root_from_exe(exe: &Path) -> Option<PathBuf> {
+    let parent = exe.parent()?;
+    if parent.file_name()?.to_str()? != "bin" {
+        return None;
+    }
+    parent.parent().map(Path::to_path_buf)
+}
+
 /// Resolve the directory fastembed should use to cache ONNX weights.
 ///
 /// Resolution order:
 ///   1. `FASTEMBED_CACHE_DIR` — explicit user override, honored verbatim.
-///   2. `HOANGSA_INSTALL_DIR/cache/fastembed` — when the env is set (the
-///      installer scripts export it).
-///   3. `$HOME/.hoangsa/cache/fastembed` — default on Unix / macOS.
-///   4. `./.fastembed_cache` — last-resort, matches fastembed's own
+///   2. `HOANGSA_INSTALL_DIR/cache/fastembed` — explicit install-dir
+///      override. Users with multi-profile Claude setups bake this into
+///      the alias that launches Claude (NOT into `.zshrc`), so per-profile
+///      caches stay separate. The installer scripts deliberately do not
+///      persist this to rc to avoid a single global value colliding across
+///      profiles.
+///   3. Derive from `current_exe()` — canonicalize to resolve PATH
+///      shim symlinks, then accept only when the parent is literally
+///      `bin` (see `derive_install_root_from_exe`). Works in fresh
+///      shells without any env.
+///   4. `$HOME/.hoangsa/cache/fastembed` — default for dev runs
+///      (`cargo run`) and when `current_exe` fails.
+///   5. `./.fastembed_cache` — last-resort, matches fastembed's own
 ///      default so behavior degrades gracefully on exotic setups.
 ///
 /// Pinning the cache to a single shared directory is the difference
@@ -280,6 +303,12 @@ pub fn fastembed_cache_dir() -> PathBuf {
     }
     if let Some(root) = std::env::var_os("HOANGSA_INSTALL_DIR") {
         return PathBuf::from(root).join("cache").join("fastembed");
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let resolved = std::fs::canonicalize(&exe).unwrap_or(exe);
+        if let Some(root) = derive_install_root_from_exe(&resolved) {
+            return root.join("cache").join("fastembed");
+        }
     }
     if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
         return PathBuf::from(home)
@@ -797,6 +826,27 @@ const _EMBED_DIM_DOC: usize = EMBED_DIM;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn derive_install_root_accepts_standard_bin_layout() {
+        let exe = PathBuf::from("/opt/hoangsa/bin/hoangsa-memory");
+        assert_eq!(
+            derive_install_root_from_exe(&exe),
+            Some(PathBuf::from("/opt/hoangsa"))
+        );
+    }
+
+    #[test]
+    fn derive_install_root_rejects_cargo_target_layout() {
+        let exe = PathBuf::from("/workspace/target/debug/hoangsa-memory");
+        assert_eq!(derive_install_root_from_exe(&exe), None);
+    }
+
+    #[test]
+    fn derive_install_root_rejects_wrong_parent_name() {
+        let exe = PathBuf::from("/home/u/scripts/hoangsa-memory");
+        assert_eq!(derive_install_root_from_exe(&exe), None);
+    }
 
     #[test]
     fn filter_parses_eq_shorthand_and_long_form() {

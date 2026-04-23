@@ -297,6 +297,15 @@ fetch_stdout() {
 # printed to the user as a manual fallback. Both consumers MUST go through
 # this helper so the two copies cannot drift.
 #
+# Why ONLY PATH is persisted (not HOANGSA_INSTALL_DIR):
+#   The rc file is global, but `HOANGSA_INSTALL_DIR` is effectively
+#   per-profile when users run Claude via alias-isolated profiles
+#   (e.g. `zclaude='CLAUDE_CONFIG_DIR=~/.zclaude claude'`) and want a
+#   matching `~/.zhoangsa` install. Exporting a single value from rc
+#   would collide across profiles. Runtime bins resolve the install dir
+#   from their own `current_exe()` location (see install.rs /
+#   vector.rs), so persisting the env is unnecessary AND harmful.
+#
 # Emits a literal `$PATH` so the user's shell (or the rc file) expands it at
 # source time, not our installer. `$HOANGSA_INSTALL_DIR` and `$HOANGSA_CLI_DIR`
 # ARE expanded here — we bake the absolute paths into the rc file so relocating
@@ -639,7 +648,7 @@ main() {
     tar -xzf "$TMP/$TARBALL_NAME" -C "$EXTRACT_DIR" \
         || die 1 "tar extraction failed"
 
-    # Expected layout: hoangsa-<triple>/bin/{hoangsa-cli,hoangsa-memory,hoangsa-memory-mcp}
+    # Expected layout: hoangsa-<triple>/bin/{hoangsa-cli,hoangsa-memory,hoangsa-memory-mcp,hsp}
     # plus templates/ VERSION LICENSE. The top-level directory name is fixed.
     PKG_DIR="$EXTRACT_DIR/hoangsa-$TRIPLE"
     if [ ! -d "$PKG_DIR" ]; then
