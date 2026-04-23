@@ -382,6 +382,16 @@ pub fn default_rules() -> Vec<Rule> {
             "Run memory_detect_changes before committing to verify the change scope.",
             Some("require-detect-changes"),
         ),
+        rule(
+            "no-git-add-ignored",
+            "Block git add of gitignored files",
+            Enforcement::Hook,
+            "Bash",
+            vec![],
+            RuleAction::Block,
+            "git add contains gitignored files: {files}. Remove them from the command or update .gitignore.",
+            Some("no-git-add-ignored"),
+        ),
     ]
 }
 
