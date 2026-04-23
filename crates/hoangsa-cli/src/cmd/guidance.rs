@@ -142,21 +142,40 @@ fn write_guidance_body(project_dir: &Path) -> std::io::Result<bool> {
     Ok(true)
 }
 
-pub fn cmd_sync(project_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let root = Path::new(project_dir);
-    let body_changed = write_guidance_body(root)?;
-    let block = pointer_block();
-    let claude_changed = upsert_marker_block(&root.join("CLAUDE.md"), &block)?;
-    let agents_changed = upsert_marker_block(&root.join("AGENTS.md"), &block)?;
+pub struct SyncReport {
+    pub guidance_path: std::path::PathBuf,
+    pub guidance_written: bool,
+    pub claude_md_updated: bool,
+    pub agents_md_updated: bool,
+}
 
+/// Silent sync — no stdout output. Returns a report. Callers embed or
+/// print the result as they see fit. Used by `cmd_install` to fold
+/// guidance sync into its own JSON output.
+pub fn sync(project_dir: &Path) -> std::io::Result<SyncReport> {
+    let body_changed = write_guidance_body(project_dir)?;
+    let block = pointer_block();
+    let claude_changed = upsert_marker_block(&project_dir.join("CLAUDE.md"), &block)?;
+    let agents_changed = upsert_marker_block(&project_dir.join("AGENTS.md"), &block)?;
+
+    Ok(SyncReport {
+        guidance_path: project_dir.join(GUIDANCE_REL_PATH),
+        guidance_written: body_changed,
+        claude_md_updated: claude_changed,
+        agents_md_updated: agents_changed,
+    })
+}
+
+pub fn cmd_sync(project_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let report = sync(Path::new(project_dir))?;
     println!(
         "{}",
         json!({
             "success": true,
-            "guidance_path": root.join(GUIDANCE_REL_PATH).to_string_lossy(),
-            "guidance_written": body_changed,
-            "claude_md_updated": claude_changed,
-            "agents_md_updated": agents_changed,
+            "guidance_path": report.guidance_path.to_string_lossy(),
+            "guidance_written": report.guidance_written,
+            "claude_md_updated": report.claude_md_updated,
+            "agents_md_updated": report.agents_md_updated,
         })
     );
     Ok(())

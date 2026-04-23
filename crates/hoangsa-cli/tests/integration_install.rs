@@ -516,3 +516,51 @@ fn no_memory_flag_skips_relocate() {
         "--no-memory flag must round-trip to the preview; got: {v}"
     );
 }
+
+// ─── 13. memory-guidance sync runs during --local install ─────────────────
+
+#[test]
+fn local_install_seeds_memory_guidance_pointer() {
+    let (home, cwd) = tmp_home_cwd();
+    let staging = tempfile::tempdir().expect("staging tempdir");
+    let templates = seed_templates(staging.path());
+
+    // Fake memory bin so --local install gets past the REQ-09 guard.
+    let install_dir = tempfile::tempdir().expect("install_dir tempdir");
+    let bin_dir = install_dir.path().join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    fs::write(bin_dir.join("hoangsa-memory-mcp"), "#!/bin/sh\n").expect("write fake bin");
+
+    let out = run(install_cmd(home.path(), cwd.path())
+        .env("HOANGSA_TEMPLATES_DIR", &templates)
+        .env("HOANGSA_INSTALL_DIR", install_dir.path())
+        .args(["--local", "--no-memory"]));
+
+    assert!(
+        out.status.success(),
+        "install must succeed; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v = parse_stdout(&out);
+    assert_eq!(
+        v["memory_guidance_synced"], true,
+        "guidance sync must run at end of install; got: {v}"
+    );
+
+    let claude = fs::read_to_string(cwd.path().join("CLAUDE.md"))
+        .expect("CLAUDE.md should exist after install");
+    assert!(
+        claude.contains("<!-- hoangsa-memory-start -->"),
+        "CLAUDE.md must carry the hoangsa-memory pointer block; got: {claude}"
+    );
+    let agents = fs::read_to_string(cwd.path().join("AGENTS.md"))
+        .expect("AGENTS.md should exist after install");
+    assert!(
+        agents.contains("<!-- hoangsa-memory-start -->"),
+        "AGENTS.md must carry the hoangsa-memory pointer block; got: {agents}"
+    );
+    assert!(
+        cwd.path().join(".hoangsa/memory-guidance.md").exists(),
+        ".hoangsa/memory-guidance.md body must be written by sync"
+    );
+}

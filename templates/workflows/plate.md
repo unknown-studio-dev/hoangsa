@@ -21,6 +21,17 @@ Extract from config:
 
 ---
 
+## Step 0c: Surface commit-relevant lessons
+
+Call `memory_wakeup()` and scan the returned `LESSONS.md` index for triggers
+that mention commits, staging, secrets, or the files about to change. If a
+lesson fires, note it before proceeding — e.g. "never commit X alongside Y",
+"run Z before committing migrations".
+
+Skip silently if `hoangsa-memory` is not installed.
+
+---
+
 ## Step 1: Inspect working tree
 
 Run `git status` to list all changed, staged, and untracked files.

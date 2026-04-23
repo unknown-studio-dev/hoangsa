@@ -2482,6 +2482,18 @@ pub fn cmd_install(args: &[&str]) {
         .map(|r| r.skipped_missing.clone())
         .unwrap_or_default();
 
+    // Seed project-level CLAUDE.md / AGENTS.md pointer block so Claude
+    // Code + subagents know this project is memory-backed. Non-fatal —
+    // a sync failure warns and lets the user re-run `hoangsa-cli
+    // memory-guidance sync` by hand.
+    let (guidance_synced, guidance_report) = match super::guidance::sync(&cwd) {
+        Ok(r) => (true, Some(r)),
+        Err(e) => {
+            warnings.push(format!("memory-guidance sync failed: {e}"));
+            (false, None)
+        }
+    };
+
     // Status flips to `"partial"` whenever any non-fatal step contributed
     // a warning. Fatal steps already exited above, so reaching this point
     // with an empty `warnings` vec means a clean `"ok"`.
@@ -2510,6 +2522,9 @@ pub fn cmd_install(args: &[&str]) {
         "memory_ignore_seeded": memory_ignore_seeded,
         "quality_skills_present": quality_skills_present,
         "quality_skills_pending": quality_skills_pending,
+        "memory_guidance_synced": guidance_synced,
+        "memory_guidance_claude_updated": guidance_report.as_ref().map(|r| r.claude_md_updated),
+        "memory_guidance_agents_updated": guidance_report.as_ref().map(|r| r.agents_md_updated),
     }));
 }
 
