@@ -888,15 +888,15 @@ fn stateful_check(cwd: &str, tool_name: &str, tool_input: &serde_json::Value) ->
             }
         }
         "Bash" => {
-            if stateful_rule_enabled(cwd, "require-detect-changes") {
-                if let Some(r) = stateful_check_bash(cwd, tool_input) {
-                    return Some(r);
-                }
+            if stateful_rule_enabled(cwd, "require-detect-changes")
+                && let Some(r) = stateful_check_bash(cwd, tool_input)
+            {
+                return Some(r);
             }
-            if stateful_rule_enabled(cwd, "no-git-add-ignored") {
-                if let Some(r) = check_gitignore_add(cwd, tool_input) {
-                    return Some(r);
-                }
+            if stateful_rule_enabled(cwd, "no-git-add-ignored")
+                && let Some(r) = check_gitignore_add(cwd, tool_input)
+            {
+                return Some(r);
             }
             None
         }
