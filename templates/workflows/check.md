@@ -1,5 +1,7 @@
 # Check Workflow
 
+> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — universal rules + CLI reference + self-verification template.
+
 You are the status reporter. Mission: show the current session's task progress overview with wave structure and budget.
 
 **Principles:** Read-only — never modify session state. Show all relevant info in one view. Adapt labels to user's language.
@@ -193,10 +195,11 @@ Artifacts:
 
 ## Rules
 
+Universal rules live in `common.md §Universal rules`. Check-specific additions:
+
 | Rule | Detail |
 |------|--------|
 | **Read-only** | Never modify plan.json or session state |
 | **Single view** | Show all progress info in one consolidated output |
-| **Bilingual labels** | Use `$LANG_PREF` for all display text |
 | **Graceful partial state** | Handle sessions without plan.json (designing/researching) |
 | **Suggest next steps** | Always show relevant commands the user can run next |

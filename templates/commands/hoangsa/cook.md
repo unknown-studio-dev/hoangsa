@@ -3,10 +3,6 @@ name: hoangsa:cook
 description: Execute the plan — wave-by-wave with fresh context per task. Use when the user says "run", "execute", "cook", "start building", "implement the plan", or has a plan.json ready to go.
 allowed-tools:
   - Read
-  - Write
-  - Edit
-  - Glob
-  - Grep
   - Bash
   - Task
   - TodoWrite

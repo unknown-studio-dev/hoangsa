@@ -1,5 +1,7 @@
 # HOANGSA Cook Workflow
 
+> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — it carries the universal rules, shared CLI invocations, and the self-verification template referenced below.
+
 You are the orchestrator. Mission: execute the plan wave-by-wave, verify results, report.
 
 **Principles:** Orchestrator does NOT write code. Only dispatch, monitor, report, escalate. Each task runs in a **fresh context** — this is the core of HOANGSA's context engineering.
@@ -16,9 +18,14 @@ You are the orchestrator. Mission: execute the plan wave-by-wave, verify results
 
 ### 1a. Find session + plan
 
+Build the context bundle once so subsequent sub-steps can skip redundant `state get` / `git status` / `config get` calls:
+
 ```bash
+"$HOANGSA_ROOT/bin/hoangsa-cli" ctx cook          # writes $SESSION_DIR/ctx.md
 SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)
 ```
+
+Then `Read $SESSION_DIR/ctx.md` — it carries session state, git context, config, and artifact listing.
 
 If `found: false` → ask user to run `/hoangsa:prepare` first, stop.
 
@@ -36,13 +43,10 @@ If errors → show specific errors, suggest re-running `/hoangsa:prepare`.
 
 ### 1c. Git context check
 
-Apply the shared git-context module from `git-context.md`:
+`ctx.md` already carries the branch, base, and dirty-file summary. Use those fields directly; only invoke the heavy `git-context.md` protocol when the dirty-state or branch mismatch requires user decisions:
 
-1. Run Part A (detect branching context) — detect base branch, current branch, dirty state
-2. Run Part B (git state check) — verify on correct branch for this session, switch if needed
-3. Run Part D (stash recovery) — notify if stashed work exists for this task
-
-The expected branch is derived from the session ID in `state.json`. If user is on wrong branch, prompt to switch before executing tasks.
+1. If `ctx.md` shows dirty files or a branch other than the expected (derived from session ID) → apply `git-context.md` Part B (state check) and Part D (stash recovery).
+2. Otherwise continue — no extra bash needed.
 
 ### 1d. Load specs for verification
 
@@ -710,22 +714,18 @@ Semantic check:
 
 ## Self-verification checklist
 
-Before reporting completion in Step 6, output this table. Every row MUST show DONE or SKIPPED:
+Before Step 6, emit the `common.md` self-verification table with rows:
 
 ```
-| Step | Status |
-|------|--------|
-| 0. Setup (lang + hoangsa-memory) | DONE / SKIPPED |
-| 1. Load & validate plan | DONE / SKIPPED |
-| 2. Confirm with user | DONE / SKIPPED |
-| 3. Execute all waves | DONE / SKIPPED |
-| 4. Escalation handling | DONE / SKIPPED |
-| 4d. Code Quality Gate | DONE / SKIPPED |
-| 5. Verification (3-tier) | DONE / SKIPPED |
-| 6. Final report | DONE / SKIPPED |
+| 0. Setup (lang + hoangsa-memory) | ... |
+| 1. Load & validate plan | ... |
+| 2. Confirm with user | ... |
+| 3. Execute all waves | ... |
+| 4. Escalation handling | ... |
+| 4d. Code Quality Gate | ... |
+| 5. Verification (3-tier) | ... |
+| 6. Final report | ... |
 ```
-
-If any step shows SKIPPED without explicit user approval, go back and complete it before stopping.
 
 ---
 
@@ -772,14 +772,13 @@ This is HOANGSA's core value proposition. Never compromise on it.
 
 ## Rules
 
+Universal rules live in `common.md §Universal rules`. Cook-specific additions:
+
 | Rule | Detail |
 |------|--------|
 | **DON'T write code yourself** | Orchestrator = coordinator only |
 | **DON'T read source to suggest patches** | Present evidence, ask user |
 | **Confirm before executing** | Always show plan, ask yes/no |
-| **Stop when user asks** | Immediately |
 | **Escalation is normal** | Follow the ladder, don't panic |
 | **Verification by stack** | Match language from DESIGN-SPEC |
 | **Plan is mandatory** | No plan = no cook |
-| **Fresh context per task** | Core HOANGSA principle — never compromise |
-| **Save preferences on first ask** | Ask once, save to config, never repeat |

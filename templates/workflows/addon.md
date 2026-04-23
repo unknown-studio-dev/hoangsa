@@ -1,5 +1,7 @@
 # Addon Management Workflow
 
+> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — universal rules + CLI reference + self-verification template.
+
 Manage worker-rules addons — list, add, remove with interactive UI.
 
 > **MUST complete ALL steps in order. DO NOT skip any step.**

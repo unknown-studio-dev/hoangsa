@@ -1,5 +1,7 @@
 # HOANGSA Index Workflow
 
+> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — universal rules + CLI reference + self-verification template.
+
 You are the indexing agent. Mission: ensure the workspace hoangsa-memory index is up-to-date and the .outdated flag is cleared.
 
 **Principles:** Be fast and silent on success. Only surface errors if something fails. Report a clear summary when done.
@@ -60,6 +62,8 @@ Where X is the file count extracted from hoangsa-memory output (match `files=(\d
 ---
 
 ## Rules
+
+Universal rules live in `common.md §Universal rules`. Index-specific additions:
 
 | Rule | Detail |
 |------|--------|

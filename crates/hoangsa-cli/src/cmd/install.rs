@@ -645,7 +645,10 @@ pub mod hooks {
                 // circuit via the `.bootstrap-done` sentinel.
                 managed_entry(format!("{cli} hook session-start"), 5, None),
             ],
-            "Stop": [managed_entry(format!("{cli} hook stop-check"), 5, None)],
+            "Stop": [
+                managed_entry(format!("{cli} hook stop-check"), 5, None),
+                managed_entry(format!("{cli} hook session-usage"), 5, None),
+            ],
             "PostToolUse": [managed_entry(
                 format!("{cli} hook post-enforce"),
                 5,
@@ -897,8 +900,8 @@ pub mod hooks {
             let mut settings = fresh_settings();
             let added =
                 merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks_inner(Some(&root)));
-            // 2 SessionStart + 1 Stop + 1 PostToolUse + 2 PreToolUse + 1 PreCompact + 1 SessionEnd = 8
-            assert_eq!(added, 8, "fresh merge lands every managed entry");
+            // 2 SessionStart + 2 Stop + 1 PostToolUse + 2 PreToolUse + 1 PreCompact + 1 SessionEnd = 9
+            assert_eq!(added, 9, "fresh merge lands every managed entry");
             let hooks = settings.get("hooks").and_then(|h| h.as_object()).expect("hooks present");
             assert!(hooks.contains_key("SessionStart"));
             assert!(hooks.contains_key("Stop"));
@@ -949,17 +952,17 @@ pub mod hooks {
             let first = merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks_inner(Some(&root)));
             let second = merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks_inner(Some(&root)));
 
-            assert_eq!(first, 8);
-            assert_eq!(second, 8, "re-merge re-adds the same set (replacing ours)");
+            assert_eq!(first, 9);
+            assert_eq!(second, 9, "re-merge re-adds the same set (replacing ours)");
 
-            // Total entries across events stays at 8 — never doubles.
+            // Total entries across events stays at 9 — never doubles.
             let hooks = settings.get("hooks").and_then(|h| h.as_object()).expect("hooks");
             let total: usize = hooks
                 .values()
                 .filter_map(|v| v.as_array())
                 .map(|a| a.len())
                 .sum();
-            assert_eq!(total, 8, "rerunning must not duplicate HOANGSA entries");
+            assert_eq!(total, 9, "rerunning must not duplicate HOANGSA entries");
         }
 
         #[test]

@@ -1,5 +1,7 @@
 # Serve Workflow
 
+> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — universal rules + CLI reference + self-verification template.
+
 You are the sync agent. Mission: bidirectional sync between HOANGSA sessions and external task managers (ClickUp, Asana, Linear, Jira, GitHub) via MCP.
 
 **Principles:** Pull fetches task context for design. Push syncs work results back. Always preview before sending. Never auto-post without user confirmation.
@@ -485,11 +487,12 @@ During cook execution, when the cook workflow detects an `external_task` in stat
 
 ## Rules
 
+Universal rules live in `common.md §Universal rules`. Serve-specific additions:
+
 | Rule | Detail |
 |------|--------|
 | **Preview before sending** | Always show composed update before posting to task manager |
 | **Never auto-post** | User must confirm every push action |
 | **Idempotent sync** | Re-running /serve on already-synced tasks is safe |
-| **Save config on first setup** | Ask task manager once, save to config, never repeat |
 | **Partial failure handling** | Report which operations succeeded/failed, retry only failed ones |
 | **Adapt to provider** | Use provider-appropriate markup (Jira wiki, GitHub markdown, etc.) |

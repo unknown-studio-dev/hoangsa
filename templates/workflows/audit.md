@@ -1,5 +1,7 @@
 # Audit Workflow
 
+> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — universal rules + CLI reference + self-verification template.
+
 Perform a comprehensive codebase audit across 8 dimensions, producing a detailed AUDIT-REPORT.md that teams can use as a refactoring roadmap.
 
 **Principles:** Parallel scanning for speed. Evidence-based — every finding must include file paths, line numbers, and concrete examples. Severity-rated so teams can prioritize. Actionable — each finding includes a suggested fix. Use hoangsa-memory when available, fall back gracefully.
@@ -1114,6 +1116,8 @@ Next steps:
 
 ## Rules
 
+Universal rules live in `common.md §Universal rules`. Audit-specific additions:
+
 | Rule | Detail |
 |------|--------|
 | **Evidence required** | Every finding must include file path + line number + code snippet — no vague claims |
@@ -1124,7 +1128,6 @@ Next steps:
 | **Parallel scanning** | Run dimension agents in parallel — do not scan sequentially |
 | **hoangsa-memory first** | Use hoangsa-memory tools when available for more accurate dependency/impact analysis |
 | **Redact secrets** | If secrets are found, report their existence but NEVER include actual values |
-| **AskUserQuestion for all interactions** | Every user-facing question uses AskUserQuestion |
 | **Respect scope** | Only scan dimensions the user selected — don't add unrequested dimensions |
 | **Cross-reference** | Step 5 must run after all agents complete — don't skip deduplication |
 | **Refactoring roadmap** | Always include a phased roadmap — the whole point is guiding refactoring |

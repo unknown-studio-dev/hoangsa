@@ -1,5 +1,7 @@
 # Fix Workflow
 
+> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — universal rules + CLI reference + self-verification template.
+
 Analyze a bug, create a minimal fix plan, implement the fixes, and chain to taste.
 
 > **MUST complete ALL steps in order. DO NOT skip any step. DO NOT stop before Step 6.**
@@ -497,25 +499,23 @@ Use AskUserQuestion:
 
 ## Self-verification checklist
 
-Before reporting completion, output this table. Every row MUST show DONE or SKIPPED:
+Before reporting completion, emit the `common.md` self-verification table with rows:
 
 ```
-| Step | Status |
-|------|--------|
-| 0. Setup (lang + hoangsa-memory + task link) | DONE / SKIPPED |
-| 1. Analyze bug | DONE / SKIPPED |
-| 2. Cross-layer trace | DONE / SKIPPED |
-| 3. Confirm fix plan | DONE / SKIPPED |
-| 4. Implement fixes | DONE / SKIPPED |
-| 5. Chain to taste | DONE / SKIPPED |
-| 6. Report + sync | DONE / SKIPPED |
+| 0. Setup (lang + hoangsa-memory + task link) | ... |
+| 1. Analyze bug | ... |
+| 2. Cross-layer trace | ... |
+| 3. Confirm fix plan | ... |
+| 4. Implement fixes | ... |
+| 5. Chain to taste | ... |
+| 6. Report + sync | ... |
 ```
-
-If any step shows SKIPPED without explicit user approval, go back and complete it before stopping.
 
 ---
 
 ## Rules
+
+Universal rules live in `common.md §Universal rules`. Fix-specific additions:
 
 | Rule | Detail |
 |------|--------|
@@ -523,7 +523,6 @@ If any step shows SKIPPED without explicit user approval, go back and complete i
 | **1–3 tasks max** | Keep it tight — hotfix, not a feature |
 | **Confirm before implementing** | Show plan, ask yes/no |
 | **Always chain to taste** | Verify no regressions after fix |
-| **Fresh context per task** | Core HOANGSA principle — never compromise |
 | **Cross-layer tracing is default** | Always trace if multi-layer project and root cause unclear |
 | **Sync-back if task linked** | Auto-ask user what to update on task manager after fix |
 | **Root cause over symptoms** | Recommend fixing the origin layer, not just patching symptoms |

@@ -1,8 +1,10 @@
 # HOANGSA Menu Workflow
 
+> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — universal rules + CLI reference + self-verification template.
+
 You are the design lead. Mission: take user from vague idea → DESIGN-SPEC + TEST-SPEC, ready for planning.
 
-**Principles:** Don't skip discussion. Ask one question at a time, not a dump list. User always has final say. ≥3 options for every important decision. Use AskUserQuestion for all interactions.
+**Principles:** Don't skip discussion. Ask one question at a time, not a dump list. User always has final say. ≥3 options for every important decision.
 
 > **MUST complete ALL steps in order. DO NOT skip any step. DO NOT stop before Step 8.**
 >
@@ -879,27 +881,25 @@ Report:
 
 ## Self-verification checklist
 
-Before reporting completion in Step 8, output this table. Every row MUST show DONE or SKIPPED:
+Before Step 8, emit the `common.md` self-verification table with rows:
 
 ```
-| Step | Status |
-|------|--------|
-| 0. Setup (lang + hoangsa-memory) | DONE / SKIPPED |
-| 1. Init session | DONE / SKIPPED |
-| 2. Gather input | DONE / SKIPPED |
-| 3. Create CONTEXT.md | DONE / SKIPPED |
-| 4. Research | DONE / SKIPPED |
-| 5. DESIGN-SPEC.md | DONE / SKIPPED |
-| 6. TEST-SPEC.md | DONE / SKIPPED |
-| 7. Validate specs | DONE / SKIPPED |
-| 8. Save + commit | DONE / SKIPPED |
+| 0. Setup (lang + hoangsa-memory) | ... |
+| 1. Init session | ... |
+| 2. Gather input | ... |
+| 3. Create CONTEXT.md | ... |
+| 4. Research | ... |
+| 5. DESIGN-SPEC.md | ... |
+| 6. TEST-SPEC.md | ... |
+| 7. Validate specs | ... |
+| 8. Save + commit | ... |
 ```
-
-If any step shows SKIPPED without explicit user approval, go back and complete it before stopping.
 
 ---
 
 ## Rules
+
+Universal rules live in `common.md §Universal rules`. Menu-specific additions:
 
 | Rule | Detail |
 |------|--------|
@@ -909,6 +909,4 @@ If any step shows SKIPPED without explicit user approval, go back and complete i
 | **Acceptance = command** | Runnable, not prose |
 | **Loop until approved** | User can revise indefinitely |
 | **Validate before done** | Run hoangsa-cli before step 8 |
-| **AskUserQuestion for all interactions** | Every user-facing question uses AskUserQuestion |
-| **Save preferences on first ask** | Never ask the same preference twice — save to config.json |
 | **Auto-detect before asking** | Detect tech stack from manifests, don't ask what's detectable |

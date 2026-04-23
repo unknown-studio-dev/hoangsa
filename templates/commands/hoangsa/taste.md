@@ -4,8 +4,6 @@ description: Test — run acceptance tests and report results per task. Use when
 allowed-tools:
   - Read
   - Bash
-  - Write
-  - Edit
   - Task
   - AskUserQuestion
 ---

@@ -1,8 +1,10 @@
 # HOANGSA Brainstorm Workflow
 
+> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — universal rules + CLI reference + self-verification template.
+
 Turn a vague idea into a validated design through collaborative dialogue, before any spec or code.
 
-**Principles:** One question at a time. Explore before committing. YAGNI ruthlessly. User always has final say. Use AskUserQuestion for all interactions.
+**Principles:** One question at a time. Explore before committing. YAGNI ruthlessly. User always has final say.
 
 > **MUST complete ALL steps in order. DO NOT skip any step. DO NOT stop before Step 7.**
 >
@@ -339,24 +341,24 @@ Next steps:
 
 ## Self-verification checklist
 
-Before reporting completion in Step 7, output this table:
+Before Step 7, emit the `common.md` self-verification table with rows:
 
 ```
-| Step | Status |
-|------|--------|
-| 0. Setup (lang + hoangsa-memory) | DONE / SKIPPED |
-| 1. Init session + idea | DONE / SKIPPED |
-| 2. Explore context | DONE / SKIPPED |
-| 3. Clarify intent | DONE / SKIPPED |
-| 4. Propose approaches | DONE / SKIPPED |
-| 5. Present design | DONE / SKIPPED |
-| 6. Write BRAINSTORM.md | DONE / SKIPPED |
-| 7. Complete + chain | DONE / SKIPPED |
+| 0. Setup (lang + hoangsa-memory) | ... |
+| 1. Init session + idea | ... |
+| 2. Explore context | ... |
+| 3. Clarify intent | ... |
+| 4. Propose approaches | ... |
+| 5. Present design | ... |
+| 6. Write BRAINSTORM.md | ... |
+| 7. Complete + chain | ... |
 ```
 
 ---
 
 ## Rules
+
+Universal rules live in `common.md §Universal rules`. Brainstorm-specific additions:
 
 | Rule | Detail |
 |------|--------|
@@ -366,6 +368,5 @@ Before reporting completion in Step 7, output this table:
 | **No code before approval** | HARD-GATE — design first, implement never (that's menu/cook's job) |
 | **Scale to complexity** | Simple idea = short doc, complex = detailed doc |
 | **Max 6 questions** | After 6, proceed with assumptions |
-| **AskUserQuestion for all interactions** | Every user-facing question uses AskUserQuestion |
 | **Chain to menu** | Terminal state is suggesting `/hoangsa:menu` |
 | **Structured output** | BRAINSTORM.md has frontmatter + sections that menu can parse |

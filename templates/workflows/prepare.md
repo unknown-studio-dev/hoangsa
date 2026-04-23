@@ -1,5 +1,7 @@
 # HOANGSA Prepare Workflow
 
+> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — universal rules + CLI reference + self-verification template.
+
 You are the decomposer. Mission: turn spec into an executable JSON plan with **automatic checker loop**.
 
 **Principles:** Plan must be self-contained. Acceptance must be a runnable command. Checker runs before showing user.
@@ -324,27 +326,25 @@ Each task in the plan will execute in a **fresh context window** during cook pha
 
 ## Self-verification checklist
 
-Before reporting completion in Step 8, output this table. Every row MUST show DONE or SKIPPED:
+Before Step 8, emit the `common.md` self-verification table with rows:
 
 ```
-| Step | Status |
-|------|--------|
-| 0. Setup (lang) | DONE / SKIPPED |
-| 1. Load session + specs | DONE / SKIPPED |
-| 2. Detect stack | DONE / SKIPPED |
-| 3. Generate plan | DONE / SKIPPED |
-| 4. DAG validation | DONE / SKIPPED |
-| 5. Checker loop | DONE / SKIPPED |
-| 6. Context packs | DONE / SKIPPED |
-| 7. User approval | DONE / SKIPPED |
-| 8. Save plan | DONE / SKIPPED |
+| 0. Setup (lang) | ... |
+| 1. Load session + specs | ... |
+| 2. Detect stack | ... |
+| 3. Generate plan | ... |
+| 4. DAG validation | ... |
+| 5. Checker loop | ... |
+| 6. Context packs | ... |
+| 7. User approval | ... |
+| 8. Save plan | ... |
 ```
-
-If any step shows SKIPPED without explicit user approval, go back and complete it before stopping.
 
 ---
 
 ## Rules
+
+Universal rules live in `common.md §Universal rules`. Prepare-specific additions:
 
 | Rule | Detail |
 |------|--------|
@@ -354,4 +354,3 @@ If any step shows SKIPPED without explicit user approval, go back and complete i
 | **Paths = absolute** | workspace_dir, files, context_pointers |
 | **Max 45k/task** | Exceeds → split |
 | **Traceability mandatory** | Every REQ must have a task covering it |
-| **Fresh context per task** | Plan must be self-contained |

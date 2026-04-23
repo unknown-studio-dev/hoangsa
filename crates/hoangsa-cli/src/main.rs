@@ -2,6 +2,7 @@ mod cmd;
 mod helpers;
 
 use helpers::resolve_cwd;
+use std::path::Path;
 
 fn main() {
     let raw_args: Vec<String> = std::env::args().collect();
@@ -60,6 +61,29 @@ fn main() {
         ),
         ("session", "latest") => cmd::session::cmd_latest(rest.first().copied(), &cwd),
         ("session", "list") => cmd::session::cmd_list(rest.first().copied(), &cwd),
+        ("session", "usage") => {
+            // Accept either `session usage [sessions_dir]` or
+            // `session usage <session_id> [sessions_dir]`. An id is
+            // `<type>/<name>` where type is one of the canonical
+            // session types — that specificity keeps relative paths
+            // like `./.hoangsa/sessions` or `sessions/archive` from
+            // being misrouted as ids.
+            let first = rest.first().copied();
+            let looks_like_id = first
+                .map(|s| {
+                    if s.is_empty() || Path::new(s).is_absolute() || !s.contains('/') {
+                        return false;
+                    }
+                    let ty = s.split('/').next().unwrap_or("");
+                    cmd::session::KNOWN_TYPES.contains(&ty)
+                })
+                .unwrap_or(false);
+            if looks_like_id {
+                cmd::session::cmd_usage(first, rest.get(1).copied(), &cwd);
+            } else {
+                cmd::session::cmd_usage(None, first, &cwd);
+            }
+        }
         ("resolve-model", "--all") => cmd::model::resolve_all(&cwd),
         ("resolve-model", _) => cmd::model::resolve_model(sub, &cwd),
         ("state", "init") => cmd::state::cmd_init(rest.first().copied(), &cwd),
@@ -79,6 +103,7 @@ fn main() {
         ("config", "set") => cmd::config::cmd_set(rest.first().copied(), rest.get(1).copied()),
         ("context", "pack") => cmd::context::cmd_pack(rest.first().copied(), rest.get(1).copied()),
         ("context", "get") => cmd::context::cmd_get(rest.first().copied(), rest.get(1).copied()),
+        ("ctx", _) => cmd::ctx::cmd_ctx(Some(sub), rest.first().copied(), &cwd),
         ("trust", "check") => {
             let dir = rest.first().copied().unwrap_or(&cwd);
             cmd::trust::cmd_check(dir);
@@ -134,6 +159,9 @@ fn main() {
         }
         ("hook", "session-start") => {
             cmd::hook::cmd_session_start(&cwd);
+        }
+        ("hook", "session-usage") => {
+            cmd::hook::cmd_session_usage(&cwd);
         }
         ("hook", "state-record") => {
             cmd::hook::cmd_state_record(&cwd);
@@ -249,6 +277,7 @@ Usage:
   dag check|waves <plan_path>
   session init <type> <name> [sessions_dir]
   session latest|list [sessions_dir]
+  session usage [session_id] [sessions_dir]
   commit \"<message>\" --files <f1> <f2> ...
   resolve-model <role>
   resolve-model --all
@@ -258,6 +287,7 @@ Usage:
   pref set [projectDir] <key> <value>
   config get|set <projectDir> [jsonPatch]
   context pack|get <sessionDir> <taskId>
+  ctx <workflow> [session_id]
   trust check <projectDir>
   trust approve <fingerprint> <name>
   trust revoke <fingerprint>

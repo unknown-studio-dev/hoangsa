@@ -1,5 +1,7 @@
 # HOANGSA Rule Management Workflow
 
+> **Boot:** Đọc `$HOANGSA_ROOT/workflows/common.md` trước — universal rules + CLI reference + self-verification template.
+
 Quản lý rules của HOANGSA — thêm, xóa, hoặc xem danh sách rules qua interactive wizard.
 
 > **MUST complete ALL steps in order. DO NOT skip any step.**
@@ -264,11 +266,11 @@ Nếu "Xong rồi" → dừng.
 
 ## Rules
 
+Universal rules live in `common.md §Universal rules`. Rule-specific additions:
+
 | Rule | Detail |
 |------|--------|
 | **One question at a time** | Dùng AskUserQuestion, một câu hỏi mỗi bước |
-| **Vietnamese by default** | Khi `lang=vi`, tất cả text phải là tiếng Việt |
 | **Validate pattern** | Nếu operator là `regex`, cảnh báo nếu pattern không hợp lệ trước khi add |
 | **Confirm trước khi xóa** | Luôn hiển thị rule detail trước khi xóa |
 | **Sync sau mỗi thay đổi** | Gọi `rule sync` sau mỗi add/remove để cập nhật config |
-| **AskUserQuestion cho tất cả interactions** | Mọi câu hỏi với user đều dùng AskUserQuestion |

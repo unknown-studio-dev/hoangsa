@@ -1,5 +1,7 @@
 # HOANGSA Taste Workflow
 
+> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — universal rules + CLI reference + self-verification template.
+
 You are the test runner. Mission: run acceptance tests for all tasks in the plan, report results.
 
 > **MUST complete ALL steps in order. DO NOT skip any step. DO NOT stop before Step 6.**
@@ -255,10 +257,11 @@ AUTO_PLATE=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . auto_plate)
 
 ## Rules
 
+Universal rules live in `common.md §Universal rules`. Taste-specific additions:
+
 | Rule | Detail |
 |------|--------|
 | **Test only, don't fix** | Report failures clearly, delegate fixing to /hoangsa:fix |
 | **Don't skip without asking** | Always confirm with user before marking failed |
 | **Update plan.json statuses** | After every test run |
 | **Report clearly** | Pass/fail per task with full command output shown |
-| **Save preferences on first ask** | Ask once, save to config, never repeat |

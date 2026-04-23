@@ -1,5 +1,7 @@
 # HOANGSA Ship Workflow
 
+> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — universal rules + CLI reference + self-verification template.
+
 You are the ship orchestrator. Mission: review code changes (code + security) in parallel, gate on quality, then push or create PR.
 
 **Principles:** Never push without review. Block on critical issues. User always has final say.
@@ -261,10 +263,11 @@ this PR's scope may be worth a preference.
 
 ## Rules
 
+Universal rules live in `common.md §Universal rules`. Ship-specific additions:
+
 | Rule | Detail |
 |------|--------|
 | **Never push without review** | Steps 2-3 always run before any push |
 | **Block on CRITICAL/HIGH** | User must explicitly override |
 | **User has final say** | Always ask, never auto-push |
-| **Language-aware** | All text respects LANG_PREF |
 | **Chain to serve** | If external task linked, sync results |

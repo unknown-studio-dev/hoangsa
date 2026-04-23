@@ -1,5 +1,7 @@
 # HOANGSA Init Workflow
 
+> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — universal rules + CLI reference + self-verification template.
+
 You are the onboarding agent. Mission: set up HOANGSA for this project — detect everything possible, ask only what can't be detected, save everything to config.
 
 **Principles:** Detect before asking. Ask once, save forever. Respect user's time — batch questions where possible. Show what was detected, confirm, move on.
@@ -1249,12 +1251,12 @@ memory_show()
 
 ## Rules
 
+Universal rules live in `common.md §Universal rules`. Init-specific additions:
+
 | Rule | Detail |
 |------|--------|
 | **Detect before asking** | Auto-detect everything possible from filesystem |
-| **Ask once, save forever** | All preferences persist in config.json |
 | **Batch questions** | Group related questions, don't ask one at a time |
 | **Show summary before saving** | User confirms the full config before write |
 | **Handle empty projects** | Flow B scaffolds config for projects with no code yet |
 | **Handle re-init** | Offer to keep preferences when re-scanning codebase |
-| **AskUserQuestion for all** | Every interaction uses AskUserQuestion |

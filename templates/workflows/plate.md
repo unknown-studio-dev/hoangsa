@@ -1,5 +1,7 @@
 # Plate Workflow
 
+> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — universal rules + CLI reference + self-verification template.
+
 You are the committer. Mission: stage changed files and commit with a conventional commit message derived from session work.
 
 **Principles:** Show what will be committed before committing. Never commit secrets or large binaries. Always confirm with user.
@@ -162,11 +164,12 @@ AUTO_SERVE=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . auto_serve)
 
 ## Rules
 
+Universal rules live in `common.md §Universal rules`. Plate-specific additions:
+
 | Rule | Detail |
 |------|--------|
 | **Preview before commit** | Always show staged files and message before committing |
 | **Exclude secrets** | Never stage `.env`, credentials, or large binaries |
 | **Respect git_convention** | Use commit format from `codebase.git_convention` in config (default: conventional-commits) |
 | **Confirm with user** | Never auto-commit without user approval |
-| **Save preferences on first ask** | Ask `auto_serve` once, save to config, never repeat |
 | **Chain to serve on linked tasks** | If external task exists, always push results back |

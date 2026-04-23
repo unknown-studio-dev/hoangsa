@@ -4,7 +4,6 @@ description: Commit — stage changed files and commit with conventional message
 allowed-tools:
   - Read
   - Bash
-  - Write
   - AskUserQuestion
 ---
 

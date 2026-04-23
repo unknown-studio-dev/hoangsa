@@ -4,7 +4,6 @@ description: Ship — review code + security, then push or create PR. Use when t
 allowed-tools:
   - Read
   - Bash
-  - Write
   - Agent
   - AskUserQuestion
 ---

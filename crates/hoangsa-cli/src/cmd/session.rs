@@ -29,7 +29,10 @@ fn slugify(name: &str) -> String {
     result
 }
 
-const KNOWN_TYPES: &[&str] = &["feat", "fix", "refactor", "perf", "test", "docs", "chore", "brainstorm"];
+/// Canonical session types. Shared with `hook::find_latest_session` so the
+/// Stop-hook routing stays in sync with `session init` — adding a type here
+/// is the single edit needed.
+pub const KNOWN_TYPES: &[&str] = &["feat", "fix", "refactor", "perf", "test", "docs", "chore", "brainstorm"];
 
 /// `session init <type> <name> [sessions_dir]`
 pub fn cmd_init(
@@ -218,6 +221,74 @@ pub fn cmd_latest(sessions_dir: Option<&str>, cwd: &str) {
         "dir": s.dir,
         "files": s.files,
     }));
+}
+
+/// `session usage [session_id] [sessions_dir]`
+///
+/// Reads `$SESSION_DIR/usage.json` (written by the Stop hook) and prints it.
+/// With no `session_id`, uses the most recently modified session.
+pub fn cmd_usage(session_id: Option<&str>, sessions_dir: Option<&str>, cwd: &str) {
+    let dir = sessions_dir.map(|s| s.to_string()).unwrap_or_else(|| {
+        Path::new(cwd)
+            .join(".hoangsa")
+            .join("sessions")
+            .to_string_lossy()
+            .to_string()
+    });
+
+    let session_dir = match session_id {
+        Some(id) if !id.is_empty() => {
+            let path = Path::new(&dir).join(id);
+            if !path.exists() {
+                out(&json!({ "error": format!("Session not found: {}", id) }));
+                return;
+            }
+            path
+        }
+        _ => {
+            let sessions = collect_sessions(&dir);
+            match sessions.into_iter().next() {
+                Some(s) => Path::new(&s.dir).to_path_buf(),
+                None => {
+                    out(&json!({ "error": "No sessions found" }));
+                    return;
+                }
+            }
+        }
+    };
+
+    let usage_file = session_dir.join("usage.json");
+    if !usage_file.exists() {
+        out(&json!({
+            "found": false,
+            "session_dir": session_dir.to_string_lossy(),
+            "hint": "usage.json is written by the Stop hook on the first turn — run a workflow to populate it",
+        }));
+        return;
+    }
+
+    let content = match fs::read_to_string(&usage_file) {
+        Ok(s) => s,
+        Err(e) => {
+            out(&json!({ "error": format!("Cannot read usage.json: {}", e) }));
+            return;
+        }
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(e) => {
+            out(&json!({ "error": format!("Invalid JSON in usage.json: {}", e) }));
+            return;
+        }
+    };
+
+    let mut enriched = parsed.as_object().cloned().unwrap_or_default();
+    enriched.insert("found".into(), json!(true));
+    enriched.insert(
+        "session_dir".into(),
+        json!(session_dir.to_string_lossy().to_string()),
+    );
+    out(&serde_json::Value::Object(enriched));
 }
 
 /// `session list [sessions_dir]`

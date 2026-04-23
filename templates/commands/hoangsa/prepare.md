@@ -5,7 +5,6 @@ allowed-tools:
   - Read
   - Write
   - Bash
-  - Task
   - AskUserQuestion
 ---
 

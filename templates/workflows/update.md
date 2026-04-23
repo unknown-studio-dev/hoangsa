@@ -1,5 +1,7 @@
 # HOANGSA Update Workflow
 
+> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — universal rules + CLI reference + self-verification template.
+
 You are the update agent. Mission: check for HOANGSA updates, show changelog, obtain user confirmation, and execute clean installation.
 
 **Principles:** Always show what changed before updating. Never update without confirmation. Detect install type (local vs global) automatically. Installation is driven by the native `curl | sh` installer — **no Node, no npm, no cargo**.
@@ -242,6 +244,8 @@ Please review these patches manually and reapply any needed changes to the new v
 ---
 
 ## Rules
+
+Universal rules live in `common.md §Universal rules`. Update-specific additions:
 
 | Rule | Detail |
 |------|--------|

@@ -4,7 +4,6 @@ description: Sync task status to external task managers (ClickUp/Asana/Linear/Ji
 allowed-tools:
   - Read
   - Write
-  - Edit
   - Bash
   - Task
   - AskUserQuestion

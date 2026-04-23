@@ -1,8 +1,10 @@
 # Research Workflow
 
+> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — universal rules + CLI reference + self-verification template.
+
 Conduct deep research on a topic — codebase structure, patterns, or external knowledge — and produce a structured RESEARCH.md report.
 
-**Principles:** Ask before assuming. Use hoangsa-memory when available, fall back gracefully. Support both auto and confirm modes. Use AskUserQuestion for all user interactions.
+**Principles:** Ask before assuming. Use hoangsa-memory when available, fall back gracefully. Support both auto and confirm modes.
 
 ---
 
@@ -345,9 +347,10 @@ Next steps:
 
 ## Rules
 
+Universal rules live in `common.md §Universal rules`. Research-specific additions:
+
 | Rule | Detail |
 |------|--------|
-| **AskUserQuestion for all interactions** | Every user-facing question uses AskUserQuestion — no plain text prompts |
 | **hoangsa-memory first, fallback gracefully** | Always try hoangsa-memory tools first; use Grep/Glob if index unavailable |
 | **WebSearch/WebFetch as fallback** | For external research, MCP first, then WebSearch/WebFetch |
 | **Non-blocking index check** | hoangsa-memory warning in Step 0 never halts the workflow |
@@ -356,4 +359,3 @@ Next steps:
 | **RESEARCH.md always produced** | Output file is always written, regardless of scope or mode |
 | **Parallel agents for codebase** | Run Agents 1, 2, 3 in parallel — do not run sequentially |
 | **Loop until satisfied (confirm mode)** | User can trigger additional research passes in Step 5 |
-| **Save preferences on first ask** | Scope + mode saved to config, never asked again |

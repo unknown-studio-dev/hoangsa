@@ -1647,7 +1647,10 @@ fn find_latest_session(sessions_root: &str) -> Option<String> {
     let root = Path::new(sessions_root);
     let type_dirs = fs::read_dir(root).ok()?;
 
-    let known_types = ["feat", "fix", "refactor", "perf", "test", "docs", "chore"];
+    // Reuse the canonical list from `session.rs` so hook routing stays in
+    // sync with `session init` / `collect_sessions`. A divergent local
+    // list drops brainstorm sessions on the floor (writes nothing, or
+    // worse, writes to an older non-brainstorm session via mtime).
     let mut best: Option<(std::time::SystemTime, String)> = None;
 
     for type_entry in type_dirs.filter_map(|e| e.ok()) {
@@ -1656,7 +1659,7 @@ fn find_latest_session(sessions_root: &str) -> Option<String> {
             continue;
         }
         let type_name = type_entry.file_name().into_string().ok()?;
-        if !known_types.contains(&type_name.as_str()) {
+        if !crate::cmd::session::KNOWN_TYPES.contains(&type_name.as_str()) {
             continue;
         }
 
@@ -1685,6 +1688,147 @@ fn find_latest_session(sessions_root: &str) -> Option<String> {
     }
 
     best.map(|(_, path)| path)
+}
+
+// ── Session token-usage instrumentation ──────────────────────────────────────
+
+/// Aggregate Anthropic usage counters across a Claude Code transcript.
+#[derive(Default, Clone, Copy)]
+struct UsageTotals {
+    input: u64,
+    output: u64,
+    cache_read: u64,
+    cache_creation: u64,
+    turns: u64,
+}
+
+impl UsageTotals {
+    fn total(&self) -> u64 {
+        self.input + self.output + self.cache_read + self.cache_creation
+    }
+}
+
+/// Sum `message.usage` fields across all assistant lines in a transcript JSONL.
+fn tally_transcript(transcript_path: &Path) -> Option<UsageTotals> {
+    use std::io::{BufRead, BufReader};
+    let file = fs::File::open(transcript_path).ok()?;
+    let reader = BufReader::new(file);
+    let mut t = UsageTotals::default();
+    for line in reader.lines().map_while(Result::ok) {
+        let v: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if v.get("type").and_then(|s| s.as_str()) != Some("assistant") {
+            continue;
+        }
+        let Some(usage) = v.get("message").and_then(|m| m.get("usage")) else {
+            continue;
+        };
+        let get = |k: &str| usage.get(k).and_then(|n| n.as_u64()).unwrap_or(0);
+        t.input += get("input_tokens");
+        t.output += get("output_tokens");
+        t.cache_read += get("cache_read_input_tokens");
+        t.cache_creation += get("cache_creation_input_tokens");
+        t.turns += 1;
+    }
+    Some(t)
+}
+
+/// `hook session-usage`
+///
+/// Fires on Claude Code Stop. Reads transcript_path from stdin, sums up
+/// token usage across all assistant messages, writes
+/// `$SESSION_DIR/usage.json` for the latest active session under cwd.
+///
+/// Best-effort — never blocks the turn:
+///   - No latest session → skip silently.
+///   - No transcript or malformed lines → skip silently.
+///   - Write failure → skip silently.
+///
+/// The file is rewritten (idempotent) every turn because Stop fires once
+/// per turn and the transcript grows monotonically.
+pub fn cmd_session_usage(cwd: &str) {
+    use std::io::Read as _;
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input).ok();
+    let parsed: serde_json::Value = serde_json::from_str(&input).unwrap_or(json!({}));
+
+    let approve = || out(&json!({"decision": "approve"}));
+
+    let transcript_path = parsed
+        .get("transcript_path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if transcript_path.is_empty() {
+        approve();
+        return;
+    }
+
+    let effective_cwd = parsed
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(cwd);
+
+    let sessions_root = Path::new(effective_cwd)
+        .join(".hoangsa")
+        .join("sessions")
+        .to_string_lossy()
+        .to_string();
+    let Some(session_dir) = find_latest_session(&sessions_root) else {
+        approve();
+        return;
+    };
+
+    let Some(totals) = tally_transcript(Path::new(transcript_path)) else {
+        approve();
+        return;
+    };
+
+    // Read session_id from state.json if present — useful for cross-referencing.
+    let state_path = Path::new(&session_dir).join("state.json");
+    let session_id = if state_path.exists() {
+        let v = read_json(state_path.to_str().unwrap_or(""));
+        v.get("session_id")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string()
+    } else {
+        String::new()
+    };
+
+    let payload = json!({
+        "session_id": session_id,
+        "transcript_path": transcript_path,
+        "updated_at": now_iso_for_usage(),
+        "turns": totals.turns,
+        "input_tokens": totals.input,
+        "output_tokens": totals.output,
+        "cache_read_tokens": totals.cache_read,
+        "cache_creation_tokens": totals.cache_creation,
+        "total_tokens": totals.total(),
+    });
+
+    let usage_path = Path::new(&session_dir).join("usage.json");
+    let _ = fs::write(
+        &usage_path,
+        serde_json::to_string_pretty(&payload).unwrap_or_default(),
+    );
+
+    approve();
+}
+
+/// ISO-8601 timestamp for usage.json. Separate from the oneliner in
+/// `state.rs` so hook.rs keeps a single time-formatting helper.
+fn now_iso_for_usage() -> String {
+    use time::OffsetDateTime;
+    use time::macros::format_description;
+    OffsetDateTime::now_utc()
+        .format(format_description!(
+            "[year]-[month]-[day]T[hour]:[minute]:[second]Z"
+        ))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -1922,5 +2066,60 @@ mod tests {
         assert!(ts.ends_with('Z'));
         let num_part = &ts[..ts.len() - 1];
         assert!(num_part.parse::<u64>().is_ok());
+    }
+
+    // ── tally_transcript ─────────────────────────────────────────────────────
+
+    #[test]
+    fn tally_transcript_sums_assistant_usage_only() {
+        use std::io::Write as _;
+        let tmp = tempfile::NamedTempFile::new().expect("tmp");
+        let mut f = tmp.reopen().expect("reopen");
+        // Two assistant lines with usage, one user line without.
+        writeln!(
+            f,
+            r#"{{"type":"user","message":{{"role":"user","content":"hi"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"assistant","message":{{"usage":{{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":10,"cache_creation_input_tokens":5}}}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"assistant","message":{{"usage":{{"input_tokens":200,"output_tokens":75,"cache_read_input_tokens":20,"cache_creation_input_tokens":0}}}}}}"#
+        )
+        .unwrap();
+
+        let t = tally_transcript(tmp.path()).expect("tally");
+        assert_eq!(t.input, 300);
+        assert_eq!(t.output, 125);
+        assert_eq!(t.cache_read, 30);
+        assert_eq!(t.cache_creation, 5);
+        assert_eq!(t.turns, 2);
+        assert_eq!(t.total(), 460);
+    }
+
+    #[test]
+    fn tally_transcript_missing_file_returns_none() {
+        assert!(tally_transcript(Path::new("/nonexistent/path/transcript.jsonl")).is_none());
+    }
+
+    #[test]
+    fn tally_transcript_tolerates_malformed_lines() {
+        use std::io::Write as _;
+        let tmp = tempfile::NamedTempFile::new().expect("tmp");
+        let mut f = tmp.reopen().expect("reopen");
+        writeln!(f, "not json").unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"assistant","message":{{"usage":{{"input_tokens":10,"output_tokens":20}}}}}}"#
+        )
+        .unwrap();
+        let t = tally_transcript(tmp.path()).expect("tally");
+        assert_eq!(t.input, 10);
+        assert_eq!(t.output, 20);
+        assert_eq!(t.turns, 1);
     }
 }
