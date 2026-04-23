@@ -341,17 +341,21 @@ pub fn cmd_ctx(workflow: Option<&str>, session_id: Option<&str>, cwd: &str) {
         })
         .unwrap_or_else(|| "unknown".to_string());
 
-    let mut sections: Vec<(String, String)> = Vec::new();
-    sections.push((
-        "Session state".to_string(),
-        build_session_section(&session_dir.join("state.json")),
-    ));
-    sections.push(("Git context".to_string(), build_git_section(cwd)));
-    sections.push(("Project config (excerpt)".to_string(), build_config_section(cwd)));
-    sections.push((
-        "Session artifacts".to_string(),
-        build_artifacts_section(&session_dir),
-    ));
+    let mut sections: Vec<(String, String)> = vec![
+        (
+            "Session state".to_string(),
+            build_session_section(&session_dir.join("state.json")),
+        ),
+        ("Git context".to_string(), build_git_section(cwd)),
+        (
+            "Project config (excerpt)".to_string(),
+            build_config_section(cwd),
+        ),
+        (
+            "Session artifacts".to_string(),
+            build_artifacts_section(&session_dir),
+        ),
+    ];
 
     // Workflow-scoped additions — cheap and deterministic.
     match workflow.as_str() {
