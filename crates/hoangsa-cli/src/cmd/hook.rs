@@ -73,7 +73,7 @@ pub fn cmd_stop_check(sessions_dir: Option<&str>, cwd: &str) {
 /// Reason text injected into the Stop hook when the session did real work
 /// but the agent hasn't reflected yet. Surfaces as a system message the
 /// agent must respond to before the conversation can terminate.
-const REFLECT_REASON: &str = "HOANGSA MEMORY: Before stopping, invoke the `memory-reflect` skill to distill durable learnings from this session into `memory_remember_fact` / `memory_remember_lesson` / `memory_remember_preference`. See `templates/snippets/memory-reflect-end.md` for the decision checklist. If nothing is worth persisting, briefly say so and stop.";
+const REFLECT_REASON: &str = "HOANGSA MEMORY: Before stopping, invoke the `memory-reflect` skill to distill durable learnings from this session into `memory_remember_fact` / `memory_remember_lesson` / `memory_remember_preference`. The skill contains the decision checklist. If nothing is worth persisting, briefly say so and stop.";
 
 enum ReflectOutcome {
     /// No prompt needed — approve the Stop.

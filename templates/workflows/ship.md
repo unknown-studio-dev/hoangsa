@@ -251,9 +251,9 @@ Ship complete!
 
 ## Step 7: Reflect to memory
 
-Read `$HOANGSA_ROOT/templates/snippets/memory-reflect-end.md` and follow it.
-The snippet decides whether anything from this ship is worth persisting — in
-most runs the answer is no, and that is the correct outcome.
+Invoke the `memory-reflect` skill and follow its checklist. The skill decides
+whether anything from this ship is worth persisting — in most runs the answer
+is no, and that is the correct outcome.
 
 Apply with the review report + any user corrections in mind: a reviewer flag
 the user accepted may be worth a lesson; a preference the user stated for
