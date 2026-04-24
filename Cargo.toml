@@ -17,7 +17,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 rust-version = "1.91"
 license = "MIT OR Apache-2.0"
@@ -26,13 +26,13 @@ authors = ["Than The Van"]
 
 [workspace.dependencies]
 # Internal crates
-hoangsa-memory-core     = { path = "crates/hoangsa-memory-core",     version = "0.2.3" }
-hoangsa-memory-parse    = { path = "crates/hoangsa-memory-parse",    version = "0.2.3" }
-hoangsa-memory-store    = { path = "crates/hoangsa-memory-store",    version = "0.2.3" }
-hoangsa-memory-graph    = { path = "crates/hoangsa-memory-graph",    version = "0.2.3" }
-hoangsa-memory-policy   = { path = "crates/hoangsa-memory-policy",   version = "0.2.3" }
-hoangsa-memory-retrieve = { path = "crates/hoangsa-memory-retrieve", version = "0.2.3" }
-hoangsa-memory-mcp      = { path = "crates/hoangsa-memory-mcp",      version = "0.2.3" }
+hoangsa-memory-core     = { path = "crates/hoangsa-memory-core",     version = "0.2.4" }
+hoangsa-memory-parse    = { path = "crates/hoangsa-memory-parse",    version = "0.2.4" }
+hoangsa-memory-store    = { path = "crates/hoangsa-memory-store",    version = "0.2.4" }
+hoangsa-memory-graph    = { path = "crates/hoangsa-memory-graph",    version = "0.2.4" }
+hoangsa-memory-policy   = { path = "crates/hoangsa-memory-policy",   version = "0.2.4" }
+hoangsa-memory-retrieve = { path = "crates/hoangsa-memory-retrieve", version = "0.2.4" }
+hoangsa-memory-mcp      = { path = "crates/hoangsa-memory-mcp",      version = "0.2.4" }
 
 # Async + error handling
 tokio        = { version = "1.43", features = ["macros", "rt-multi-thread", "fs", "sync", "time", "io-util"] }
