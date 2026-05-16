@@ -32,7 +32,7 @@ pub fn out(obj: &Value) {
 /// Returns a map of key-value pairs, or None if no frontmatter found.
 ///
 /// Expects format:
-/// ```
+/// ```text
 /// ---
 /// key: value
 /// key: "quoted value"

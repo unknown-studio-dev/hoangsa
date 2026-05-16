@@ -5,7 +5,7 @@ use std::path::Path;
 
 /// Resolve HOANGSA_ROOT — find the installed addons directory.
 /// Checks: env HOANGSA_ROOT → .claude/hoangsa from project dir → ~/.claude/hoangsa
-fn resolve_hoangsa_root(project_dir: &str) -> Option<String> {
+pub fn resolve_hoangsa_root(project_dir: &str) -> Option<String> {
     if let Ok(root) = std::env::var("HOANGSA_ROOT") {
         let addons = Path::new(&root).join("workflows/worker-rules/addons");
         if addons.is_dir() {
@@ -30,7 +30,7 @@ fn resolve_hoangsa_root(project_dir: &str) -> Option<String> {
 
 /// Scan $HOANGSA_ROOT/workflows/worker-rules/addons/*.md, parse frontmatter.
 /// Returns Vec of { name, frameworks, test_frameworks } objects.
-fn scan_available_addons(hoangsa_root: &str) -> Vec<Value> {
+pub fn scan_available_addons(hoangsa_root: &str) -> Vec<Value> {
     let addons_dir = Path::new(hoangsa_root).join("workflows/worker-rules/addons");
     let mut result = Vec::new();
 
@@ -122,7 +122,7 @@ fn scan_available_addons(hoangsa_root: &str) -> Vec<Value> {
 }
 
 /// Read active_addons from config.json.
-fn get_active_addons(project_dir: &str) -> Vec<String> {
+pub fn get_active_addons(project_dir: &str) -> Vec<String> {
     let config_file = Path::new(project_dir).join(".hoangsa/config.json");
     let config = read_json(config_file.to_str().unwrap_or(""));
     config

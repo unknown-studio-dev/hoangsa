@@ -1,0 +1,46 @@
+[package]
+name = "hoangsa-ui-server"
+version = "0.2.4"
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Local web UI server for hoangsa config + memory browser"
+
+[lib]
+name = "hoangsa_ui_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hoangsa-ui"
+path = "src/main.rs"
+
+[dependencies]
+hoangsa-cli = { path = "../hoangsa-cli", version = "0.2.4" }
+hoangsa-memory-core = { workspace = true }
+tokio = { workspace = true, features = ["signal"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+axum = { version = "0.8", features = ["macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+rust-embed = { version = "8", features = ["interpolate-folder-path"] }
+mime_guess = "2"
+rand = "0.8"
+hex = "0.4"
+dirs = "5"
+json-patch = "4"
+tempfile = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
+
+[[test]]
+name = "integration_http"
+path = "tests/integration_http.rs"

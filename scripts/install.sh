@@ -662,7 +662,7 @@ main() {
     tar -xzf "$TMP/$TARBALL_NAME" -C "$EXTRACT_DIR" \
         || die 1 "tar extraction failed"
 
-    # Expected layout: hoangsa-<triple>/bin/{hoangsa-cli,hoangsa-memory,hoangsa-memory-mcp,hsp}
+    # Expected layout: hoangsa-<triple>/bin/{hoangsa-cli,hoangsa-memory,hoangsa-memory-mcp,hoangsa-ui,hsp}
     # plus templates/ VERSION LICENSE. The top-level directory name is fixed.
     PKG_DIR="$EXTRACT_DIR/hoangsa-$TRIPLE"
     if [ ! -d "$PKG_DIR" ]; then
@@ -701,6 +701,7 @@ main() {
     install_bin "$PKG_DIR/bin/hsp" "$HOANGSA_CLI_DIR/hsp"
     install_bin "$PKG_DIR/bin/hoangsa-memory" "$HOANGSA_INSTALL_DIR/bin/hoangsa-memory"
     install_bin "$PKG_DIR/bin/hoangsa-memory-mcp" "$HOANGSA_INSTALL_DIR/bin/hoangsa-memory-mcp"
+    install_bin "$PKG_DIR/bin/hoangsa-ui" "$HOANGSA_INSTALL_DIR/bin/hoangsa-ui"
 
     # PATH rc-file append with managed markers + TTY gating. Skipped only when
     # BOTH the memory-bin dir AND the CLI dir are already on $PATH — otherwise

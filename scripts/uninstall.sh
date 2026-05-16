@@ -5,7 +5,7 @@
 #
 # What gets removed:
 #   1. Binaries in $HOANGSA_CLI_DIR and $HOANGSA_INSTALL_DIR/bin
-#      (hoangsa-cli, hsp, hoangsa-memory, hoangsa-memory-mcp)
+#      (hoangsa-cli, hsp, hoangsa-memory, hoangsa-memory-mcp, hoangsa-ui)
 #   2. Templates tracked by ~/.hoangsa/manifest.json under the Claude config dir
 #      (skills/, commands/, agents/, hoangsa/ entries only — never unknown files)
 #   3. HOANGSA-managed hook entries in settings.json (objects with
@@ -188,12 +188,14 @@ pick_claude_dir() {
 
 remove_binaries() {
     info "removing binaries"
-    # CLI-tier bins (hoangsa-cli, hsp) live in $HOANGSA_CLI_DIR; memory bins
-    # live in $HOANGSA_INSTALL_DIR/bin. On default layout these are the same dir.
+    # CLI-tier bins (hoangsa-cli, hsp) live in $HOANGSA_CLI_DIR; memory + UI
+    # bins live in $HOANGSA_INSTALL_DIR/bin. On default layout these are the
+    # same dir.
     rm_if_exists "$HOANGSA_CLI_DIR/hoangsa-cli"
     rm_if_exists "$HOANGSA_CLI_DIR/hsp"
     rm_if_exists "$HOANGSA_INSTALL_DIR/bin/hoangsa-memory"
     rm_if_exists "$HOANGSA_INSTALL_DIR/bin/hoangsa-memory-mcp"
+    rm_if_exists "$HOANGSA_INSTALL_DIR/bin/hoangsa-ui"
 }
 
 # --- fastembed model cache --------------------------------------------------

@@ -272,6 +272,21 @@ fn main() {
             let rest_all: Vec<&str> = args.iter().skip(1).map(|s| s.as_str()).collect();
             cmd::install::cmd_install(&rest_all);
         }
+        ("ui", _) => {
+            // `hoangsa-cli ui [project_dir] [--no-open]`
+            // sub may be a flag (like --no-open) or the project_dir.
+            let mut dir: &str = &cwd;
+            let mut no_open = false;
+            let after_ui: Vec<&str> = args.iter().skip(1).map(|s| s.as_str()).collect();
+            for tok in &after_ui {
+                if *tok == "--no-open" {
+                    no_open = true;
+                } else if !tok.starts_with('-') {
+                    dir = tok;
+                }
+            }
+            cmd::ui::cmd_ui(dir, no_open);
+        }
         ("commit", _) => {
             // commit "<message>" --files f1 f2 ...
             let message = sub;

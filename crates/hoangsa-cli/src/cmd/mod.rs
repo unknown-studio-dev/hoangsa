@@ -21,5 +21,6 @@ pub mod stats;
 pub mod state;
 pub mod statusline;
 pub mod trust;
+pub mod ui;
 pub mod validate;
 pub mod verify;

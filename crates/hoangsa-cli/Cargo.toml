@@ -3,6 +3,10 @@ name = "hoangsa-cli"
 version = "0.2.4"
 edition = "2024"
 
+[lib]
+name = "hoangsa_cli"
+path = "src/lib.rs"
+
 [features]
 default = []
 media = ["dep:ab_glyph", "dep:image", "dep:imageproc", "dep:walkdir"]

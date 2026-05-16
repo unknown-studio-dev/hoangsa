@@ -347,8 +347,8 @@ edit_path_in_rc() {
     info "PATH updated in $RC_FILE. Open a new shell or run: source $RC_FILE"
 }
 
-CARGO_PKGS="-p hoangsa-cli -p hoangsa-memory -p hoangsa-memory-mcp -p hoangsa-proxy"
-REQUIRED_BINS="hoangsa-cli hoangsa-memory hoangsa-memory-mcp hsp"
+CARGO_PKGS="-p hoangsa-cli -p hoangsa-memory -p hoangsa-memory-mcp -p hoangsa-proxy -p hoangsa-ui-server"
+REQUIRED_BINS="hoangsa-cli hoangsa-memory hoangsa-memory-mcp hoangsa-ui hsp"
 
 # --- Build ------------------------------------------------------------------
 
@@ -377,13 +377,13 @@ done
 
 # --- Install binaries -------------------------------------------------------
 #
-# All four binaries land here so `install-local.sh` mirrors the layout the
+# All five binaries land here so `install-local.sh` mirrors the layout the
 # tarball path produces: CLI-tier bins (hoangsa-cli, hsp) go to
-# $HOANGSA_CLI_DIR; memory bins (hoangsa-memory, hoangsa-memory-mcp) go to
-# $HOANGSA_INSTALL_DIR/bin. On the default layout these two dirs are the
-# same. Doing the copies here (instead of routing memory bins through the
-# CLI's relocate step) means the user sees every install action as one
-# contiguous block in the output.
+# $HOANGSA_CLI_DIR; memory + UI bins (hoangsa-memory, hoangsa-memory-mcp,
+# hoangsa-ui) go to $HOANGSA_INSTALL_DIR/bin. On the default layout these
+# two dirs are the same. Doing the copies here (instead of routing the
+# server bins through the CLI's relocate step) means the user sees every
+# install action as one contiguous block in the output.
 
 install_bin() {
     _name="$1"
@@ -407,6 +407,7 @@ install_bin hoangsa-cli        "$HOANGSA_CLI_DIR"
 install_bin hsp                "$HOANGSA_CLI_DIR"
 install_bin hoangsa-memory     "$HOANGSA_INSTALL_DIR/bin"
 install_bin hoangsa-memory-mcp "$HOANGSA_INSTALL_DIR/bin"
+install_bin hoangsa-ui         "$HOANGSA_INSTALL_DIR/bin"
 
 # --- Pick target Claude config dir + PATH rc-file edit ----------------------
 #

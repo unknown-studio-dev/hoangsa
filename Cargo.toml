@@ -14,6 +14,7 @@ members = [
     "crates/hoangsa-memory",
     "crates/hoangsa-memory-mcp",
     "crates/hoangsa-proxy",
+    "crates/hoangsa-ui-server",
 ]
 
 [workspace.package]
