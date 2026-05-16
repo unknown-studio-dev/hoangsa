@@ -348,6 +348,69 @@ pub async fn prefetch_model() -> Result<()> {
     Ok(())
 }
 
+/// Shareable handle to a single fastembed `TextEmbedding`.
+///
+/// Phase 4 of the project-isolation refactor (see
+/// `.hoangsa/sessions/docs/memory-daemon-refactor/NOTES.md`) hoists the
+/// embedder out of per-project [`EmbeddedVectorStore`] so the multi-project
+/// MCP daemon allocates the ~150 MB ONNX model once and shares it across
+/// every project's vector store.
+///
+/// The underlying `TextEmbedding` is initialised lazily on the first
+/// [`SharedEmbedder::embed`] call; constructing a `SharedEmbedder` is
+/// cheap and never blocks.
+pub struct SharedEmbedder {
+    inner: tokio::sync::OnceCell<TokioMutex<TextEmbedding>>,
+}
+
+impl SharedEmbedder {
+    /// Build a fresh handle. The model isn't loaded until the first
+    /// [`Self::embed`] call, so this is cheap enough to call from
+    /// startup paths even when embeddings are gated behind config.
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: tokio::sync::OnceCell::new(),
+        })
+    }
+
+    /// Embed a batch of texts. The first call runs the fastembed
+    /// initialisation (download + parse, ~5–30 s cold) under the
+    /// internal `OnceCell`; concurrent first-callers all await the
+    /// same init future. Subsequent calls take the async mutex and
+    /// dispatch to the cached `TextEmbedding`.
+    pub async fn embed(self: Arc<Self>, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        self.ensure_loaded().await?;
+        let me = self;
+        tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>> {
+            let mu = me
+                .inner
+                .get()
+                .expect("ensure_loaded above guarantees init succeeded");
+            let mut guard = mu.blocking_lock();
+            guard
+                .embed(texts, None)
+                .map_err(|e| Error::Store(format!("embed: {e}")))
+        })
+        .await
+        .map_err(|e| Error::Store(format!("embed join: {e}")))?
+    }
+
+    async fn ensure_loaded(&self) -> Result<()> {
+        self.inner
+            .get_or_try_init(|| async {
+                let m = tokio::task::spawn_blocking(|| {
+                    TextEmbedding::try_new(default_init_options())
+                })
+                .await
+                .map_err(|e| Error::Store(format!("embedder init join: {e}")))?
+                .map_err(|e| Error::Store(format!("embedder init: {e}")))?;
+                Ok::<_, Error>(TokioMutex::new(m))
+            })
+            .await?;
+        Ok(())
+    }
+}
+
 /// The concrete [`VectorStore`] backed by fastembed + SQLite.
 pub struct EmbeddedVectorStore {
     inner: Arc<StoreInner>,
@@ -358,19 +421,29 @@ struct StoreInner {
     /// `rusqlite::Connection: !Sync`. Writes are short and rare
     /// relative to embed time, so contention is negligible.
     db: PlMutex<Connection>,
-    /// The fastembed session. `TextEmbedding::embed` takes `&mut self`,
-    /// so we need exclusive access; we hold it under an async mutex so
-    /// concurrent callers queue instead of blocking the runtime.
-    embedder: TokioMutex<TextEmbedding>,
+    /// Shared fastembed handle. Multiple stores in the same process
+    /// (e.g. the multi-project MCP daemon) hold clones of one Arc so
+    /// the underlying `TextEmbedding` is allocated once.
+    embedder: Arc<SharedEmbedder>,
 }
 
 impl EmbeddedVectorStore {
-    /// Open or create the vectors SQLite at `data_path` and initialise
-    /// the embedding model. First call can be slow (~5–30 s) if
-    /// fastembed needs to download model weights from HuggingFace; we
-    /// ask it to print progress so the user can tell the process isn't
-    /// hung.
+    /// Open or create the vectors SQLite at `data_path`, allocating a
+    /// fresh [`SharedEmbedder`] for it. Used by one-shot CLI paths
+    /// where there is no longer-lived service to share an embedder
+    /// with; the daemon path uses [`Self::open_with_embedder`].
     pub async fn open(data_path: &Path) -> Result<Self> {
+        Self::open_with_embedder(data_path, SharedEmbedder::new()).await
+    }
+
+    /// Open or create the vectors SQLite at `data_path`, sharing the
+    /// supplied `embedder` instead of building a new one. The multi-
+    /// project MCP daemon uses this so the ~150 MB ONNX model is
+    /// allocated once across every project it serves.
+    pub async fn open_with_embedder(
+        data_path: &Path,
+        embedder: Arc<SharedEmbedder>,
+    ) -> Result<Self> {
         if let Some(parent) = data_path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
@@ -382,15 +455,10 @@ impl EmbeddedVectorStore {
             .await
             .map_err(|e| Error::Store(format!("vector sqlite join: {e}")))??;
 
-        let embedder = tokio::task::spawn_blocking(|| TextEmbedding::try_new(default_init_options()))
-            .await
-            .map_err(|e| Error::Store(format!("embedder init join: {e}")))?
-            .map_err(|e| Error::Store(format!("embedder init: {e}")))?;
-
         Ok(Self {
             inner: Arc::new(StoreInner {
                 db: PlMutex::new(db),
-                embedder: TokioMutex::new(embedder),
+                embedder,
             }),
         })
     }
@@ -721,19 +789,7 @@ impl VectorCol for EmbeddedVectorCol {
 // ---------------------------------------------------------------------------
 
 async fn embed_texts(inner: &Arc<StoreInner>, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
-    // `TextEmbedding::embed` is CPU-bound and holds `&mut self`, so we
-    // run it on the blocking pool and acquire the async mutex via
-    // `blocking_lock` — fine here because the task is *already* on a
-    // thread dedicated to blocking work.
-    let inner = inner.clone();
-    tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>> {
-        let mut guard = inner.embedder.blocking_lock();
-        guard
-            .embed(texts, None)
-            .map_err(|e| Error::Store(format!("embed: {e}")))
-    })
-    .await
-    .map_err(|e| Error::Store(format!("embed join: {e}")))?
+    inner.embedder.clone().embed(texts).await
 }
 
 fn open_sqlite(path: &Path) -> Result<Connection> {
@@ -931,5 +987,37 @@ mod tests {
         let v = vec![0.5_f32, 0.3, -0.2, 0.8];
         let d = cosine_distance(&v, &v);
         assert!(d.abs() < 1e-5, "identity distance should be ~0, got {d}");
+    }
+
+    #[tokio::test]
+    async fn shared_embedder_is_held_by_every_store() {
+        // Two stores constructed with the same Arc<SharedEmbedder> must hold
+        // clones of the same Arc — that's the load-bearing property Phase 4
+        // relies on (one ONNX model across N projects). We don't trigger an
+        // actual embed here so the test stays offline-friendly; the lazy
+        // OnceCell inside SharedEmbedder means construction never touches
+        // fastembed.
+        use tempfile::tempdir;
+        let dir1 = tempdir().unwrap();
+        let dir2 = tempdir().unwrap();
+        let p1 = dir1.path().join("vectors.sqlite");
+        let p2 = dir2.path().join("vectors.sqlite");
+
+        let embedder = SharedEmbedder::new();
+        let pre = Arc::strong_count(&embedder);
+
+        let _s1 = EmbeddedVectorStore::open_with_embedder(&p1, embedder.clone())
+            .await
+            .unwrap();
+        let _s2 = EmbeddedVectorStore::open_with_embedder(&p2, embedder.clone())
+            .await
+            .unwrap();
+
+        assert!(
+            Arc::strong_count(&embedder) >= pre + 2,
+            "both stores must retain a clone of the same Arc<SharedEmbedder>; \
+             pre={pre} now={}",
+            Arc::strong_count(&embedder),
+        );
     }
 }
