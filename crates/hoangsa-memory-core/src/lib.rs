@@ -15,6 +15,7 @@ pub mod error;
 pub mod event;
 pub mod memory;
 pub mod mode;
+pub mod projects;
 pub mod provider;
 pub mod query;
 
@@ -24,6 +25,10 @@ pub use memory::{
     Enforcement, Fact, FactScope, Lesson, LessonTrigger, MemoryKind, MemoryMeta, Preference, Skill,
 };
 pub use mode::Mode;
+pub use projects::{
+    Project, Registry, RegistryError, REGISTRY_VERSION, default_hoangsa_home,
+    discover_orphan_slugs, project_slug, registry_path,
+};
 pub use provider::{NudgeProposal, Prompt, Synthesis, Synthesizer};
 pub use query::{
     Chunk, ChunkContext, Citation, Query, QueryScope, RenderOptions, Retrieval, RetrievalSource,
