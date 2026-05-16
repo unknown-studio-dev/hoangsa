@@ -19,7 +19,7 @@ path = "src/main.rs"
 [dependencies]
 hoangsa-cli = { path = "../hoangsa-cli", version = "0.2.4" }
 hoangsa-memory-core = { workspace = true }
-tokio = { workspace = true, features = ["signal"] }
+tokio = { workspace = true, features = ["signal", "net"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

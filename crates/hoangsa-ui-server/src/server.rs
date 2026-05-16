@@ -11,10 +11,12 @@ use crate::auth::{csrf_guard, generate_token};
 use crate::browser;
 use crate::port::bind_loopback;
 use crate::routes::{
-    addons_list, config_apply, config_diff, config_effective, health, memory_health,
-    memory_restart, projects_current, projects_list, projects_register, projects_remove,
-    projects_switch, rules_add, rules_list, rules_remove, rules_replace, rules_sync_defaults,
-    rules_toggle,
+    addons_list, config_apply, config_diff, config_effective, health, memory_archive_search_route,
+    memory_fact_route, memory_files_route, memory_health, memory_lesson_route,
+    memory_preference_route, memory_recall_route, memory_remove_route, memory_restart,
+    memory_show_route, memory_skills_route, projects_current, projects_list, projects_register,
+    projects_remove, projects_switch, rules_add, rules_list, rules_remove, rules_replace,
+    rules_sync_defaults, rules_toggle,
 };
 use crate::state::{AppState, ProjectContext};
 
@@ -58,6 +60,15 @@ pub async fn run(opts: RunOptions) -> anyhow::Result<()> {
         .route("/addons", get(addons_list))
         .route("/memory/health", get(memory_health))
         .route("/memory/restart", post(memory_restart))
+        .route("/memory/files", get(memory_files_route))
+        .route("/memory/show", post(memory_show_route))
+        .route("/memory/recall", post(memory_recall_route))
+        .route("/memory/fact", post(memory_fact_route))
+        .route("/memory/lesson", post(memory_lesson_route))
+        .route("/memory/preference", post(memory_preference_route))
+        .route("/memory/remove", post(memory_remove_route))
+        .route("/memory/archive/search", post(memory_archive_search_route))
+        .route("/memory/skills", get(memory_skills_route))
         .route("/projects", get(projects_list).post(projects_register))
         .route("/projects/current", get(projects_current))
         .route("/projects/switch", post(projects_switch))

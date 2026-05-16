@@ -241,3 +241,56 @@ async fn projects_register_switch_round_trip() {
         .unwrap();
     assert_eq!(remove_resp.status(), 409);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_routes_degraded_without_daemon() {
+    // No real `hoangsa-memory-mcp` runs in this test environment, so every
+    // daemon-backed route should bounce as 503 daemon-unreachable while the
+    // FS-direct `/api/memory/files` route still returns 200 with null bodies.
+    let project = tempfile::tempdir().expect("tempdir");
+    let fake_home = tempfile::tempdir().expect("home tempdir");
+    let (child, url) = spawn_server(project.path().to_path_buf(), fake_home.path());
+    struct Guard(std::process::Child);
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let _guard = Guard(child);
+
+    let (base, token) = split_url(&url);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap();
+
+    // FS-direct read is always available — returns the three file slots
+    // with null bodies for a brand-new project.
+    let files: Value = client
+        .get(format!("{base}/api/memory/files?t={token}"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(files["user"]["body"].is_null());
+    assert!(files["memory"]["body"].is_null());
+    assert!(files["lessons"]["body"].is_null());
+    assert!(files["memory"]["path"]
+        .as_str()
+        .unwrap()
+        .ends_with("MEMORY.md"));
+
+    // Daemon-backed route bounces as 503 with a structured error.
+    let recall = client
+        .post(format!("{base}/api/memory/recall?t={token}"))
+        .json(&json!({ "query": "anything" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(recall.status(), 503);
+    let body: Value = recall.json().await.unwrap();
+    assert_eq!(body["code"], "daemon-unreachable");
+}

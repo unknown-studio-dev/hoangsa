@@ -100,6 +100,49 @@ export const api = {
       `/api/projects/${encodeURIComponent(slug)}`,
       { method: "DELETE" }
     ),
+
+  // Memory daemon proxy. All POSTs except memoryFiles, which is the
+  // FS-direct degraded read and stays useful when the daemon is down.
+  memoryFiles: () => request<MemoryFilesRes>("/api/memory/files"),
+  memoryShow: () =>
+    request<ToolOutput<MemoryShowData>>("/api/memory/show", {
+      method: "POST",
+      body: "{}",
+    }),
+  memoryRecall: (body: MemoryRecallReq) =>
+    request<ToolOutput<MemoryRecallData>>("/api/memory/recall", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  memoryRememberFact: (body: RememberFactReq) =>
+    request<ToolOutput<MemoryWriteData>>("/api/memory/fact", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  memoryRememberLesson: (body: RememberLessonReq) =>
+    request<ToolOutput<MemoryWriteData>>("/api/memory/lesson", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  memoryRememberPreference: (body: RememberPreferenceReq) =>
+    request<ToolOutput<MemoryWriteData>>("/api/memory/preference", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  memoryRemove: (body: {
+    kind: "fact" | "lesson" | "preference";
+    query: string;
+  }) =>
+    request<ToolOutput<unknown>>("/api/memory/remove", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  memoryArchiveSearch: (body: ArchiveSearchReq) =>
+    request<ToolOutput<ArchiveHit[]>>("/api/memory/archive/search", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  memorySkills: () => request<ToolOutput<SkillEntry[]>>("/api/memory/skills"),
 };
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -231,4 +274,106 @@ export type ProjectsListRes = {
 export type ProjectSwitchRes = {
   previous: ProjectSummary;
   current: ProjectSummary;
+};
+
+// ── Memory tool envelope ──────────────────────────────────────────────
+// Mirrors `hoangsa_memory_mcp::proto::ToolOutput`. `data` is the
+// machine-readable result (shape varies by tool); `text` is the daemon's
+// human-rendered form, useful as a fallback when the UI doesn't have a
+// custom view yet.
+
+export type ToolOutput<D> = {
+  data: D;
+  text: string;
+  isError: boolean;
+};
+
+export type MemoryFileSnapshot = {
+  path: string;
+  body: string | null;
+  bytes: number | null;
+};
+
+export type MemoryFilesRes = {
+  user: MemoryFileSnapshot;
+  memory: MemoryFileSnapshot;
+  lessons: MemoryFileSnapshot;
+};
+
+export type MemoryShowData = {
+  memory_md: string | null;
+  lessons_md: string | null;
+  user_md: string | null;
+};
+
+export type MemoryRecallReq = {
+  query: string;
+  top_k?: number;
+  scope?: "curated" | "archive" | "all";
+  tags?: string[];
+  detail?: boolean;
+};
+
+export type RecallChunk = {
+  id: string;
+  path: string;
+  line: number;
+  span: [number, number];
+  symbol: string | null;
+  preview: string;
+  body: string;
+  source: string;
+  score: number;
+};
+
+export type MemoryRecallData = {
+  chunks: RecallChunk[];
+  synthesized: string | null;
+  correlation_id: string;
+};
+
+export type RememberFactReq = {
+  text: string;
+  tags?: string[];
+  scope?: "always" | "on-demand";
+};
+
+export type RememberLessonReq = {
+  trigger: string;
+  advice: string;
+};
+
+export type RememberPreferenceReq = {
+  text: string;
+  tags?: string[];
+};
+
+export type MemoryWriteData = {
+  text?: string;
+  tags?: string[];
+  trigger?: string;
+  advice?: string;
+  path: string;
+  staged?: boolean;
+};
+
+export type ArchiveSearchReq = {
+  query: string;
+  top_k?: number;
+  project?: string;
+  topic?: string;
+};
+
+export type ArchiveHit = {
+  id: string;
+  distance: number;
+  text: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
+export type SkillEntry = {
+  slug: string;
+  description: string;
+  // The daemon may include more fields; we only render slug + description.
+  [k: string]: unknown;
 };

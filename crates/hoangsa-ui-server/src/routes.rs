@@ -12,7 +12,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::config;
+use crate::mcp_client::{self, McpError};
 use crate::memory;
+use crate::memory_files;
 use crate::patch::{self, PatchError, PatchRequest};
 use crate::rules::{self, RuleError};
 use crate::state::{AppState, ProjectContext};
@@ -538,4 +540,226 @@ fn registry_error(msg: String) -> axum::response::Response {
         Json(json!({ "error": msg })),
     )
         .into_response()
+}
+
+// ============================================================================
+// /api/memory/* — daemon-proxy + FS-direct degraded read
+// ============================================================================
+
+/// Forward a tool call to the daemon for the active project and shape
+/// the success / failure into a uniform Axum response.
+async fn call_tool(
+    state: &AppState,
+    tool: &str,
+    arguments: Value,
+) -> axum::response::Response {
+    let current = state.current();
+    let sock = memory::socket_for(&current.project_dir, &state.global_dir);
+    match mcp_client::call_memory_tool(&sock, tool, arguments).await {
+        Ok(result) => {
+            // The daemon folds tool-level errors into `isError: true` on
+            // the result payload. Surface those as 422 so the UI can
+            // toast them without confusing them with daemon outages.
+            let is_error = result
+                .get("isError")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if is_error {
+                let msg = result
+                    .get("data")
+                    .and_then(|d| d.get("error"))
+                    .and_then(|e| e.as_str())
+                    .unwrap_or("tool returned isError")
+                    .to_string();
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({ "error": msg, "code": "tool-error" })),
+                )
+                    .into_response();
+            }
+            Json(result).into_response()
+        }
+        Err(e) => mcp_error_response(e),
+    }
+}
+
+fn mcp_error_response(err: McpError) -> axum::response::Response {
+    let (status, code) = match &err {
+        McpError::Unreachable(_) => (StatusCode::SERVICE_UNAVAILABLE, "daemon-unreachable"),
+        McpError::Timeout(_) => (StatusCode::GATEWAY_TIMEOUT, "daemon-timeout"),
+        McpError::BadResponse(_) | McpError::RpcError { .. } => {
+            (StatusCode::BAD_GATEWAY, "bad-response")
+        }
+        McpError::Io(_) => (StatusCode::BAD_GATEWAY, "io"),
+    };
+    (
+        status,
+        Json(json!({ "error": err.to_string(), "code": code })),
+    )
+        .into_response()
+}
+
+/// `GET /api/memory/files` — degraded read of USER/MEMORY/LESSONS straight
+/// from disk. Always succeeds, regardless of daemon state — that's the
+/// point: the Files tab needs to stay useful while the daemon is down.
+pub async fn memory_files_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let current = state.current();
+    let snap = memory_files::read_files(&state.global_dir, &current.slug);
+    Json(snap).into_response()
+}
+
+/// `POST /api/memory/show` — full structured contents of the three MD
+/// files plus a rendered text block, via the daemon.
+pub async fn memory_show_route(State(state): State<Arc<AppState>>) -> axum::response::Response {
+    call_tool(&state, "memory_show", json!({})).await
+}
+
+#[derive(Deserialize)]
+pub struct RecallReq {
+    pub query: String,
+    #[serde(default)]
+    pub top_k: Option<u64>,
+    #[serde(default)]
+    pub scope: Option<String>,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub detail: Option<bool>,
+}
+
+pub async fn memory_recall_route(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<RecallReq>,
+) -> axum::response::Response {
+    let mut args = serde_json::Map::new();
+    args.insert("query".into(), Value::String(body.query));
+    if let Some(k) = body.top_k {
+        args.insert("top_k".into(), Value::from(k));
+    }
+    if let Some(s) = body.scope {
+        args.insert("scope".into(), Value::String(s));
+    }
+    if let Some(tags) = body.tags {
+        args.insert("tags".into(), Value::from(tags));
+    }
+    if let Some(d) = body.detail {
+        args.insert("detail".into(), Value::Bool(d));
+    }
+    // Reads from the UI shouldn't pollute the agent's "QueryIssued" log.
+    args.insert("log_event".into(), Value::Bool(false));
+    call_tool(&state, "memory_recall", Value::Object(args)).await
+}
+
+#[derive(Deserialize)]
+pub struct RememberFactReq {
+    pub text: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
+pub async fn memory_fact_route(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<RememberFactReq>,
+) -> axum::response::Response {
+    let mut args = serde_json::Map::new();
+    args.insert("text".into(), Value::String(body.text));
+    args.insert("tags".into(), Value::from(body.tags));
+    if let Some(s) = body.scope {
+        args.insert("scope".into(), Value::String(s));
+    }
+    call_tool(&state, "memory_remember_fact", Value::Object(args)).await
+}
+
+#[derive(Deserialize)]
+pub struct RememberLessonReq {
+    pub trigger: String,
+    pub advice: String,
+}
+
+pub async fn memory_lesson_route(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<RememberLessonReq>,
+) -> axum::response::Response {
+    call_tool(
+        &state,
+        "memory_remember_lesson",
+        json!({ "trigger": body.trigger, "advice": body.advice }),
+    )
+    .await
+}
+
+#[derive(Deserialize)]
+pub struct RememberPreferenceReq {
+    pub text: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+pub async fn memory_preference_route(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<RememberPreferenceReq>,
+) -> axum::response::Response {
+    call_tool(
+        &state,
+        "memory_remember_preference",
+        json!({ "text": body.text, "tags": body.tags }),
+    )
+    .await
+}
+
+#[derive(Deserialize)]
+pub struct RemoveReq {
+    /// `"fact"` (MEMORY.md), `"lesson"` (LESSONS.md), or `"preference"`
+    /// (USER.md) — matches `parse_md_kind` on the daemon side.
+    pub kind: String,
+    /// Free-text fragment that uniquely identifies the entry to remove.
+    /// The daemon does the matching server-side.
+    pub query: String,
+}
+
+pub async fn memory_remove_route(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<RemoveReq>,
+) -> axum::response::Response {
+    call_tool(
+        &state,
+        "memory_remove",
+        json!({ "kind": body.kind, "query": body.query }),
+    )
+    .await
+}
+
+#[derive(Deserialize)]
+pub struct ArchiveSearchReq {
+    pub query: String,
+    #[serde(default)]
+    pub top_k: Option<u64>,
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub topic: Option<String>,
+}
+
+pub async fn memory_archive_search_route(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<ArchiveSearchReq>,
+) -> axum::response::Response {
+    let mut args = serde_json::Map::new();
+    args.insert("query".into(), Value::String(body.query));
+    if let Some(k) = body.top_k {
+        args.insert("top_k".into(), Value::from(k));
+    }
+    if let Some(p) = body.project {
+        args.insert("project".into(), Value::String(p));
+    }
+    if let Some(t) = body.topic {
+        args.insert("topic".into(), Value::String(t));
+    }
+    call_tool(&state, "memory_archive_search", Value::Object(args)).await
+}
+
+pub async fn memory_skills_route(State(state): State<Arc<AppState>>) -> axum::response::Response {
+    call_tool(&state, "memory_skills_list", json!({})).await
 }
