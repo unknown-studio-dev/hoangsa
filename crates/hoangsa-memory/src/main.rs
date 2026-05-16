@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use hoangsa_memory_core::Synthesizer;
+use hoangsa_memory_core::projects::{Registry, default_hoangsa_home};
 use hoangsa_memory_retrieve::VectorStoreConfig;
 use hoangsa_memory_store::{
     fastembed_cache_dir, prefetch_model, EmbeddedVectorStore, StoreRoot, VectorCol, VectorStore,
@@ -16,6 +17,7 @@ mod daemon_cmd;
 mod index_cmd;
 mod init_cmd;
 mod memory_cmd;
+mod projects_cmd;
 mod query_cmd;
 mod resolve;
 mod watch_cmd;
@@ -157,6 +159,14 @@ enum Cmd {
     /// No-op on subsequent runs (fastembed short-circuits when the
     /// weights are already present).
     PrefetchEmbed,
+
+    /// Manage the project registry at `~/.hoangsa/projects.json`. Every CLI
+    /// invocation auto-registers the cwd; these subcommands let you list,
+    /// rename, remove, or inspect entries.
+    Projects {
+        #[command(subcommand)]
+        cmd: projects_cmd::ProjectsCmd,
+    },
 }
 
 // --------------------------------------------------------------------- entry
@@ -183,6 +193,13 @@ async fn main() -> anyhow::Result<()> {
     init_tracing(cli.verbose);
 
     let root = resolve::resolve_root(cli.root.as_deref());
+
+    // Auto-register the current project (best-effort — never fails the CLI).
+    // Skipped for `Projects` subcommands so explicit `add` semantics aren't
+    // shadowed by an implicit register on the same call.
+    if !matches!(cli.cmd, Cmd::Projects { .. }) {
+        auto_register_cwd();
+    }
 
     match cli.cmd {
         Cmd::Init => init_cmd::cmd_init(&root).await?,
@@ -217,6 +234,7 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Changes { from, depth } => {
             daemon_cmd::cmd_changes(&root, from.as_deref(), depth, cli.json).await?
         }
+        Cmd::Projects { cmd } => projects_cmd::run(cmd, cli.json).await?,
         Cmd::PrefetchEmbed => {
             let cache = fastembed_cache_dir();
             eprintln!(
@@ -282,6 +300,25 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Best-effort upsert of the current working directory into
+/// `~/.hoangsa/projects.json`. Failures are logged at debug level and
+/// swallowed — registry write should never fail a normal CLI command.
+fn auto_register_cwd() {
+    let Ok(cwd) = std::env::current_dir() else { return };
+    let Ok(home) = default_hoangsa_home() else { return };
+    let mut registry = match Registry::load(&home) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::debug!(error = %e, "projects registry load failed; skipping auto-register");
+            return;
+        }
+    };
+    registry.register(&cwd);
+    if let Err(e) = registry.save(&home) {
+        tracing::debug!(error = %e, "projects registry save failed");
+    }
 }
 
 // ------------------------------------------------------- provider constructors

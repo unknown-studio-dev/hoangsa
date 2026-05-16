@@ -1,30 +1,5 @@
 use std::path::{Path, PathBuf};
 
-#[derive(clap::Subcommand, Debug)]
-pub enum ProjectsCmd {
-    /// List all registered projects with their slugs and paths.
-    List,
-    /// Show which root the current directory resolves to.
-    Which,
-    /// Move `./.hoangsa/memory/` to `~/.hoangsa/memory/projects/{slug}/` and update
-    /// hooks + MCP to point to the new location.
-    Migrate {
-        /// Print what would happen without modifying anything.
-        #[arg(long)]
-        dry_run: bool,
-        /// Delete the local `.hoangsa/memory/` after a successful copy.
-        #[arg(long)]
-        rm_local: bool,
-    },
-    /// Rename all hash-based project directories to human-readable slugs
-    /// and update projects.json + hooks + CLAUDE.md.
-    MigrateSlugs {
-        /// Print what would happen without modifying anything.
-        #[arg(long)]
-        dry_run: bool,
-    },
-}
-
 /// Resolve the `.hoangsa/memory/` data root via a 4-step chain:
 ///
 /// 1. Explicit `--root` flag (highest priority)
