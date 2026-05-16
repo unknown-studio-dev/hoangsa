@@ -1,8 +1,8 @@
 .PHONY: ui ui-clean
 
-# Build the React SPA into crates/hoangsa-ui-web/dist/. The dist/ output is
-# committed to the repo (locked decision Q2) so `cargo build` and CI don't
-# need Node installed — only refresh runs do.
+# Build the React SPA into crates/hoangsa-ui-web/dist/ for local cargo runs.
+# dist/ is gitignored; the release workflow rebuilds it on each matrix runner
+# before `cargo build` so the embedded asset set isn't empty.
 ui:
 	cd crates/hoangsa-ui-web && npm install --silent && npm run build
 

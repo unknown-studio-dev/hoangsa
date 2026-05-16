@@ -44,6 +44,23 @@ jobs:
       - name: Install target for pinned toolchain
         run: rustup target add ${{ matrix.target }}
 
+      # The hoangsa-ui-server crate embeds crates/hoangsa-ui-web/dist/ via
+      # rust-embed at compile time. dist/ is gitignored, so build the SPA
+      # here before cargo runs — otherwise the embedded asset set is empty
+      # and the UI binary serves the placeholder page.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: crates/hoangsa-ui-web/package-lock.json
+
+      - name: Build SPA
+        working-directory: crates/hoangsa-ui-web
+        run: |
+          npm ci
+          npm run build
+
       - name: Build binaries
         shell: bash
         run: |
