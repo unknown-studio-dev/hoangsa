@@ -63,6 +63,17 @@ pub const DEFAULT_EMBEDDER_IDLE_EVICTION: Duration = Duration::from_secs(60);
 /// `idle + scan` of the last embed.
 pub const DEFAULT_EMBEDDER_EVICTION_SCAN: Duration = Duration::from_secs(10);
 
+/// Forced eviction window for the embedder regardless of activity.
+/// Without this, a workload that never goes idle (continuous recalls
+/// during a coding session) lets the ORT CPU arena ratchet up
+/// indefinitely — the arena sizes itself to the biggest tensor ever
+/// embedded and only releases when the `TextEmbedding` is dropped.
+/// 30 minutes gives a sawtooth RSS pattern: grows for up to half an
+/// hour, then drops back to roughly the cold-load baseline. The user
+/// pays ~1–3 s of re-init from the on-disk fastembed cache on the
+/// next embed after the forced drop.
+pub const DEFAULT_EMBEDDER_MAX_AGE: Duration = Duration::from_secs(30 * 60);
+
 /// Multi-project daemon state. Cheap to clone (`Arc`-backed via the `DashMap`
 /// + `Semaphore`).
 pub struct ServiceState {
@@ -369,6 +380,7 @@ pub async fn run_multi_listener(state: Arc<ServiceState>) -> anyhow::Result<()> 
         run_embedder_eviction_loop(
             embedder,
             DEFAULT_EMBEDDER_IDLE_EVICTION,
+            DEFAULT_EMBEDDER_MAX_AGE,
             DEFAULT_EMBEDDER_EVICTION_SCAN,
         )
         .await;
@@ -520,17 +532,31 @@ pub async fn run_eviction_loop(state: Arc<ServiceState>, idle: Duration, scan: D
 /// can't release; we want "use, then drop" semantics for it, not the
 /// 30-min/5-min cadence that's right for tantivy/redb handles.
 ///
+/// Two eviction triggers, checked on every tick:
+/// 1. **Idle** — last embed older than `idle`. The common case for a
+///    bursty workload (recall, then think for a minute).
+/// 2. **Max age** — model loaded continuously longer than `max_age`,
+///    regardless of activity. Catches the sustained-load case where
+///    the user never goes idle for `idle` seconds and the ORT arena
+///    would otherwise grow without bound.
+///
 /// Takes the embedder directly (not `ServiceState`) so the single-project
 /// stdio binary — which has no `ServiceState` — can spawn this same loop.
 pub async fn run_embedder_eviction_loop(
     embedder: Arc<hoangsa_memory_store::SharedEmbedder>,
     idle: Duration,
+    max_age: Duration,
     scan: Duration,
 ) {
     loop {
         tokio::time::sleep(scan).await;
         if embedder.evict_if_idle(idle).await {
-            debug!(idle_secs = idle.as_secs(), "embedder evicted");
+            debug!(idle_secs = idle.as_secs(), "embedder evicted (idle)");
+        } else if embedder.evict_if_stale(max_age).await {
+            debug!(
+                max_age_secs = max_age.as_secs(),
+                "embedder evicted (max age)"
+            );
         }
     }
 }

@@ -40,9 +40,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use hoangsa_memory_mcp::{
-    DEFAULT_EMBEDDER_EVICTION_SCAN, DEFAULT_EMBEDDER_IDLE_EVICTION, Server, ServiceState,
-    populate_from_registry, run_embedder_eviction_loop, run_multi_listener, run_socket, run_stdio,
-    socket_path,
+    DEFAULT_EMBEDDER_EVICTION_SCAN, DEFAULT_EMBEDDER_IDLE_EVICTION, DEFAULT_EMBEDDER_MAX_AGE,
+    Server, ServiceState, populate_from_registry, run_embedder_eviction_loop, run_multi_listener,
+    run_socket, run_stdio, socket_path,
 };
 
 #[tokio::main]
@@ -111,6 +111,7 @@ async fn run_single() -> anyhow::Result<()> {
         run_embedder_eviction_loop(
             embedder,
             DEFAULT_EMBEDDER_IDLE_EVICTION,
+            DEFAULT_EMBEDDER_MAX_AGE,
             DEFAULT_EMBEDDER_EVICTION_SCAN,
         )
         .await;

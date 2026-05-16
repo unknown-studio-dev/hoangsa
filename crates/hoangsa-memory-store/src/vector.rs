@@ -384,7 +384,23 @@ pub struct SharedEmbedder {
     /// without locking via [`Ordering::Relaxed`] — the eviction loop
     /// reads it the same way and a one-tick lag is harmless.
     last_access_unix: AtomicI64,
+    /// Unix seconds when the current `TextEmbedding` was constructed.
+    /// `0` when the slot is empty. Drives the max-age forced eviction
+    /// that fires even under continuous load — without it, a workload
+    /// that never goes idle keeps ratcheting the ORT arena upward.
+    loaded_at_unix: AtomicI64,
 }
+
+/// Cap on the per-inference batch fastembed runs internally. fastembed's
+/// own default is 256, which lets the caller hand in one giant `Vec` and
+/// have ORT process it in a single forward pass — fast, but the ORT CPU
+/// arena sizes itself to the biggest tensor ever seen, so one large
+/// embedder call permanently ratchets RSS up. Pinning to 32 means
+/// individual ORT runs work on at most `32 × max_seq_len × hidden_dim`
+/// tensors regardless of how big the caller's `texts` vector is, which
+/// keeps the arena bounded under sustained traffic. Throughput cost is
+/// marginal — fastembed loops the batches internally either way.
+const EMBED_BATCH_SIZE: usize = 32;
 
 impl SharedEmbedder {
     /// Build a fresh handle. The model isn't loaded until the first
@@ -395,20 +411,22 @@ impl SharedEmbedder {
             state: TokioRwLock::new(None),
             init_lock: TokioMutex::new(()),
             last_access_unix: AtomicI64::new(0),
+            loaded_at_unix: AtomicI64::new(0),
         })
     }
 
     /// Embed a batch of texts. The first call (and the first call after
-    /// idle eviction) runs the fastembed initialisation (~5–30 s cold);
-    /// concurrent first-callers converge on the same init via
-    /// `init_lock`. Subsequent calls share the cached `TextEmbedding`.
+    /// idle eviction) runs the fastembed initialisation (~1–3 s warm /
+    /// ~5–30 s cold); concurrent first-callers converge on the same
+    /// init via `init_lock`. Subsequent calls share the cached
+    /// `TextEmbedding`.
     pub async fn embed(self: Arc<Self>, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
         let model = self.get_or_init().await?;
         self.last_access_unix.store(now_unix(), Ordering::Relaxed);
         tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>> {
             let mut guard = model.blocking_lock();
             guard
-                .embed(texts, None)
+                .embed(texts, Some(EMBED_BATCH_SIZE))
                 .map_err(|e| Error::Store(format!("embed: {e}")))
         })
         .await
@@ -435,6 +453,7 @@ impl SharedEmbedder {
             .map_err(|e| Error::Store(format!("embedder init: {e}")))?;
         let arc = Arc::new(TokioMutex::new(model));
         *self.state.write().await = Some(arc.clone());
+        self.loaded_at_unix.store(now_unix(), Ordering::Relaxed);
         Ok(arc)
     }
 
@@ -453,11 +472,40 @@ impl SharedEmbedder {
         if last > cutoff {
             return false;
         }
+        self.drop_slot().await
+    }
+
+    /// Forced eviction once the model has been loaded continuously for
+    /// `max_age`, regardless of how recently it was used. Returns `true`
+    /// if a model was actually evicted.
+    ///
+    /// This is the safety net for "user works continuously and never
+    /// goes idle for 60 s" — the ORT CPU arena ratchets up with the
+    /// largest tensor ever embedded, so even under sustained load RSS
+    /// climbs monotonically until something drops the embedder. A 30-min
+    /// forced reset produces a sawtooth where RSS resets every half
+    /// hour and the user pays ~1–3 s of re-init from disk cache.
+    pub async fn evict_if_stale(&self, max_age: Duration) -> bool {
+        let loaded = self.loaded_at_unix.load(Ordering::Relaxed);
+        if loaded == 0 {
+            return false; // nothing is loaded
+        }
+        let cutoff = now_unix().saturating_sub(max_age.as_secs() as i64);
+        if loaded > cutoff {
+            return false;
+        }
+        self.drop_slot().await
+    }
+
+    /// Shared body of [`Self::evict_if_idle`] / [`Self::evict_if_stale`].
+    /// Drops the state slot if present and resets `loaded_at_unix`.
+    async fn drop_slot(&self) -> bool {
         let mut g = self.state.write().await;
         if g.is_none() {
             return false;
         }
         *g = None;
+        self.loaded_at_unix.store(0, Ordering::Relaxed);
         true
     }
 
@@ -1125,6 +1173,37 @@ mod tests {
             !evicted,
             "recent activity must keep the embedder loaded; \
              evict_if_idle returned true unexpectedly",
+        );
+    }
+
+    #[tokio::test]
+    async fn evict_if_stale_is_noop_when_never_loaded() {
+        // `loaded_at_unix == 0` means the model has never been initialised.
+        // Stale eviction must not fire — there's nothing to drop and we
+        // don't want a forced re-init for a model that hasn't loaded yet.
+        let embedder = SharedEmbedder::new();
+        assert_eq!(embedder.loaded_at_unix.load(Ordering::Relaxed), 0);
+        let evicted = embedder.evict_if_stale(Duration::from_secs(0)).await;
+        assert!(!evicted, "stale eviction must skip never-loaded embedders");
+    }
+
+    #[tokio::test]
+    async fn evict_if_stale_skips_when_loaded_recently() {
+        // Pretend the model loaded 5 s ago. A 30-min max-age check should
+        // be a no-op. Like the idle test, the slot itself is None so we're
+        // really exercising the timestamp gate.
+        let embedder = SharedEmbedder::new();
+        embedder.loaded_at_unix.store(
+            now_unix() - 5, // 5 s ago
+            Ordering::Relaxed,
+        );
+        let evicted = embedder
+            .evict_if_stale(Duration::from_secs(30 * 60))
+            .await;
+        assert!(
+            !evicted,
+            "stale eviction must wait for max_age to elapse; \
+             evict_if_stale returned true unexpectedly",
         );
     }
 }
