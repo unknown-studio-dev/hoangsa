@@ -1,4 +1,4 @@
-//! `hoangsa-memory-mcp` — an MCP (Model Context Protocol) stdio server
+//! `hoangsa-memory-mcp` — an MCP (Model Context Protocol) server
 //! exposing hoangsa-memory's recall/remember/index capabilities to any
 //! MCP-aware client (Claude Agent SDK, Claude Code, Cowork, Cursor, Zed,
 //! ...).
@@ -6,16 +6,32 @@
 //! See the [crate-level docs](hoangsa_memory_mcp) for the wire protocol details and
 //! the tool catalog.
 //!
+//! # Modes
+//!
+//! - **stdio (default)**: serves a single project on stdin/stdout + one Unix
+//!   socket at `<root>/mcp.sock`. Used by `Command::new("hoangsa-memory-mcp")`
+//!   spawn paths (Claude Code MCP config, etc.).
+//! - **service**: one process, one listener per registered project. Discovers
+//!   projects from `~/.hoangsa/projects.json` and the `~/.hoangsa/memory/projects/`
+//!   directory and binds `<slug>/mcp.sock` for each. New projects added via the
+//!   UI are picked up without restart.
+//!
 //! # Usage
 //!
 //! ```text
-//! hoangsa-memory-mcp                               # serve on stdio; log to stderr
+//! hoangsa-memory-mcp                               # stdio mode (single project)
 //! HOANGSA_MEMORY_ROOT=/path/.hoangsa/memory hoangsa-memory-mcp
+//! HOANGSA_MEMORY_SERVICE=1 hoangsa-memory-mcp      # multi-project service mode
+//! hoangsa-memory-mcp --service                     # equivalent
 //! ```
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use hoangsa_memory_mcp::{Server, run_socket, run_stdio, socket_path};
+use hoangsa_memory_mcp::{
+    Server, ServiceState, populate_from_registry, run_multi_listener, run_socket, run_stdio,
+    socket_path,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -28,8 +44,35 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let root = resolve_root();
+    if is_service_mode() {
+        return run_service().await;
+    }
+    run_single().await
+}
 
+fn is_service_mode() -> bool {
+    if std::env::args().any(|a| a == "--service") {
+        return true;
+    }
+    matches!(
+        std::env::var("HOANGSA_MEMORY_SERVICE").as_deref(),
+        Ok("1" | "true" | "yes")
+    )
+}
+
+async fn run_service() -> anyhow::Result<()> {
+    let home = hoangsa_memory_core::projects::default_hoangsa_home()?;
+    tracing::info!(home = %home.display(), "hoangsa-memory-mcp service starting");
+
+    let state = Arc::new(ServiceState::new(home));
+    populate_from_registry(&state)?;
+    run_multi_listener(state).await?;
+    tracing::info!("hoangsa-memory-mcp service exiting");
+    Ok(())
+}
+
+async fn run_single() -> anyhow::Result<()> {
+    let root = resolve_root();
     tracing::info!(root = %root.display(), "hoangsa-memory-mcp starting");
 
     let server = Server::open(&root).await?;

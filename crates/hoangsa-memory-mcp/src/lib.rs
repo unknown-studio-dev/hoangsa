@@ -36,5 +36,10 @@
 pub mod proto;
 pub mod sanitize;
 pub mod server;
+pub mod service;
 
 pub use server::{Server, run_socket, run_stdio, socket_path};
+pub use service::{
+    ServiceState, populate_from_registry, project_memory_root, project_socket_path,
+    run_multi_listener,
+};

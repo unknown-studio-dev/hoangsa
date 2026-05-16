@@ -65,6 +65,10 @@ redb         = "4.0.0"
 tantivy      = "0.26.0"
 rusqlite     = { version = "0.39.0", features = ["bundled"] }
 
+# Concurrency / FS notifications
+dashmap      = "6"
+notify       = "6.1"
+
 # Embeddings (replaces Python ChromaDB sidecar).
 # `fastembed` runs ONNX in-process via `ort`; we pin to the multilingual
 # model family so Vietnamese retrieval quality matches English. Defaults
