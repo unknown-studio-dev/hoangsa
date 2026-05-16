@@ -54,6 +54,14 @@ pub enum EdgeKind {
     Extends,
     /// `A` is declared in module `B`.
     DeclaredIn,
+    /// `A` emits / publishes event `B`. `B` is a synthetic event FQN
+    /// of the form `event::<bus>::<topic>` (bus is `*` when receiver
+    /// can't be statically named).
+    Emits,
+    /// `A` subscribes to / listens for event `B`. Same `event::*::*`
+    /// FQN convention as `Emits`; the direction is event → handler so
+    /// that `subscribers_of(event_fqn)` is a plain incoming-edge scan.
+    Subscribes,
 }
 
 impl EdgeKind {
@@ -65,6 +73,8 @@ impl EdgeKind {
             EdgeKind::References => "references",
             EdgeKind::Extends => "extends",
             EdgeKind::DeclaredIn => "declared_in",
+            EdgeKind::Emits => "emits",
+            EdgeKind::Subscribes => "subscribes",
         }
     }
 
@@ -76,6 +86,8 @@ impl EdgeKind {
             "references" => EdgeKind::References,
             "extends" => EdgeKind::Extends,
             "declared_in" => EdgeKind::DeclaredIn,
+            "emits" => EdgeKind::Emits,
+            "subscribes" => EdgeKind::Subscribes,
             _ => return None,
         })
     }

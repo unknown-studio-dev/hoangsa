@@ -117,6 +117,59 @@ pub struct SymbolTable {
     /// type mentioned 20 times inside one function only appears once.
     #[serde(default)]
     pub references: Vec<(String, String)>,
+    /// Publisher / subscriber edges harvested from event-bus call sites
+    /// (`emitter.emit("topic", handler)`, `bus.on("topic", handler)`,
+    /// `pubsub.publish("topic")`, …). The indexer composes a synthetic
+    /// `event::<bus>::<topic>` FQN and writes [`EdgeKind::Emits`] /
+    /// [`EdgeKind::Subscribes`] edges against it — see
+    /// `hoangsa-memory-retrieve::indexer`.
+    #[serde(default)]
+    pub events: Vec<EventEdge>,
+    /// Module-scope string constants harvested for event-topic
+    /// resolution. Pairs are `(identifier_or_path, value)`. The walker
+    /// captures simple `const FOO = "..."` (TS/JS), `FOO = "..."`
+    /// (Python at module scope), and `const FOO: _ = "..."` /
+    /// `static FOO: _ = "..."` (Rust). Object-literal properties and
+    /// class attributes are deferred — the bus call site that wants
+    /// them simply stays unresolved.
+    #[serde(default)]
+    pub string_consts: Vec<(String, String)>,
+}
+
+/// Whether an event-bus call site publishes or subscribes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EventRole {
+    /// `emit / publish / dispatch / fire / trigger / send`.
+    Emit,
+    /// `on / once / addListener / addEventListener / subscribe / listen / observe`.
+    Subscribe,
+}
+
+/// One event-bus call site. Unresolved — the indexer maps `handler`
+/// through the file's alias map before writing the graph edge.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventEdge {
+    /// Enclosing symbol's FQN (the function the call site is inside).
+    pub owner: String,
+    /// Publisher or subscriber.
+    pub role: EventRole,
+    /// Static event topic string. Empty when the call site used a
+    /// non-literal expression — then `topic_expr` carries the source
+    /// text (`EVENT_NAME`, `EVENTS.USER_CREATED`) for the indexer to
+    /// resolve through `string_consts`.
+    pub topic: String,
+    /// Unresolved identifier / member-access path that named the topic.
+    /// Populated only when `topic` is empty.
+    #[serde(default)]
+    pub topic_expr: Option<String>,
+    /// Receiver expression that owns the call (e.g. `bus`, `socket`).
+    /// `None` when the call is bare (`emit("x")`).
+    pub bus_symbol: Option<String>,
+    /// Handler identifier (`bus.on("x", handler)`) — second argument
+    /// when it is a bare name. `None` for inline closures and arrow
+    /// functions, which the parser intentionally drops.
+    pub handler: Option<String>,
 }
 
 /// Parse a single file and produce chunks + a symbol table.
@@ -496,6 +549,39 @@ fn walk_ast(
         // Still descend — calls can nest inside call arguments.
     }
 
+    // ---- event-bus call sites ----------------------------------------------
+    // Recognised independently of the call edge above: a single node
+    // can be both a call edge (`bus → on`) and an event edge
+    // (`subscribe to "topic"`), and downstream consumers want both.
+    if lang.is_call_node(kind_str)
+        && let Some((owner, _)) = stack.last()
+        && let Some(occ) = lang.extract_events(node, source)
+    {
+        let (role, topic, topic_expr, bus_symbol, handler) = occ;
+        table.events.push(EventEdge {
+            owner: owner.clone(),
+            role,
+            topic,
+            topic_expr,
+            bus_symbol,
+            handler,
+        });
+    }
+
+    // ---- string constants --------------------------------------------------
+    // Only scan when the walker is at the top of the file or directly
+    // inside a class body — keeping the scope tight avoids picking up
+    // local `const x = "y"` inside function bodies that would never be
+    // referenced as event topics.
+    if stack.is_empty()
+        || stack
+            .last()
+            .map(|(_, k)| matches!(k, SymbolKind::Type))
+            .unwrap_or(false)
+    {
+        lang.extract_string_consts(node, source, &mut table.string_consts);
+    }
+
     // ---- type references ---------------------------------------------------
     // Attribute any type-identifier to the deepest enclosing symbol on
     // the stack. Skip when the node is the *name* of its parent
@@ -510,6 +596,12 @@ fn walk_ast(
 
     // ---- definitions -------------------------------------------------------
     if let Some(sym_kind) = lang.symbol_kind_for(kind_str) {
+        // Decorator-based event subscriptions: scan attached decorators
+        // BEFORE we push the FQN to the stack, since the decorator
+        // points at *this* definition. We collect them here so the
+        // event edge's owner / handler is the symbol being defined.
+        let decorators = lang.collect_event_decorators(node, source);
+
         let name = lang
             .extract_name(node, source)
             .unwrap_or_else(|| "<anon>".to_string());
@@ -566,6 +658,21 @@ fn walk_ast(
         // inside functions, TS class-in-closure).
         for parent in lang.extract_extends(node, source) {
             table.extends.push((fqn.clone(), parent));
+        }
+
+        // Emit decorator-driven event edges now that we know the FQN
+        // they attach to. Handler is left None so the indexer's
+        // fallback routes the edge to `owner` (the decorated symbol
+        // itself) — exactly what we want for `@on_event("x") def f`.
+        for (role, topic, topic_expr) in decorators {
+            table.events.push(EventEdge {
+                owner: fqn.clone(),
+                role,
+                topic,
+                topic_expr,
+                bus_symbol: None,
+                handler: None,
+            });
         }
 
         stack.push((fqn, sym_kind));

@@ -22,7 +22,7 @@ use parking_lot::Mutex;
 use hoangsa_memory_core::Result;
 use hoangsa_memory_graph::{Edge, EdgeKind, Graph, Node};
 use hoangsa_memory_parse::{
-    LanguageRegistry, SourceChunk, SymbolKind, crate_qualified_module_path,
+    EventRole, LanguageRegistry, SourceChunk, SymbolKind, crate_qualified_module_path,
     walk::{WalkOptions, walk_sources, walk_text_sources},
 };
 use hoangsa_memory_store::{ChunkDoc, StoreRoot, SymbolRow, VectorCol};
@@ -730,6 +730,90 @@ impl Indexer {
                 to: resolved,
                 kind: EdgeKind::References,
             });
+        }
+
+        // Event edges — `emit("topic", h)` / `bus.on("topic", h)` and
+        // their unresolved cousins (`bus.on(EVENT_NAME, h)`,
+        // `bus.on(EVENTS.USER_CREATED, h)`).
+        //
+        // Synthetic node FQN is `event::<bus>::<topic>`; `bus="*"` when
+        // the receiver couldn't be statically named. Upserting the
+        // pseudo-node keeps `Graph::get(event_fqn)` resolvable so
+        // downstream queries can render the topic without a special case.
+        //
+        // Direction:
+        // - Emit:      `owner   --Emits-->      event_fqn`
+        // - Subscribe: `event_fqn --Subscribes--> handler_or_owner`
+        //
+        // For subscribers, we prefer the explicit `handler` identifier
+        // (resolved through the file's alias / local-symbol map) so the
+        // edge lands on the function that actually runs. Inline
+        // closures fall back to `owner`.
+        //
+        // Constant folding: when `topic` is empty but `topic_expr` is
+        // set, look the expression up in `table.string_consts`
+        // (`(name_or_path, value)` pairs). On a miss we skip the
+        // event — better no edge than an edge keyed on the expression
+        // text, which would never join with the publisher / subscriber
+        // side that uses the literal directly.
+        let string_consts: std::collections::HashMap<&str, &str> = table
+            .string_consts
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        let mut event_nodes: std::collections::HashMap<String, Node> =
+            std::collections::HashMap::new();
+        for ev in &table.events {
+            let topic_owned;
+            let topic = if !ev.topic.is_empty() {
+                ev.topic.as_str()
+            } else if let Some(expr) = ev.topic_expr.as_deref() {
+                match string_consts.get(expr) {
+                    Some(v) => *v,
+                    None => continue,
+                }
+            } else {
+                topic_owned = String::new();
+                topic_owned.as_str()
+            };
+            if topic.is_empty() {
+                continue;
+            }
+            let bus = ev.bus_symbol.as_deref().unwrap_or("*");
+            let event_fqn = format!("event::{bus}::{}", topic);
+            event_nodes.entry(event_fqn.clone()).or_insert_with(|| Node {
+                fqn: event_fqn.clone(),
+                kind: "event".to_string(),
+                path: path.to_path_buf(),
+                line: 0,
+            });
+            match ev.role {
+                EventRole::Emit => {
+                    all_edges.push(Edge {
+                        from: ev.owner.clone(),
+                        to: event_fqn,
+                        kind: EdgeKind::Emits,
+                    });
+                }
+                EventRole::Subscribe => {
+                    let handler = ev
+                        .handler
+                        .as_deref()
+                        .and_then(|h| resolution.get(h).cloned())
+                        .or_else(|| ev.handler.clone())
+                        .unwrap_or_else(|| ev.owner.clone());
+                    all_edges.push(Edge {
+                        from: event_fqn,
+                        to: handler,
+                        kind: EdgeKind::Subscribes,
+                    });
+                }
+            }
+        }
+        if !event_nodes.is_empty() {
+            self.graph
+                .upsert_nodes_batch(event_nodes.into_values().collect())
+                .await?;
         }
 
         self.graph.upsert_edges_batch(all_edges).await?;

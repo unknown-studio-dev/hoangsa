@@ -468,6 +468,7 @@ impl Server {
             "memory_skill_propose" => self.tool_skill_propose(arguments).await,
             "memory_impact" => self.tool_impact(arguments).await,
             "memory_symbol_context" => self.tool_symbol_context(arguments).await,
+            "memory_event_trace" => self.tool_event_trace(arguments).await,
             "memory_detect_changes" => self.tool_detect_changes(arguments).await,
             "memory_turn_save" => self.tool_turn_save(arguments).await,
             "memory_turns_search" => self.tool_turns_search(arguments).await,
@@ -1705,12 +1706,36 @@ impl Server {
             .out_unresolved(&fqn, hoangsa_memory_graph::EdgeKind::Imports)
             .await?;
 
+        // Event-bus relations — usually empty for plain functions; the
+        // sections render only when populated, so cheap to always
+        // request.
+        // - `emits`         : `fqn → event_node`        (out Emits)
+        // - `subscribes_to` : `event_node → fqn`        (in Subscribes)
+        // - `emitted_by`    : `function → event_node`   (in Emits)  — when fqn IS the event node
+        // - `subscribers`   : `event_node → function`   (out Subscribes) — when fqn IS the event node
+        let mut emits = g
+            .out_neighbors(&fqn, hoangsa_memory_graph::EdgeKind::Emits)
+            .await?;
+        let mut subscribes_to = g
+            .in_neighbors(&fqn, hoangsa_memory_graph::EdgeKind::Subscribes)
+            .await?;
+        let mut emitted_by = g
+            .in_neighbors(&fqn, hoangsa_memory_graph::EdgeKind::Emits)
+            .await?;
+        let mut subscribers = g
+            .out_neighbors(&fqn, hoangsa_memory_graph::EdgeKind::Subscribes)
+            .await?;
+
         for v in [
             &mut callers,
             &mut callees,
             &mut extends,
             &mut extended_by,
             &mut references,
+            &mut emits,
+            &mut subscribes_to,
+            &mut emitted_by,
+            &mut subscribers,
         ] {
             v.truncate(limit);
         }
@@ -1740,6 +1765,10 @@ impl Server {
             "references": references.iter().map(node_to_json).collect::<Vec<_>>(),
             "imports_unresolved": unresolved_imports,
             "siblings": siblings.iter().map(node_to_json).collect::<Vec<_>>(),
+            "emits": emits.iter().map(node_to_json).collect::<Vec<_>>(),
+            "subscribes_to": subscribes_to.iter().map(node_to_json).collect::<Vec<_>>(),
+            "emitted_by": emitted_by.iter().map(node_to_json).collect::<Vec<_>>(),
+            "subscribers": subscribers.iter().map(node_to_json).collect::<Vec<_>>(),
         });
 
         let mut text = format!(
@@ -1769,6 +1798,10 @@ impl Server {
         section("extends", &extends, &mut text);
         section("extended_by", &extended_by, &mut text);
         section("references", &references, &mut text);
+        section("emits", &emits, &mut text);
+        section("subscribes_to", &subscribes_to, &mut text);
+        section("emitted_by", &emitted_by, &mut text);
+        section("subscribers", &subscribers, &mut text);
         section("siblings", &siblings, &mut text);
         if !unresolved_imports.is_empty() {
             text.push_str("  imports (external):\n");
@@ -1777,6 +1810,116 @@ impl Server {
             }
         }
 
+        Ok(ToolOutput::new(data, text))
+    }
+
+    /// Find every emitter and subscriber for a given event topic.
+    ///
+    /// Event FQNs are stored as `event::<bus>::<topic>`. With only
+    /// `topic` supplied, returns hits across all buses; with `bus`
+    /// supplied, restricts to that receiver. The lookup uses the
+    /// existing `find_nodes_by_suffix` infrastructure plus a `kind ==
+    /// "event"` filter so non-event FQNs that happen to end with the
+    /// topic string don't pollute the result.
+    async fn tool_event_trace(&self, args: Value) -> anyhow::Result<ToolOutput> {
+        #[derive(Deserialize)]
+        struct Args {
+            topic: String,
+            #[serde(default)]
+            bus: Option<String>,
+            #[serde(default)]
+            limit: Option<usize>,
+        }
+        let Args { topic, bus, limit } = serde_json::from_value(args)?;
+        let limit = limit.unwrap_or(32).clamp(1, 128);
+        if topic.trim().is_empty() {
+            return Ok(ToolOutput::error("topic must be non-empty".to_string()));
+        }
+        let res = self.resources().await?;
+        let g = &res.graph;
+        let store = &res.store;
+
+        let bus_prefix = bus
+            .as_deref()
+            .map(|b| format!("event::{b}::"))
+            .unwrap_or_else(|| "event::".to_string());
+
+        // O(|NODES|) scan via the existing suffix index. Event nodes
+        // share the same `nodes` table as everything else, so this is
+        // the same cost as `find_suffix_candidates` already pays.
+        let candidates = store.kv.find_nodes_by_suffix(&topic).await?;
+        let mut event_fqns: Vec<String> = candidates
+            .into_iter()
+            .filter(|r| r.kind == "event" && r.id.starts_with(&bus_prefix))
+            .map(|r| r.id)
+            .collect();
+        event_fqns.sort();
+        event_fqns.dedup();
+
+        let mut events_payload: Vec<serde_json::Value> = Vec::new();
+        let node_to_json = |n: &hoangsa_memory_graph::Node| {
+            json!({
+                "fqn": n.fqn,
+                "kind": n.kind,
+                "path": n.path.to_string_lossy(),
+                "line": n.line,
+            })
+        };
+        let mut text = String::new();
+        if event_fqns.is_empty() {
+            text.push_str(&format!("no event matches: topic={topic}"));
+            if let Some(b) = &bus {
+                text.push_str(&format!(" bus={b}"));
+            }
+            text.push('\n');
+        }
+        for event_fqn in &event_fqns {
+            let mut emitters = g
+                .in_neighbors(event_fqn, hoangsa_memory_graph::EdgeKind::Emits)
+                .await?;
+            let mut subscribers = g
+                .out_neighbors(event_fqn, hoangsa_memory_graph::EdgeKind::Subscribes)
+                .await?;
+            emitters.truncate(limit);
+            subscribers.truncate(limit);
+
+            text.push_str(&format!("{event_fqn}\n"));
+            if !emitters.is_empty() {
+                text.push_str("  emitted by:\n");
+                for n in &emitters {
+                    text.push_str(&format!(
+                        "    {}  ({}) {}:{}\n",
+                        n.fqn,
+                        n.kind,
+                        n.path.display(),
+                        n.line
+                    ));
+                }
+            }
+            if !subscribers.is_empty() {
+                text.push_str("  subscribers:\n");
+                for n in &subscribers {
+                    text.push_str(&format!(
+                        "    {}  ({}) {}:{}\n",
+                        n.fqn,
+                        n.kind,
+                        n.path.display(),
+                        n.line
+                    ));
+                }
+            }
+            events_payload.push(json!({
+                "fqn": event_fqn,
+                "emitters": emitters.iter().map(&node_to_json).collect::<Vec<_>>(),
+                "subscribers": subscribers.iter().map(&node_to_json).collect::<Vec<_>>(),
+            }));
+        }
+
+        let data = json!({
+            "topic": topic,
+            "bus": bus,
+            "events": events_payload,
+        });
         Ok(ToolOutput::new(data, text))
     }
 
@@ -2750,6 +2893,32 @@ fn tools_catalog() -> Vec<Tool> {
                     }
                 },
                 "required": ["fqn"]
+            }),
+        },
+        Tool {
+            name: "memory_event_trace".to_string(),
+            description: "Trace publishers and subscribers of an event-bus topic. \
+                          Given a `topic` string (and optionally a `bus` receiver \
+                          name), returns every indexed function that emits the \
+                          topic and every handler subscribed to it. Use this when \
+                          following a pub/sub flow that `memory_symbol_context` \
+                          can't connect because publisher and subscriber are \
+                          decoupled by a broker."
+                .to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "topic": { "type": "string", "description": "Event topic string (e.g. \"user.created\")." },
+                    "bus":   { "type": "string", "description": "Optional receiver name to disambiguate (`bus`, `socket`, …). Omit to scan all buses." },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 128,
+                        "default": 32,
+                        "description": "Per-section cap on emitters / subscribers."
+                    }
+                },
+                "required": ["topic"]
             }),
         },
         Tool {

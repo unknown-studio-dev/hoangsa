@@ -13,7 +13,7 @@
 
 use std::path::Path;
 
-use crate::SymbolKind;
+use crate::{EventRole, SymbolKind};
 
 /// A registered language.
 #[derive(Debug, Clone, Copy)]
@@ -347,6 +347,90 @@ impl Language {
             return None;
         }
         Some(bare)
+    }
+
+    /// Extract a publish / subscribe occurrence from a call-site node.
+    ///
+    /// Returns `Some` when the call matches a known event-bus shape:
+    /// `<receiver?>.<method>(<topic>, <handler?>, …)` and `<method>` is
+    /// in the per-role whitelist. Topic shapes:
+    ///
+    /// - **string literal** → `topic` is set, `topic_expr` is `None`
+    /// - **bare identifier** or **member access** (`EVENT_NAME`,
+    ///   `EVENTS.USER_CREATED`) → `topic` empty, `topic_expr = Some(...)`,
+    ///   indexer resolves via `SymbolTable::string_consts`
+    /// - **template / concat / function call / anything else** →
+    ///   skipped entirely (returns `None`)
+    ///
+    /// Tuple layout: `(role, topic, topic_expr, bus_symbol, handler)`.
+    pub(crate) fn extract_events(
+        self,
+        node: tree_sitter::Node<'_>,
+        source: &[u8],
+    ) -> Option<(EventRole, String, Option<String>, Option<String>, Option<String>)> {
+        match self.inner {
+            #[cfg(any(feature = "lang-javascript", feature = "lang-typescript"))]
+            LanguageKind::JavaScript | LanguageKind::TypeScript => js_ts_event(node, source),
+            #[cfg(feature = "lang-python")]
+            LanguageKind::Python => python_event(node, source),
+            #[cfg(feature = "lang-rust")]
+            LanguageKind::Rust => rust_event(node, source),
+            _ => None,
+        }
+    }
+
+    /// Collect decorator-driven event subscriptions attached to a
+    /// definition node. Each entry is `(role, topic_literal,
+    /// topic_expr)` — same convention as `extract_events` so the
+    /// indexer treats both paths uniformly.
+    ///
+    /// Supported shapes:
+    /// - **Python**: parent `decorated_definition` with `@subscribe("x")`,
+    ///   `@on_event("x")`, `@on("x")`, `@event_handler("x")`,
+    ///   `@listens_to("x")`, `@event_listener("x")`.
+    /// - **TS/JS**: preceding-sibling `decorator` nodes with
+    ///   `@OnEvent('x')`, `@EventPattern('x')`, `@MessagePattern('x')`,
+    ///   `@Subscribe('x')`.
+    /// - **Rust / Go**: not supported (no native decorator syntax).
+    pub(crate) fn collect_event_decorators(
+        self,
+        def_node: tree_sitter::Node<'_>,
+        source: &[u8],
+    ) -> Vec<(EventRole, String, Option<String>)> {
+        match self.inner {
+            #[cfg(feature = "lang-python")]
+            LanguageKind::Python => python_collect_decorators(def_node, source),
+            #[cfg(any(feature = "lang-javascript", feature = "lang-typescript"))]
+            LanguageKind::JavaScript | LanguageKind::TypeScript => {
+                js_ts_collect_decorators(def_node, source)
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Append `(name, value)` pairs for any module / class-scope string
+    /// constants this node declares — `const FOO = "..."` (TS/JS),
+    /// `FOO = "..."` (Python), `const FOO: _ = "..."` /
+    /// `static FOO: _ = "..."` (Rust). The walker guards the call site
+    /// with a scope check, so a name passed here is already eligible
+    /// for top-level / class-attribute treatment.
+    pub(crate) fn extract_string_consts(
+        self,
+        node: tree_sitter::Node<'_>,
+        source: &[u8],
+        out: &mut Vec<(String, String)>,
+    ) {
+        match self.inner {
+            #[cfg(any(feature = "lang-javascript", feature = "lang-typescript"))]
+            LanguageKind::JavaScript | LanguageKind::TypeScript => {
+                js_ts_string_const(node, source, out)
+            }
+            #[cfg(feature = "lang-python")]
+            LanguageKind::Python => python_string_const(node, source, out),
+            #[cfg(feature = "lang-rust")]
+            LanguageKind::Rust => rust_string_const(node, source, out),
+            _ => {}
+        }
     }
 
     /// Extract the unresolved names of any parent types this definition
@@ -839,6 +923,549 @@ fn last_name_segment(raw: &str) -> String {
         .unwrap_or(head)
         .trim()
         .to_string()
+}
+
+// ------------------------------------------------------ event extractors
+
+/// Classify a method name into a pub/sub role. None for non-bus methods.
+///
+/// Whitelist is intentionally tight — adding a verb here surfaces
+/// every project's `.send()` / `.on()` as event-bus traffic, including
+/// shapes that aren't (`socket.send(buf)`, `slice.on(...)` if some
+/// crate ever ships that). When in doubt, prefer false-negative.
+fn event_role_for(method: &str) -> Option<EventRole> {
+    match method {
+        "emit" | "emitSync" | "emit_sync" | "publish" | "dispatch" | "fire" | "trigger"
+        | "broadcast" => Some(EventRole::Emit),
+        "on" | "once" | "addListener" | "add_listener" | "addEventListener" | "subscribe"
+        | "listen" | "observe" => Some(EventRole::Subscribe),
+        _ => None,
+    }
+}
+
+/// Decode a tree-sitter string-literal node into its content. Returns
+/// `None` for template strings with interpolations (`${…}`), formatted
+/// strings (Python f-strings), and any node that isn't a plain string.
+/// The point is to keep dynamic topics out of the index, not to be
+/// clever about constant folding.
+fn string_literal_text(node: tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
+    match node.kind() {
+        // JS/TS plain `'x'`/`"x"`; Python plain `"x"` (the grammar
+        // calls both flavours `string`). f-strings / template-strings
+        // with `${…}` are rejected via the interpolation check inside.
+        "string" => collect_string_children(node, source),
+        // JS/TS backtick string. Accepted only if it has no
+        // `template_substitution` child — i.e. no `${…}`.
+        "template_string" => collect_string_children(node, source),
+        // Rust `string_literal`.
+        "string_literal" => collect_string_children(node, source),
+        _ => None,
+    }
+}
+
+/// Concatenate a string node's content children, bailing on any
+/// dynamic-segment child (template substitutions, Python f-string
+/// interpolations). Returns `None` when the node has no extractable
+/// content or contains a dynamic segment.
+fn collect_string_children(
+    node: tree_sitter::Node<'_>,
+    source: &[u8],
+) -> Option<String> {
+    let mut content = String::new();
+    let mut cursor = node.walk();
+    let mut had_fragment = false;
+    for c in node.named_children(&mut cursor) {
+        match c.kind() {
+            "template_substitution" | "interpolation" => return None,
+            "string_fragment" | "string_content" => {
+                if let Ok(t) = c.utf8_text(source) {
+                    content.push_str(t);
+                    had_fragment = true;
+                }
+            }
+            "escape_sequence" => {
+                if let Ok(t) = c.utf8_text(source) {
+                    content.push_str(t);
+                }
+            }
+            // Quote / prefix markers (`string_start`, `string_end`,
+            // `"`, `'`, `` ` ``). Ignore.
+            _ => {}
+        }
+    }
+    if !had_fragment {
+        // Empty literal — strip the surrounding quote chars.
+        let raw = node.utf8_text(source).ok()?;
+        let trimmed = raw.trim();
+        let stripped = trimmed
+            .strip_prefix('"').and_then(|s| s.strip_suffix('"'))
+            .or_else(|| trimmed.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+            .or_else(|| trimmed.strip_prefix('`').and_then(|s| s.strip_suffix('`')))?;
+        content.push_str(stripped);
+    }
+    if content.is_empty() {
+        return None;
+    }
+    Some(content)
+}
+
+/// Identifier text if `node` is a bare identifier, else `None`.
+/// Used to extract `bus_symbol` and `handler` — anything more complex
+/// (member access, closure, arrow function, call expression) is
+/// intentionally rejected so the resolver doesn't have to guess.
+fn bare_identifier(node: tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
+    let kind = node.kind();
+    if kind == "identifier" || kind == "property_identifier" || kind == "shorthand_property_identifier" {
+        return node.utf8_text(source).ok().map(str::to_string);
+    }
+    None
+}
+
+#[cfg(any(feature = "lang-javascript", feature = "lang-typescript"))]
+fn js_ts_event(
+    node: tree_sitter::Node<'_>,
+    source: &[u8],
+) -> Option<(EventRole, String, Option<String>, Option<String>, Option<String>)> {
+    if node.kind() != "call_expression" {
+        return None;
+    }
+    let func = node.child_by_field_name("function")?;
+    let (bus_symbol, method) = if func.kind() == "member_expression" {
+        let prop = func.child_by_field_name("property")?;
+        let method = prop.utf8_text(source).ok()?.to_string();
+        let obj = func.child_by_field_name("object");
+        let bus = obj.and_then(|o| bare_identifier(o, source));
+        (bus, method)
+    } else if func.kind() == "identifier" {
+        // Bare `emit("x")`. Rare but legal (re-exported `emit` from a
+        // module, for example). Accept with no bus.
+        let m = func.utf8_text(source).ok()?.to_string();
+        (None, m)
+    } else {
+        return None;
+    };
+    let role = event_role_for(&method)?;
+    let args = node.child_by_field_name("arguments")?;
+    let (topic, topic_expr, handler) = extract_topic_and_handler(args, source)?;
+    Some((role, topic, topic_expr, bus_symbol, handler))
+}
+
+#[cfg(feature = "lang-python")]
+fn python_event(
+    node: tree_sitter::Node<'_>,
+    source: &[u8],
+) -> Option<(EventRole, String, Option<String>, Option<String>, Option<String>)> {
+    if node.kind() != "call" {
+        return None;
+    }
+    let func = node.child_by_field_name("function")?;
+    let (bus_symbol, method) = if func.kind() == "attribute" {
+        let attr = func.child_by_field_name("attribute")?;
+        let method = attr.utf8_text(source).ok()?.to_string();
+        let obj = func.child_by_field_name("object");
+        let bus = obj.and_then(|o| bare_identifier(o, source));
+        (bus, method)
+    } else if func.kind() == "identifier" {
+        let m = func.utf8_text(source).ok()?.to_string();
+        (None, m)
+    } else {
+        return None;
+    };
+    let role = event_role_for(&method)?;
+    let args = node.child_by_field_name("arguments")?;
+    let (topic, topic_expr, handler) = extract_topic_and_handler(args, source)?;
+    Some((role, topic, topic_expr, bus_symbol, handler))
+}
+
+#[cfg(feature = "lang-rust")]
+fn rust_event(
+    node: tree_sitter::Node<'_>,
+    source: &[u8],
+) -> Option<(EventRole, String, Option<String>, Option<String>, Option<String>)> {
+    // tree-sitter-rust shapes `tx.send("x", h)` as
+    //   call_expression(function: field_expression(value=tx, field=send),
+    //                   arguments: (string_literal, identifier))
+    // and `emit("x")` as call_expression(function: identifier).
+    if node.kind() != "call_expression" {
+        return None;
+    }
+    let func = node.child_by_field_name("function")?;
+    let (bus_symbol, method) = match func.kind() {
+        "field_expression" => {
+            let field = func.child_by_field_name("field")?;
+            let method = field.utf8_text(source).ok()?.to_string();
+            let bus = func
+                .child_by_field_name("value")
+                .and_then(|v| bare_identifier(v, source));
+            (bus, method)
+        }
+        "identifier" => (None, func.utf8_text(source).ok()?.to_string()),
+        _ => return None,
+    };
+    let role = event_role_for(&method)?;
+    let args = node.child_by_field_name("arguments")?;
+    let (topic, topic_expr, handler) = extract_topic_and_handler(args, source)?;
+    Some((role, topic, topic_expr, bus_symbol, handler))
+}
+
+/// Walk an arguments-list node and decode the first two positional
+/// children into `(topic_literal, topic_expr, handler)`. Either
+/// `topic_literal` or `topic_expr` is set, never both — `topic_expr`
+/// carries the source text of a bare identifier or member access so
+/// the indexer can resolve it through `string_consts` later.
+fn extract_topic_and_handler(
+    args: tree_sitter::Node<'_>,
+    source: &[u8],
+) -> Option<(String, Option<String>, Option<String>)> {
+    let mut cursor = args.walk();
+    let mut positional: Vec<tree_sitter::Node<'_>> = Vec::with_capacity(2);
+    for c in args.named_children(&mut cursor) {
+        match c.kind() {
+            // Skip non-positional shapes — kwargs, spread, comments.
+            "keyword_argument" | "spread_element" | "comment" | "block_comment"
+            | "line_comment" => continue,
+            _ => {}
+        }
+        positional.push(c);
+        if positional.len() >= 2 {
+            break;
+        }
+    }
+    let topic_node = *positional.first()?;
+    let (topic, topic_expr) = if let Some(t) = string_literal_text(topic_node, source) {
+        (t, None)
+    } else if let Some(path) = topic_path_expr(topic_node, source) {
+        (String::new(), Some(path))
+    } else {
+        return None;
+    };
+    let handler = positional.get(1).and_then(|n| bare_identifier(*n, source));
+    Some((topic, topic_expr, handler))
+}
+
+/// Decode a topic argument that's a bare identifier or a static
+/// member access into its source-text path. Returns `None` for any
+/// shape that can't be resolved by a flat constant-folding lookup:
+/// function calls, computed access, template strings without the
+/// `string_literal_text` happy path, etc.
+fn topic_path_expr(node: tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
+    match node.kind() {
+        "identifier" => node.utf8_text(source).ok().map(str::to_string),
+        // JS/TS member expression: `EVENTS.USER_CREATED`.
+        "member_expression" => member_access_path(node, source),
+        // Python attribute access: `EVENTS.USER_CREATED`.
+        "attribute" => python_attribute_path(node, source),
+        // Rust path expression: `Events::USER_CREATED` or `module::CONST`.
+        "scoped_identifier" | "field_expression" => {
+            // `field_expression`'s receiver+field forms a static path
+            // only if the receiver itself is a bare identifier; else bail.
+            let text = node.utf8_text(source).ok()?;
+            // Conservative: accept only `ident(::|\.)ident` chains.
+            let parts: Vec<&str> = text.split(|c| c == '.' || c == ':').filter(|s| !s.is_empty()).collect();
+            if parts.is_empty() {
+                return None;
+            }
+            if !parts.iter().all(|p| p.chars().all(|c| c.is_alphanumeric() || c == '_')) {
+                return None;
+            }
+            Some(parts.join("."))
+        }
+        _ => None,
+    }
+}
+
+#[cfg(any(feature = "lang-javascript", feature = "lang-typescript"))]
+fn member_access_path(node: tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
+    // `member_expression` has `object` + `property`. Recurse left until
+    // we hit a bare identifier; reject anything else.
+    let prop = node.child_by_field_name("property")?;
+    let prop_name = prop.utf8_text(source).ok()?.to_string();
+    let obj = node.child_by_field_name("object")?;
+    let head = match obj.kind() {
+        "identifier" => obj.utf8_text(source).ok()?.to_string(),
+        "member_expression" => member_access_path(obj, source)?,
+        _ => return None,
+    };
+    Some(format!("{head}.{prop_name}"))
+}
+
+#[cfg(feature = "lang-python")]
+fn python_attribute_path(node: tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
+    // `attribute(object, attribute)`. Recurse left for chained access.
+    let attr = node.child_by_field_name("attribute")?;
+    let attr_name = attr.utf8_text(source).ok()?.to_string();
+    let obj = node.child_by_field_name("object")?;
+    let head = match obj.kind() {
+        "identifier" => obj.utf8_text(source).ok()?.to_string(),
+        "attribute" => python_attribute_path(obj, source)?,
+        _ => return None,
+    };
+    Some(format!("{head}.{attr_name}"))
+}
+
+// ----------------------------------------- string-const extractors
+
+#[cfg(any(feature = "lang-javascript", feature = "lang-typescript"))]
+fn js_ts_string_const(
+    node: tree_sitter::Node<'_>,
+    source: &[u8],
+    out: &mut Vec<(String, String)>,
+) {
+    // tree-sitter-javascript/typescript shape:
+    //   lexical_declaration `const`/`let` → variable_declarator(name, value)
+    //   variable_declaration `var`        → variable_declarator(name, value)
+    let kind = node.kind();
+    if kind != "lexical_declaration" && kind != "variable_declaration" {
+        return;
+    }
+    let mut cursor = node.walk();
+    for c in node.named_children(&mut cursor) {
+        if c.kind() != "variable_declarator" {
+            continue;
+        }
+        let Some(name_node) = c.child_by_field_name("name") else {
+            continue;
+        };
+        let Some(value_node) = c.child_by_field_name("value") else {
+            continue;
+        };
+        let Some(name) = bare_identifier(name_node, source) else {
+            continue;
+        };
+        if let Some(literal) = string_literal_text(value_node, source) {
+            out.push((name.clone(), literal));
+            continue;
+        }
+        // Object literal: capture each `IDENT.PROP -> "..."` pair.
+        if value_node.kind() == "object" {
+            extract_object_string_props(&name, value_node, source, out);
+        }
+    }
+}
+
+#[cfg(any(feature = "lang-javascript", feature = "lang-typescript"))]
+fn extract_object_string_props(
+    prefix: &str,
+    object_node: tree_sitter::Node<'_>,
+    source: &[u8],
+    out: &mut Vec<(String, String)>,
+) {
+    let mut cursor = object_node.walk();
+    for c in object_node.named_children(&mut cursor) {
+        if c.kind() != "pair" {
+            continue;
+        }
+        let Some(key_node) = c.child_by_field_name("key") else {
+            continue;
+        };
+        let Some(value_node) = c.child_by_field_name("value") else {
+            continue;
+        };
+        let key = match key_node.kind() {
+            "property_identifier" | "identifier" => match key_node.utf8_text(source) {
+                Ok(t) => t.to_string(),
+                _ => continue,
+            },
+            "string" => match string_literal_text(key_node, source) {
+                Some(t) => t,
+                None => continue,
+            },
+            _ => continue,
+        };
+        if let Some(literal) = string_literal_text(value_node, source) {
+            out.push((format!("{prefix}.{key}"), literal));
+        }
+    }
+}
+
+#[cfg(feature = "lang-python")]
+fn python_string_const(
+    node: tree_sitter::Node<'_>,
+    source: &[u8],
+    out: &mut Vec<(String, String)>,
+) {
+    // `assignment(left=identifier, right=string)` at module scope or
+    // inside a class body. tree-sitter-python wraps it in an
+    // `expression_statement`.
+    if node.kind() != "expression_statement" {
+        return;
+    }
+    let mut cursor = node.walk();
+    for c in node.named_children(&mut cursor) {
+        if c.kind() != "assignment" {
+            continue;
+        }
+        let Some(left) = c.child_by_field_name("left") else {
+            continue;
+        };
+        let Some(right) = c.child_by_field_name("right") else {
+            continue;
+        };
+        let Some(name) = bare_identifier(left, source) else {
+            continue;
+        };
+        if let Some(literal) = string_literal_text(right, source) {
+            out.push((name, literal));
+        }
+    }
+}
+
+#[cfg(feature = "lang-rust")]
+fn rust_string_const(
+    node: tree_sitter::Node<'_>,
+    source: &[u8],
+    out: &mut Vec<(String, String)>,
+) {
+    let kind = node.kind();
+    if kind != "const_item" && kind != "static_item" {
+        return;
+    }
+    let Some(name_node) = node.child_by_field_name("name") else {
+        return;
+    };
+    let Some(value_node) = node.child_by_field_name("value") else {
+        return;
+    };
+    let Some(name) = bare_identifier(name_node, source) else {
+        return;
+    };
+    if let Some(literal) = string_literal_text(value_node, source) {
+        out.push((name, literal));
+    }
+}
+
+// ----------------------------------------- decorator extractors
+
+/// Decorator name → role mapping. Whitelist mirrors `event_role_for`
+/// but accepts the PascalCase variants frameworks like NestJS and
+/// Angular use on TS class methods. Tight by design — adding a generic
+/// `@listener` here would mistake unrelated decorators for event
+/// subscriptions.
+fn decorator_event_role(name: &str) -> Option<EventRole> {
+    match name {
+        // Python (snake_case)
+        "subscribe" | "on" | "on_event" | "event_handler" | "listens_to" | "event_listener"
+        | "pubsub_listener" | "consumer" => Some(EventRole::Subscribe),
+        // TS / JS (PascalCase from NestJS, Angular, etc.)
+        "Subscribe" | "OnEvent" | "EventPattern" | "MessagePattern" | "EventHandler"
+        | "Listener" => Some(EventRole::Subscribe),
+        _ => None,
+    }
+}
+
+/// Decode a decorator call `@name("topic")` into a (role, topic,
+/// topic_expr) triple. Returns `None` for decorators without a string
+/// argument, dynamic topics, or decorators outside the whitelist.
+///
+/// `expr` is the decorator's expression — for `@dec("t")` it's a call
+/// expression, for `@dec` (no args) it's a plain identifier (which we
+/// don't accept — we need a topic). The grammar varies between
+/// languages but the call shape is uniform enough.
+fn decode_decorator_call(
+    expr: tree_sitter::Node<'_>,
+    source: &[u8],
+) -> Option<(EventRole, String, Option<String>)> {
+    let (name_node, args_node) = match expr.kind() {
+        "call_expression" | "call" => (
+            expr.child_by_field_name("function")?,
+            expr.child_by_field_name("arguments")?,
+        ),
+        _ => return None,
+    };
+    let name = match name_node.kind() {
+        // `@OnEvent(...)` — bare identifier.
+        "identifier" => name_node.utf8_text(source).ok()?.to_string(),
+        // `@module.OnEvent(...)` — member access. Take the trailing name.
+        "member_expression" => member_access_trailing_name(name_node, source)?,
+        "attribute" => python_attribute_trailing_name(name_node, source)?,
+        _ => return None,
+    };
+    let role = decorator_event_role(&name)?;
+    let (topic, topic_expr, _handler) = extract_topic_and_handler(args_node, source)?;
+    Some((role, topic, topic_expr))
+}
+
+#[cfg(any(feature = "lang-javascript", feature = "lang-typescript"))]
+fn member_access_trailing_name(node: tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
+    let prop = node.child_by_field_name("property")?;
+    prop.utf8_text(source).ok().map(str::to_string)
+}
+
+#[cfg(feature = "lang-python")]
+fn python_attribute_trailing_name(node: tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
+    let attr = node.child_by_field_name("attribute")?;
+    attr.utf8_text(source).ok().map(str::to_string)
+}
+
+#[cfg(feature = "lang-python")]
+fn python_collect_decorators(
+    def_node: tree_sitter::Node<'_>,
+    source: &[u8],
+) -> Vec<(EventRole, String, Option<String>)> {
+    // In tree-sitter-python a `function_definition` / `class_definition`
+    // with decorators is wrapped in `decorated_definition` and the
+    // decorators are its preceding named children.
+    let Some(parent) = def_node.parent() else {
+        return Vec::new();
+    };
+    if parent.kind() != "decorated_definition" {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut cursor = parent.walk();
+    for c in parent.named_children(&mut cursor) {
+        if c.kind() != "decorator" {
+            continue;
+        }
+        // `decorator` wraps the expression directly as a child.
+        let mut deco_cursor = c.walk();
+        for child in c.named_children(&mut deco_cursor) {
+            if let Some(hit) = decode_decorator_call(child, source) {
+                out.push(hit);
+            }
+        }
+    }
+    out
+}
+
+#[cfg(any(feature = "lang-javascript", feature = "lang-typescript"))]
+fn js_ts_collect_decorators(
+    def_node: tree_sitter::Node<'_>,
+    source: &[u8],
+) -> Vec<(EventRole, String, Option<String>)> {
+    // tree-sitter-typescript places decorators as preceding siblings
+    // (or, in newer grammars, as children of the method itself). Try
+    // children first; fall back to walking back through prev_sibling.
+    let mut out = Vec::new();
+    let mut cursor = def_node.walk();
+    for c in def_node.named_children(&mut cursor) {
+        if c.kind() == "decorator" {
+            harvest_js_ts_decorator(c, source, &mut out);
+        }
+    }
+    let mut sib = def_node.prev_named_sibling();
+    while let Some(s) = sib {
+        if s.kind() != "decorator" {
+            break;
+        }
+        harvest_js_ts_decorator(s, source, &mut out);
+        sib = s.prev_named_sibling();
+    }
+    out
+}
+
+#[cfg(any(feature = "lang-javascript", feature = "lang-typescript"))]
+fn harvest_js_ts_decorator(
+    deco: tree_sitter::Node<'_>,
+    source: &[u8],
+    out: &mut Vec<(EventRole, String, Option<String>)>,
+) {
+    let mut cursor = deco.walk();
+    for child in deco.named_children(&mut cursor) {
+        if let Some(hit) = decode_decorator_call(child, source) {
+            out.push(hit);
+        }
+    }
 }
 
 #[cfg(test)]
