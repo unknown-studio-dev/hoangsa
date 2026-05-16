@@ -83,6 +83,8 @@ impl ArchiveTracker {
             c.execute_batch(
                 "PRAGMA journal_mode = WAL;
                  PRAGMA synchronous = NORMAL;
+                 PRAGMA cache_size = -20000;
+                 PRAGMA temp_store = MEMORY;
                  CREATE TABLE IF NOT EXISTS archive_sessions (
                      session_id   TEXT PRIMARY KEY,
                      project      TEXT NOT NULL DEFAULT '',

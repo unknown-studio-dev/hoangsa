@@ -47,6 +47,22 @@ pub const DEFAULT_IDLE_EVICTION: Duration = Duration::from_secs(30 * 60);
 /// crossing the threshold gets dropped within one sweep.
 pub const DEFAULT_EVICTION_SCAN: Duration = Duration::from_secs(5 * 60);
 
+/// Default idle window before the shared `TextEmbedding` (ONNX session +
+/// tokenizer + its CPU memory arena, ~150-300 MB once arena ratchets up)
+/// is dropped. Short and eager: most callers do a burst of embeds and
+/// then go idle, so 60 s after the last embed the memory is reclaimed.
+/// Re-init from the on-disk fastembed cache costs ~1-3 s — noticeable but
+/// acceptable for an interactive tool, and the alternative is the daemon
+/// hoarding ~150-300 MB indefinitely between bursts.
+pub const DEFAULT_EMBEDDER_IDLE_EVICTION: Duration = Duration::from_secs(60);
+
+/// How often to check whether the embedder has crossed its idle
+/// threshold. Tighter than the per-project bundle scan because the
+/// embedder is the dominant RSS contributor and we want "use, then
+/// drop" semantics — 10 s means the model is gone within at most
+/// `idle + scan` of the last embed.
+pub const DEFAULT_EMBEDDER_EVICTION_SCAN: Duration = Duration::from_secs(10);
+
 /// Multi-project daemon state. Cheap to clone (`Arc`-backed via the `DashMap`
 /// + `Semaphore`).
 pub struct ServiceState {
@@ -348,9 +364,20 @@ pub async fn run_multi_listener(state: Arc<ServiceState>) -> anyhow::Result<()> 
         run_eviction_loop(evict_state, DEFAULT_IDLE_EVICTION, DEFAULT_EVICTION_SCAN).await;
     });
 
+    let embedder = state.embedder.clone();
+    supervisor.spawn(async move {
+        run_embedder_eviction_loop(
+            embedder,
+            DEFAULT_EMBEDDER_IDLE_EVICTION,
+            DEFAULT_EMBEDDER_EVICTION_SCAN,
+        )
+        .await;
+    });
+
     info!(
         slugs = initial_slugs.len(),
         idle_eviction_secs = DEFAULT_IDLE_EVICTION.as_secs(),
+        embedder_idle_eviction_secs = DEFAULT_EMBEDDER_IDLE_EVICTION.as_secs(),
         "multi-listener daemon ready"
     );
 
@@ -471,7 +498,8 @@ async fn reconcile_registry(state: &Arc<ServiceState>) -> anyhow::Result<()> {
 /// stay live so the next request rehydrates the project transparently.
 ///
 /// `scan` is the wakeup cadence; the function loops forever and is intended
-/// to be spawned alongside the supervisor's listener tasks.
+/// to be spawned alongside the supervisor's listener tasks. The embedder is
+/// evicted on a separate, tighter cadence by [`run_embedder_eviction_loop`].
 pub async fn run_eviction_loop(state: Arc<ServiceState>, idle: Duration, scan: Duration) {
     let idle_secs = idle.as_secs() as i64;
     loop {
@@ -482,6 +510,27 @@ pub async fn run_eviction_loop(state: Arc<ServiceState>, idle: Duration, scan: D
             if server.last_access_unix() <= cutoff && server.evict_resources().await {
                 debug!(slug, idle_secs = now - server.last_access_unix(), "evicted");
             }
+        }
+    }
+}
+
+/// Tight-cadence eviction loop dedicated to the shared embedder. Split
+/// out from [`run_eviction_loop`] because the embedder owns the ORT CPU
+/// arena (~150-300 MB once ratcheted), which the project bundle eviction
+/// can't release; we want "use, then drop" semantics for it, not the
+/// 30-min/5-min cadence that's right for tantivy/redb handles.
+///
+/// Takes the embedder directly (not `ServiceState`) so the single-project
+/// stdio binary — which has no `ServiceState` — can spawn this same loop.
+pub async fn run_embedder_eviction_loop(
+    embedder: Arc<hoangsa_memory_store::SharedEmbedder>,
+    idle: Duration,
+    scan: Duration,
+) {
+    loop {
+        tokio::time::sleep(scan).await;
+        if embedder.evict_if_idle(idle).await {
+            debug!(idle_secs = idle.as_secs(), "embedder evicted");
         }
     }
 }

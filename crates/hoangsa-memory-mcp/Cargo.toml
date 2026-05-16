@@ -38,6 +38,11 @@ toml                 = { workspace = true }
 dashmap              = { workspace = true }
 notify               = { workspace = true }
 
+# Global allocator. Conditional so msvc builds skip the crate entirely
+# (it doesn't build there); wired up in `src/main.rs`.
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = { workspace = true }
+
 [dev-dependencies]
 tempfile             = { workspace = true }
 hoangsa-memory-policy         = { workspace = true }

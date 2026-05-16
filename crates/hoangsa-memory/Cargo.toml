@@ -32,5 +32,11 @@ time                 = { workspace = true }
 clap                 = { workspace = true }
 indicatif            = "0.18"
 
+# Global allocator. Loaded conditionally so we don't drag jemalloc into
+# msvc builds (the crate doesn't build there). The `#[global_allocator]`
+# wiring lives in `src/main.rs`.
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }

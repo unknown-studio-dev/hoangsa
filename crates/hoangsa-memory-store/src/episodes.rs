@@ -105,6 +105,14 @@ impl EpisodeLog {
             c.pragma_update(None, "synchronous", "NORMAL")
                 .map_err(store)?;
             c.pragma_update(None, "foreign_keys", "ON").map_err(store)?;
+            // Cap per-connection page cache at 20 MB (negative = KiB) so
+            // the multi-project daemon's RSS stays predictable. Default
+            // -2000 (2 MB) is fine for read-heavy use but writes can
+            // expand the dirty page set under the hood.
+            c.pragma_update(None, "cache_size", -20_000_i64)
+                .map_err(store)?;
+            c.pragma_update(None, "temp_store", "MEMORY")
+                .map_err(store)?;
 
             c.execute_batch(
                 r#"

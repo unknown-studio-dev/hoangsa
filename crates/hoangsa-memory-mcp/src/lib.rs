@@ -40,6 +40,7 @@ pub mod service;
 
 pub use server::{Server, run_socket, run_stdio, socket_path};
 pub use service::{
-    ServiceState, populate_from_registry, project_memory_root, project_socket_path,
+    DEFAULT_EMBEDDER_EVICTION_SCAN, DEFAULT_EMBEDDER_IDLE_EVICTION, ServiceState,
+    populate_from_registry, project_memory_root, project_socket_path, run_embedder_eviction_loop,
     run_multi_listener,
 };

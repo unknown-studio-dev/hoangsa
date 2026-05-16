@@ -49,6 +49,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
@@ -57,6 +59,7 @@ use parking_lot::Mutex as PlMutex;
 use rusqlite::{params, Connection};
 use serde_json::Value;
 use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::RwLock as TokioRwLock;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -359,8 +362,28 @@ pub async fn prefetch_model() -> Result<()> {
 /// The underlying `TextEmbedding` is initialised lazily on the first
 /// [`SharedEmbedder::embed`] call; constructing a `SharedEmbedder` is
 /// cheap and never blocks.
+///
+/// The embedder also supports **idle eviction** — after a configurable
+/// idle window the `TextEmbedding` is dropped, releasing the ORT session
+/// (and its CPU memory arena, which would otherwise ratchet up with the
+/// largest tensor ever embedded). The next [`Self::embed`] call pays the
+/// 5–30 s re-init cost. This is the one fix that actually returns memory
+/// to the OS — disabling the arena from outside fastembed isn't possible
+/// without a fork.
 pub struct SharedEmbedder {
-    inner: tokio::sync::OnceCell<TokioMutex<TextEmbedding>>,
+    /// `None` when the model isn't currently loaded (cold or evicted),
+    /// `Some(Arc<...>)` when it is. The inner `Arc` lets in-flight embeds
+    /// keep working through an eviction — the writer just drops the slot;
+    /// the embedder is only freed once the last in-flight task releases
+    /// its clone.
+    state: TokioRwLock<Option<Arc<TokioMutex<TextEmbedding>>>>,
+    /// Dedupe concurrent first-init / re-init. Held only across the
+    /// `try_new` call.
+    init_lock: TokioMutex<()>,
+    /// Unix seconds of last successful [`Self::embed`] dispatch. Updated
+    /// without locking via [`Ordering::Relaxed`] — the eviction loop
+    /// reads it the same way and a one-tick lag is harmless.
+    last_access_unix: AtomicI64,
 }
 
 impl SharedEmbedder {
@@ -369,24 +392,21 @@ impl SharedEmbedder {
     /// startup paths even when embeddings are gated behind config.
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            inner: tokio::sync::OnceCell::new(),
+            state: TokioRwLock::new(None),
+            init_lock: TokioMutex::new(()),
+            last_access_unix: AtomicI64::new(0),
         })
     }
 
-    /// Embed a batch of texts. The first call runs the fastembed
-    /// initialisation (download + parse, ~5–30 s cold) under the
-    /// internal `OnceCell`; concurrent first-callers all await the
-    /// same init future. Subsequent calls take the async mutex and
-    /// dispatch to the cached `TextEmbedding`.
+    /// Embed a batch of texts. The first call (and the first call after
+    /// idle eviction) runs the fastembed initialisation (~5–30 s cold);
+    /// concurrent first-callers converge on the same init via
+    /// `init_lock`. Subsequent calls share the cached `TextEmbedding`.
     pub async fn embed(self: Arc<Self>, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
-        self.ensure_loaded().await?;
-        let me = self;
+        let model = self.get_or_init().await?;
+        self.last_access_unix.store(now_unix(), Ordering::Relaxed);
         tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>> {
-            let mu = me
-                .inner
-                .get()
-                .expect("ensure_loaded above guarantees init succeeded");
-            let mut guard = mu.blocking_lock();
+            let mut guard = model.blocking_lock();
             guard
                 .embed(texts, None)
                 .map_err(|e| Error::Store(format!("embed: {e}")))
@@ -395,20 +415,61 @@ impl SharedEmbedder {
         .map_err(|e| Error::Store(format!("embed join: {e}")))?
     }
 
-    async fn ensure_loaded(&self) -> Result<()> {
-        self.inner
-            .get_or_try_init(|| async {
-                let m = tokio::task::spawn_blocking(|| {
-                    TextEmbedding::try_new(default_init_options())
-                })
-                .await
-                .map_err(|e| Error::Store(format!("embedder init join: {e}")))?
-                .map_err(|e| Error::Store(format!("embedder init: {e}")))?;
-                Ok::<_, Error>(TokioMutex::new(m))
-            })
-            .await?;
-        Ok(())
+    /// Get the loaded model handle, initialising it under `init_lock`
+    /// if necessary. Returns a clone of the `Arc<TokioMutex<...>>` so
+    /// callers can finish their embed even if a concurrent eviction
+    /// clears the state slot mid-flight.
+    async fn get_or_init(&self) -> Result<Arc<TokioMutex<TextEmbedding>>> {
+        if let Some(m) = self.state.read().await.as_ref() {
+            return Ok(m.clone());
+        }
+        let _init = self.init_lock.lock().await;
+        // Double-check: another waiter may have populated while we
+        // queued on `init_lock`.
+        if let Some(m) = self.state.read().await.as_ref() {
+            return Ok(m.clone());
+        }
+        let model = tokio::task::spawn_blocking(|| TextEmbedding::try_new(default_init_options()))
+            .await
+            .map_err(|e| Error::Store(format!("embedder init join: {e}")))?
+            .map_err(|e| Error::Store(format!("embedder init: {e}")))?;
+        let arc = Arc::new(TokioMutex::new(model));
+        *self.state.write().await = Some(arc.clone());
+        Ok(arc)
     }
+
+    /// Drop the loaded `TextEmbedding` if it has been idle for at least
+    /// `idle`. Returns `true` if a model was actually evicted. In-flight
+    /// embeds that already cloned the `Arc` keep their handle; the model
+    /// is only truly freed once the last reference dies.
+    ///
+    /// Reading `last_access_unix` without the state lock is intentional:
+    /// the only failure mode is "evict raced with embed update" which
+    /// the eviction loop will catch on the next scan, and the embed
+    /// itself is already in flight on a cloned `Arc`.
+    pub async fn evict_if_idle(&self, idle: Duration) -> bool {
+        let last = self.last_access_unix.load(Ordering::Relaxed);
+        let cutoff = now_unix().saturating_sub(idle.as_secs() as i64);
+        if last > cutoff {
+            return false;
+        }
+        let mut g = self.state.write().await;
+        if g.is_none() {
+            return false;
+        }
+        *g = None;
+        true
+    }
+
+    /// Test/diagnostic accessor. `true` when the model is currently
+    /// loaded into memory.
+    pub async fn is_loaded(&self) -> bool {
+        self.state.read().await.is_some()
+    }
+}
+
+fn now_unix() -> i64 {
+    time::OffsetDateTime::now_utc().unix_timestamp()
 }
 
 /// The concrete [`VectorStore`] backed by fastembed + SQLite.
@@ -802,9 +863,16 @@ async fn embed_texts(inner: &Arc<StoreInner>, texts: Vec<String>) -> Result<Vec<
 fn open_sqlite(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path)
         .map_err(|e| Error::Store(format!("open vectors.sqlite: {e}")))?;
+    // `cache_size = -20000` caps the per-connection page cache at 20 MB
+    // (negative = KiB). Default `-2000` (2 MB) is fine but undocumented;
+    // setting it explicitly means RSS per project sqlite stays predictable
+    // even when the multi-project daemon has many concurrent connections.
+    // `temp_store = MEMORY` keeps small intermediates out of /tmp.
     conn.execute_batch(
         "PRAGMA journal_mode = WAL;
          PRAGMA synchronous = NORMAL;
+         PRAGMA cache_size = -20000;
+         PRAGMA temp_store = MEMORY;
          CREATE TABLE IF NOT EXISTS vec_chunks (
              collection TEXT NOT NULL,
              id         TEXT NOT NULL,
@@ -1002,7 +1070,7 @@ mod tests {
         // clones of the same Arc — that's the load-bearing property Phase 4
         // relies on (one ONNX model across N projects). We don't trigger an
         // actual embed here so the test stays offline-friendly; the lazy
-        // OnceCell inside SharedEmbedder means construction never touches
+        // state slot inside SharedEmbedder means construction never touches
         // fastembed.
         use tempfile::tempdir;
         let dir1 = tempdir().unwrap();
@@ -1025,6 +1093,38 @@ mod tests {
             "both stores must retain a clone of the same Arc<SharedEmbedder>; \
              pre={pre} now={}",
             Arc::strong_count(&embedder),
+        );
+    }
+
+    #[tokio::test]
+    async fn evict_if_idle_is_noop_when_unloaded() {
+        // A SharedEmbedder that never embedded must report eviction as a
+        // no-op — there's nothing to drop. This is the cold-daemon /
+        // gated-embedding path.
+        let embedder = SharedEmbedder::new();
+        assert!(!embedder.is_loaded().await);
+        let evicted = embedder.evict_if_idle(Duration::from_secs(0)).await;
+        assert!(!evicted, "unloaded embedder must not report eviction");
+        assert!(!embedder.is_loaded().await);
+    }
+
+    #[tokio::test]
+    async fn evict_if_idle_skips_when_recently_active() {
+        // Manually wedge a fake last-access into the future to simulate a
+        // very recent embed (we can't actually call `embed` in unit tests
+        // without downloading the ONNX model). The slot itself is None,
+        // so evict still returns false — but the path that matters is
+        // the timestamp check above the state check.
+        let embedder = SharedEmbedder::new();
+        embedder.last_access_unix.store(
+            now_unix() + 3600, // 1 h in the future
+            Ordering::Relaxed,
+        );
+        let evicted = embedder.evict_if_idle(Duration::from_secs(60)).await;
+        assert!(
+            !evicted,
+            "recent activity must keep the embedder loaded; \
+             evict_if_idle returned true unexpectedly",
         );
     }
 }

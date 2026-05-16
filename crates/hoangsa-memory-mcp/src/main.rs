@@ -25,11 +25,23 @@
 //! hoangsa-memory-mcp --service                     # equivalent
 //! ```
 
+// jemalloc as the global allocator. fastembed's ORT inference allocates
+// and frees large transient tensors on every embed; libmalloc (macOS) /
+// glibc ptmalloc (Linux) keep those freed pages hoarded in per-thread
+// arenas for the process lifetime. jemalloc's dirty/muzzy decay (~10 s
+// default) returns the pages to the OS, which is what makes the
+// `SharedEmbedder::evict_if_idle` reclamation visible in `ps`/`top`.
+// Skipped on msvc — `tikv-jemallocator` doesn't build there.
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use hoangsa_memory_mcp::{
-    Server, ServiceState, populate_from_registry, run_multi_listener, run_socket, run_stdio,
+    DEFAULT_EMBEDDER_EVICTION_SCAN, DEFAULT_EMBEDDER_IDLE_EVICTION, Server, ServiceState,
+    populate_from_registry, run_embedder_eviction_loop, run_multi_listener, run_socket, run_stdio,
     socket_path,
 };
 
@@ -87,6 +99,22 @@ async fn run_single() -> anyhow::Result<()> {
     if server.spawn_watcher(project_root).await {
         tracing::info!("background file watcher enabled");
     }
+
+    // Eager embedder reclamation. Without this loop the ORT session +
+    // its CPU memory arena (~150-300 MB once ratcheted) stay loaded for
+    // the lifetime of the MCP process, even though most tool calls only
+    // need it for a few seconds at a time. The loop drops the model
+    // after `DEFAULT_EMBEDDER_IDLE_EVICTION` of no embed activity; the
+    // next call pays a ~1-3 s re-init from the on-disk fastembed cache.
+    let embedder = server.shared_embedder().clone();
+    tokio::spawn(async move {
+        run_embedder_eviction_loop(
+            embedder,
+            DEFAULT_EMBEDDER_IDLE_EVICTION,
+            DEFAULT_EMBEDDER_EVICTION_SCAN,
+        )
+        .await;
+    });
 
     // Run stdio (for Claude Code / MCP clients) and a Unix socket (for the
     // CLI thin-client) concurrently. When stdio hits EOF the process exits

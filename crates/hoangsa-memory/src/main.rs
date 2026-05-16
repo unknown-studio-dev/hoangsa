@@ -1,5 +1,17 @@
 //! The `hoangsa-memory` command-line interface.
 
+// jemalloc as the global allocator on every non-msvc target. The ORT
+// inference path inside fastembed allocates and frees large transient
+// tensors on every embed; libmalloc (macOS) and glibc ptmalloc (Linux)
+// retain those freed pages in per-thread arenas for the process
+// lifetime, which makes the daemon's RSS grow monotonically even when
+// the embedder is evicted. jemalloc's dirty/muzzy decay (~10 s default)
+// returns those pages to the OS, which is what makes the
+// `SharedEmbedder::evict_if_idle` win actually visible in `ps`.
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
