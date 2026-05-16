@@ -212,9 +212,7 @@ pub struct MemoryEntryPreview {
     pub tags: Vec<String>,
 }
 
-const USER_MD: &str = "USER.md";
-const MEMORY_MD: &str = "MEMORY.md";
-const LESSONS_MD: &str = "LESSONS.md";
+use hoangsa_memory_core::{LESSONS_MD, MEMORY_MD, USER_MD};
 
 /// Path for the given markdown surface inside the store root.
 pub(crate) fn md_path(root: &Path, kind: MemoryKind) -> std::path::PathBuf {

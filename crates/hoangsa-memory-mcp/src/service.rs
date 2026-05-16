@@ -73,6 +73,11 @@ struct ProjectSlot {
     /// Lazily-opened server. First caller wins; concurrent callers all await
     /// the same init future.
     server: OnceCell<Arc<Server>>,
+    /// Abort handle for this slug's listener task. `Some` while a
+    /// socket is bound and accepting; `None` before binding or after
+    /// [`ServiceState::unregister`] aborts it. Touched only at
+    /// register / unregister time, so `std::sync::Mutex` is fine.
+    listener: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl ServiceState {
@@ -111,8 +116,38 @@ impl ServiceState {
                     memory_root,
                     source_path,
                     server: OnceCell::new(),
+                    listener: std::sync::Mutex::new(None),
                 })
             });
+    }
+
+    /// Remove a slug from the daemon: abort its listener + watcher,
+    /// remove the socket file, and drop the `ProjectSlot` `Arc` so the
+    /// cached [`Server`] (plus its `ResourceBundle` and vector-store
+    /// handle) get cleaned up. Idempotent — calling on an unknown slug
+    /// is a no-op.
+    ///
+    /// Returns `true` if a slot was removed.
+    pub fn unregister(&self, slug: &str) -> bool {
+        let Some((_, slot)) = self.projects.remove(slug) else {
+            return false;
+        };
+        if let Ok(mut g) = slot.listener.lock() {
+            if let Some(handle) = g.take() {
+                handle.abort();
+            }
+        }
+        if let Some(server) = slot.server.get() {
+            server.abort_watcher();
+        }
+        let sock = project_socket_path(&self.hoangsa_home, slug);
+        if let Err(e) = std::fs::remove_file(&sock) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                warn!(slug, sock = %sock.display(), error = %e, "removing socket file failed");
+            }
+        }
+        info!(slug, "unregistered");
+        true
     }
 
     /// All registered slugs, in arbitrary order.
@@ -224,12 +259,11 @@ async fn bind_project_socket(sock: &Path) -> anyhow::Result<Option<UnixListener>
     }
 }
 
-/// Bind the per-project socket and spawn an accept loop on `tasks`.
-pub async fn spawn_listener(
-    state: &Arc<ServiceState>,
-    slug: &str,
-    tasks: &mut JoinSet<()>,
-) -> anyhow::Result<()> {
+/// Bind the per-project socket and spawn an accept loop. Stores the
+/// task's `JoinHandle` on the slot so [`ServiceState::unregister`] can
+/// abort it; replaces and aborts any handle already present (re-bind
+/// during reconcile).
+pub async fn spawn_listener(state: &Arc<ServiceState>, slug: &str) -> anyhow::Result<()> {
     let sock = project_socket_path(&state.hoangsa_home, slug);
     let Some(listener) = bind_project_socket(&sock).await? else {
         warn!(
@@ -240,35 +274,21 @@ pub async fn spawn_listener(
         return Ok(());
     };
     info!(slug, sock = %sock.display(), "listening");
-    let st = state.clone();
-    let slug = slug.to_string();
-    tasks.spawn(async move { run_one_listener(st, slug, listener).await });
-    Ok(())
-}
-
-/// Variant for runtime additions (registry-watch path) — no JoinSet handle
-/// available, detach via `tokio::spawn`.
-async fn spawn_listener_detached(state: &Arc<ServiceState>, slug: &str) {
-    let sock = project_socket_path(&state.hoangsa_home, slug);
-    let listener = match bind_project_socket(&sock).await {
-        Ok(Some(l)) => l,
-        Ok(None) => {
-            warn!(
-                slug,
-                sock = %sock.display(),
-                "another process owns the socket; skipping runtime add"
-            );
-            return;
-        }
-        Err(e) => {
-            warn!(slug, error = %e, "bind socket failed (runtime add)");
-            return;
-        }
+    let Some(slot) = state.projects.get(slug).map(|r| r.value().clone()) else {
+        // Slot was unregistered between bind and spawn — drop the bound
+        // listener (close socket) and bail.
+        drop(listener);
+        let _ = std::fs::remove_file(&sock);
+        return Ok(());
     };
-    info!(slug, sock = %sock.display(), "listening (added at runtime)");
     let st = state.clone();
-    let slug = slug.to_string();
-    tokio::spawn(async move { run_one_listener(st, slug, listener).await });
+    let slug_owned = slug.to_string();
+    let handle = tokio::spawn(async move { run_one_listener(st, slug_owned, listener).await });
+    let mut guard = slot.listener.lock().expect("listener handle poisoned");
+    if let Some(prev) = guard.replace(handle) {
+        prev.abort();
+    }
+    Ok(())
 }
 
 /// Accept loop for one project's socket.
@@ -302,24 +322,29 @@ async fn run_one_listener(state: Arc<ServiceState>, slug: String, listener: Unix
 /// Bind listeners for every registered slug + spawn the registry-watch task.
 /// Runs forever; returns only on a fatal supervisor error.
 pub async fn run_multi_listener(state: Arc<ServiceState>) -> anyhow::Result<()> {
-    let mut tasks: JoinSet<()> = JoinSet::new();
+    // Supervisor JoinSet tracks the long-lived control tasks (registry
+    // watch + eviction loop). Per-listener handles live on each
+    // [`ProjectSlot`] so [`ServiceState::unregister`] can abort them
+    // individually; the supervisor only needs to notice if a control
+    // task dies unexpectedly.
+    let mut supervisor: JoinSet<()> = JoinSet::new();
 
     let initial_slugs = state.slugs();
     for slug in &initial_slugs {
-        if let Err(e) = spawn_listener(&state, slug, &mut tasks).await {
+        if let Err(e) = spawn_listener(&state, slug).await {
             warn!(slug, error = %e, "failed to bind initial listener");
         }
     }
 
     let watch_state = state.clone();
-    tasks.spawn(async move {
+    supervisor.spawn(async move {
         if let Err(e) = run_registry_watch(watch_state).await {
             warn!(error = %e, "registry watcher exited");
         }
     });
 
     let evict_state = state.clone();
-    tasks.spawn(async move {
+    supervisor.spawn(async move {
         run_eviction_loop(evict_state, DEFAULT_IDLE_EVICTION, DEFAULT_EVICTION_SCAN).await;
     });
 
@@ -333,10 +358,9 @@ pub async fn run_multi_listener(state: Arc<ServiceState>) -> anyhow::Result<()> 
         _ = tokio::signal::ctrl_c() => {
             info!("ctrl-c received; shutting down");
         }
-        // Wait for any listener task to end. They normally don't.
-        Some(res) = tasks.join_next() => {
+        Some(res) = supervisor.join_next() => {
             if let Err(e) = res {
-                warn!(error = %e, "listener task panicked");
+                warn!(error = %e, "control task panicked");
             }
         }
     }
@@ -394,13 +418,16 @@ async fn run_registry_watch(state: Arc<ServiceState>) -> anyhow::Result<()> {
             warn!(error = %e, "registry reconcile failed");
         }
     }
-    drop(watcher);
     Ok(())
 }
 
 async fn reconcile_registry(state: &Arc<ServiceState>) -> anyhow::Result<()> {
     let registry = Registry::load(&state.hoangsa_home)?;
     let known: std::collections::HashSet<String> = state.slugs().into_iter().collect();
+    let registry_slugs: std::collections::HashSet<String> =
+        registry.projects.iter().map(|p| p.slug.clone()).collect();
+
+    // Add: registry slugs we haven't bound yet.
     for project in &registry.projects {
         if known.contains(&project.slug) {
             continue;
@@ -411,7 +438,30 @@ async fn reconcile_registry(state: &Arc<ServiceState>) -> anyhow::Result<()> {
             memory_root,
             Some(project.path.clone()),
         );
-        spawn_listener_detached(state, &project.slug).await;
+        if let Err(e) = spawn_listener(state, &project.slug).await {
+            warn!(slug = %project.slug, error = %e, "bind socket failed (runtime add)");
+        }
+    }
+
+    // Remove: slugs we have bound but that no longer exist in the
+    // registry. Orphan-with-data-dir entries (registered with no
+    // source_path) are *not* removed — only registry-driven slugs go.
+    // Without this skip, an orphan slot would get torn down here and
+    // immediately re-added by `populate_from_registry` on the next
+    // sweep, fighting itself.
+    for slug in &known {
+        if registry_slugs.contains(slug) {
+            continue;
+        }
+        let slot_has_source = state
+            .projects
+            .get(slug)
+            .map(|r| r.value().source_path.is_some())
+            .unwrap_or(false);
+        if !slot_has_source {
+            continue;
+        }
+        state.unregister(slug);
     }
     Ok(())
 }
@@ -593,6 +643,112 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unregister_drops_slot_and_aborts_listener() {
+        // Invariant: `unregister` must remove the slot from the
+        // DashMap and abort any bound listener handle. Without this,
+        // dropping a project from `projects.json` leaves its
+        // `ProjectSlot` cached until a daemon restart.
+        let home = tempdir().unwrap();
+        let mem_root = project_memory_root(home.path(), "alpha");
+        std::fs::create_dir_all(&mem_root).unwrap();
+
+        let state = Arc::new(ServiceState::new(home.path().to_path_buf()));
+        state.register("alpha".into(), mem_root, None);
+        spawn_listener(&state, "alpha").await.unwrap();
+
+        assert!(state.slugs().contains(&"alpha".to_string()));
+        assert!(state.unregister("alpha"), "first unregister reports work");
+        assert!(state.slugs().is_empty(), "slot removed from DashMap");
+        assert!(
+            !state.unregister("alpha"),
+            "second unregister is a no-op",
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reconcile_removes_orphan_registry_slugs() {
+        // Add a registry entry, populate, then strip it from the
+        // registry on disk and assert reconcile drops the slug.
+        let home = tempdir().unwrap();
+        let mem_root = project_memory_root(home.path(), "tango");
+        std::fs::create_dir_all(&mem_root).unwrap();
+
+        let mut reg = Registry::default();
+        reg.projects.push(hoangsa_memory_core::projects::Project {
+            slug: "tango".into(),
+            path: PathBuf::from("/tmp/whatever"),
+            name: "tango".into(),
+            registered_at: 0,
+            last_used_at: 0,
+        });
+        reg.save(home.path()).unwrap();
+
+        let state = Arc::new(ServiceState::new(home.path().to_path_buf()));
+        populate_from_registry(&state).unwrap();
+        assert!(state.slugs().contains(&"tango".to_string()));
+
+        // Rewrite registry with the slug gone, then reconcile.
+        Registry::default().save(home.path()).unwrap();
+        reconcile_registry(&state).await.unwrap();
+        assert!(
+            !state.slugs().contains(&"tango".to_string()),
+            "reconcile must drop slugs that vanished from the registry",
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn evict_drops_vector_store_alongside_bundle() {
+        // Invariant: `evict_resources` must clear *both* the bundle
+        // and the vector-store slot. Otherwise the per-project SQLite
+        // handle stays resident for the lifetime of the daemon even
+        // after the rest of the project is dropped.
+        let home = tempdir().unwrap();
+        let mem_root = project_memory_root(home.path(), "alpha");
+        std::fs::create_dir_all(&mem_root).unwrap();
+
+        let state = ServiceState::new(home.path().to_path_buf());
+        state.register("alpha".into(), mem_root, None);
+        let server = state.get_or_open("alpha").await.unwrap();
+
+        let _vs = server
+            .get_vector_store()
+            .await
+            .expect("vector store should open with default config");
+        assert!(server.vector_store_is_warm().await, "warm-up populated the slot");
+
+        assert!(server.evict_resources().await, "first evict reports work");
+        assert!(
+            !server.vector_store_is_warm().await,
+            "evict must clear the vector store slot, not just the bundle",
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn resources_if_warm_does_not_rehydrate_after_eviction() {
+        // Invariant: non-user-driven tasks (the background watcher is
+        // the canonical case) must observe `None` against an evicted
+        // bundle and leave the slot empty — otherwise any project
+        // with background fs activity would never stay evicted.
+        let home = tempdir().unwrap();
+        let mem_root = project_memory_root(home.path(), "alpha");
+        std::fs::create_dir_all(&mem_root).unwrap();
+
+        let state = ServiceState::new(home.path().to_path_buf());
+        state.register("alpha".into(), mem_root, None);
+        let server = state.get_or_open("alpha").await.unwrap();
+        assert!(server.evict_resources().await, "first evict drops bundle");
+
+        assert!(
+            server.resources_if_warm().await.is_none(),
+            "resources_if_warm must return None for an evicted bundle",
+        );
+        assert!(
+            !server.bundle_is_warm().await,
+            "resources_if_warm must not rehydrate — eviction must persist",
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn eviction_loop_drops_idle_projects() {
         // With idle = 0, every opened project is over the threshold the
         // moment the loop ticks — proves the loop wires last_access +
@@ -616,9 +772,8 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(250)).await;
         handle.abort();
 
-        let bundle = server.inner.bundle.read().await;
         assert!(
-            bundle.is_none(),
+            !server.bundle_is_warm().await,
             "eviction loop must drop the bundle once idle threshold is crossed",
         );
     }

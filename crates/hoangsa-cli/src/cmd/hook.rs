@@ -570,35 +570,7 @@ fn candidate_mcp_socket() -> Option<std::path::PathBuf> {
     None
 }
 
-/// Last-two-path-components slug (lowercased, non-alnum → '-'). Kept
-/// in sync with `hoangsa-memory-mcp::main::project_slug` so the hook finds the
-/// same socket the daemon binds.
-fn project_slug(path: &Path) -> String {
-    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let components: Vec<&str> = canonical
-        .components()
-        .filter_map(|c| c.as_os_str().to_str())
-        .collect();
-    let n = components.len();
-    let parts = if n >= 2 {
-        &components[n - 2..]
-    } else {
-        &components[..]
-    };
-    let raw = parts.join("-");
-    let mut result = String::with_capacity(raw.len());
-    let mut prev_dash = false;
-    for c in raw.chars().flat_map(|c| c.to_lowercase()) {
-        if c.is_ascii_alphanumeric() {
-            result.push(c);
-            prev_dash = false;
-        } else if !prev_dash {
-            result.push('-');
-            prev_dash = true;
-        }
-    }
-    result.trim_matches('-').to_string()
-}
+use hoangsa_memory_core::project_slug;
 
 /// `hook session-archive`
 ///
@@ -659,36 +631,12 @@ pub fn cmd_session_start(cwd: &str) {
     out(&response);
 }
 
-/// Resolve the same memory root the MCP server uses. Kept in sync with
-/// `hoangsa_memory::resolve::resolve_root` — `hoangsa-cli` can't depend
-/// on the full memory crate (would pull in graph, vector store, fastembed)
-/// just to read three markdown files, so the chain is duplicated.
+/// Resolve the same memory root the MCP server uses.
 ///
-/// Returns `None` if `HOME` is unset and no local/env root is populated.
+/// Always returns `Some(_)` — `compose_session_start_context` handles
+/// missing/empty files by returning `None`, so we don't need to gate here.
 fn hoangsa_memory_root(cwd: &str) -> Option<std::path::PathBuf> {
-    if let Ok(env) = std::env::var("HOANGSA_MEMORY_ROOT") {
-        let p = std::path::PathBuf::from(env);
-        if !p.as_os_str().is_empty() {
-            return Some(p);
-        }
-    }
-    let local = Path::new(cwd).join(".hoangsa").join("memory");
-    let local_populated = local
-        .join("graph.redb")
-        .metadata()
-        .map(|m| m.is_file() && m.len() > 4096)
-        .unwrap_or(false);
-    if local_populated {
-        return Some(local);
-    }
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from)?;
-    let slug = project_slug(Path::new(cwd));
-    Some(
-        home.join(".hoangsa")
-            .join("memory")
-            .join("projects")
-            .join(slug),
-    )
+    Some(hoangsa_memory_core::resolve_root(Path::new(cwd), None))
 }
 
 /// Read `USER.md` + `MEMORY.md` + `LESSONS.md` from the memory root and

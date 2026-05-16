@@ -412,6 +412,13 @@ impl SharedEmbedder {
 }
 
 /// The concrete [`VectorStore`] backed by fastembed + SQLite.
+///
+/// Cheap to clone — only the `Arc<StoreInner>` is bumped, the underlying
+/// SQLite connection and embedder are shared. The multi-project MCP
+/// daemon relies on this so it can hand the same store to the bundle
+/// (for eviction) and to long-running tools without an extra wrapping
+/// `Arc`.
+#[derive(Clone)]
 pub struct EmbeddedVectorStore {
     inner: Arc<StoreInner>,
 }

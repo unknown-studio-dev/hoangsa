@@ -444,7 +444,7 @@ pub struct ExchangeChunk {
     pub topic: String,
 }
 
-pub fn chunk_exchanges(turns: &[Turn]) -> Vec<ExchangeChunk> {
+fn chunk_exchanges(turns: &[Turn]) -> Vec<ExchangeChunk> {
     let mut chunks = Vec::new();
     let mut i = 0;
 
@@ -533,7 +533,7 @@ pub struct Turn {
     pub timestamp: Option<i64>,
 }
 
-pub async fn parse_conversation(path: &Path) -> Result<Vec<Turn>> {
+async fn parse_conversation(path: &Path) -> Result<Vec<Turn>> {
     let content = tokio::fs::read_to_string(path)
         .await
         .context("reading conversation file")?;
@@ -702,7 +702,7 @@ fn extract_text_rich(
 // helpers (moved verbatim from archive_cmd)
 // ---------------------------------------------------------------------------
 
-pub fn home_claude_sessions() -> Result<PathBuf> {
+fn home_claude_sessions() -> Result<PathBuf> {
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
@@ -710,11 +710,11 @@ pub fn home_claude_sessions() -> Result<PathBuf> {
     Ok(home.join(".claude").join("projects"))
 }
 
-pub fn decode_project_name(encoded: &str) -> String {
+fn decode_project_name(encoded: &str) -> String {
     encoded.replace('-', "/")
 }
 
-pub fn infer_topic(turns: &[Turn]) -> String {
+fn infer_topic(turns: &[Turn]) -> String {
     turns
         .iter()
         .find(|t| t.role == "user")
@@ -732,7 +732,7 @@ pub fn infer_topic(turns: &[Turn]) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-pub fn chrono_parse_unix(s: &str) -> Option<i64> {
+fn chrono_parse_unix(s: &str) -> Option<i64> {
     let s = s.trim().trim_end_matches('Z');
     let parts: Vec<&str> = s.splitn(2, 'T').collect();
     if parts.len() != 2 {

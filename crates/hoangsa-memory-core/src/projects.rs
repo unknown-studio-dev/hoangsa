@@ -60,20 +60,77 @@ pub fn registry_path(hoangsa_home: &Path) -> PathBuf {
     hoangsa_home.join("projects.json")
 }
 
+/// `$HOME` (or `$USERPROFILE` on Windows). `None` only when neither env
+/// var is set.
+pub fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
 /// `~/.hoangsa` resolved from `$HOME` (or `$USERPROFILE` on Windows). Errors
 /// out only when neither env var is set.
 pub fn default_hoangsa_home() -> Result<PathBuf, RegistryError> {
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .ok_or(RegistryError::NoHome)?;
-    Ok(PathBuf::from(home).join(".hoangsa"))
+    home_dir()
+        .map(|h| h.join(".hoangsa"))
+        .ok_or(RegistryError::NoHome)
+}
+
+/// True when `<root>/graph.redb` exists and is larger than a fresh empty
+/// redb file (~4 KiB header).
+pub fn is_populated_root(root: &Path) -> bool {
+    let graph = root.join("graph.redb");
+    match std::fs::metadata(&graph) {
+        Ok(m) => m.is_file() && m.len() > 4096,
+        Err(_) => false,
+    }
+}
+
+/// Resolve the `.hoangsa/memory/` data root via a 4-step chain:
+///
+/// 1. `explicit_root` argument (e.g. `--root` flag)
+/// 2. `$HOANGSA_MEMORY_ROOT` env var
+/// 3. `<project_dir>/.hoangsa/memory/` — only when populated (a stale
+///    empty local from a misrouted `index` run used to silently shadow the
+///    real global root; we now detect that case and fall through, printing
+///    a one-line warning)
+/// 4. `<home>/.hoangsa/memory/projects/<project_slug(project_dir)>/`
+///
+/// Falls back to the local path if no home dir is resolvable.
+pub fn resolve_root(project_dir: &Path, explicit_root: Option<&Path>) -> PathBuf {
+    if let Some(root) = explicit_root {
+        return root.to_path_buf();
+    }
+    if let Ok(env) = std::env::var("HOANGSA_MEMORY_ROOT") {
+        let p = PathBuf::from(env);
+        if !p.as_os_str().is_empty() {
+            return p;
+        }
+    }
+    let local = project_dir.join(".hoangsa").join("memory");
+    if local.is_dir() && is_populated_root(&local) {
+        return local;
+    }
+
+    if let Some(home) = home_dir() {
+        let projects = home.join(".hoangsa").join("memory").join("projects");
+        let slug = project_slug(project_dir);
+        let global = projects.join(&slug);
+        if local.is_dir() && is_populated_root(&global) {
+            eprintln!(
+                "hoangsa-memory: ignoring stale local .hoangsa/memory/ (no graph.redb); using {} instead. \
+                 Remove ./.hoangsa/memory or run `hoangsa-memory index --root ./.hoangsa/memory .` to repopulate it.",
+                global.display()
+            );
+        }
+        return global;
+    }
+
+    local
 }
 
 /// Per-project slug — last two canonical path components, lowercased,
 /// non-alphanumeric collapsed to `-`.
-///
-/// Mirrors `hoangsa_memory::resolve::project_slug` byte-for-byte. Replicated
-/// here so this crate stays at the bottom of the dep graph.
 pub fn project_slug(path: &Path) -> String {
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let components: Vec<&str> = canonical
@@ -152,28 +209,18 @@ impl Registry {
         Ok(registry)
     }
 
-    /// Atomically write the registry to disk. Uses write-temp-then-rename so
-    /// a crash mid-write can't corrupt the existing file.
+    /// Atomically write the registry to disk via [`crate::io::atomic_write`]
+    /// — a crash mid-write can't corrupt the existing file.
     pub fn save(&self, hoangsa_home: &Path) -> Result<(), RegistryError> {
-        std::fs::create_dir_all(hoangsa_home).map_err(|source| RegistryError::Io {
-            path: hoangsa_home.to_path_buf(),
-            source,
-        })?;
         let path = registry_path(hoangsa_home);
         let json = serde_json::to_vec_pretty(self).map_err(|source| RegistryError::Parse {
             path: path.clone(),
             source,
         })?;
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, &json).map_err(|source| RegistryError::Io {
-            path: tmp.clone(),
-            source,
-        })?;
-        std::fs::rename(&tmp, &path).map_err(|source| RegistryError::Io {
+        crate::io::atomic_write(&path, &json).map_err(|source| RegistryError::Io {
             path: path.clone(),
             source,
-        })?;
-        Ok(())
+        })
     }
 
     /// Idempotently upsert a project by absolute path. Returns the inserted

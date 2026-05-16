@@ -5,3 +5,15 @@
 .hoangsa/
 .claude/
 target/
+
+# Build / bundle outputs — minified files have ~200KB/line which blow up
+# the indexer (tree-sitter emits many symbols/line, chunk bodies fan out
+# through fastembed + tantivy + sqlite to 15GB+ RAM and OOM the daemon).
+dist/
+build/
+*.min.js
+*.min.css
+*.bundle.js
+*.bundle.css
+**/assets/index-*.js
+**/assets/index-*.css

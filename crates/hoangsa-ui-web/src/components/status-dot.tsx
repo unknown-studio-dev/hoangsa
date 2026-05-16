@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 
-export type Tone = "ok" | "warn" | "error" | "idle";
+type Tone = "ok" | "warn" | "error" | "idle";
 
 const TONE_BG: Record<Tone, string> = {
   ok: "bg-emerald-500",

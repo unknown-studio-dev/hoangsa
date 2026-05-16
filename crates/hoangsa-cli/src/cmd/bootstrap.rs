@@ -39,42 +39,7 @@ const STALE_THRESHOLD_SECS: u64 = 30 * 60;
 
 // ── path helpers ────────────────────────────────────────────────────────────
 
-/// Last-two-path-components slug (lowercased, non-alnum → '-'). Kept in
-/// sync with `hook::project_slug` / `hoangsa-memory-mcp::main::project_slug`
-/// so the per-project memory dir we write agrees with the one the MCP
-/// daemon reads.
-pub fn project_slug(path: &Path) -> String {
-    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let components: Vec<&str> = canonical
-        .components()
-        .filter_map(|c| c.as_os_str().to_str())
-        .collect();
-    let n = components.len();
-    let parts = if n >= 2 {
-        &components[n - 2..]
-    } else {
-        &components[..]
-    };
-    let raw = parts.join("-");
-    let mut result = String::with_capacity(raw.len());
-    let mut prev_dash = false;
-    for c in raw.chars().flat_map(|c| c.to_lowercase()) {
-        if c.is_ascii_alphanumeric() {
-            result.push(c);
-            prev_dash = false;
-        } else if !prev_dash {
-            result.push('-');
-            prev_dash = true;
-        }
-    }
-    result.trim_matches('-').to_string()
-}
-
-fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-}
+pub use hoangsa_memory_core::{home_dir, project_slug};
 
 pub fn project_memory_dir(cwd: &Path) -> Option<PathBuf> {
     Some(
@@ -173,13 +138,8 @@ pub fn read_state(cwd: &Path) -> Option<Value> {
 fn write_state_atomic(cwd: &Path, state: &Value) -> io::Result<()> {
     let p = state_path(cwd)
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no memory root (HOME unset?)"))?;
-    if let Some(parent) = p.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let tmp = p.with_file_name("bootstrap.state.tmp");
-    fs::write(&tmp, serde_json::to_string_pretty(state).unwrap_or_default())?;
-    fs::rename(&tmp, &p)?;
-    Ok(())
+    let body = serde_json::to_string_pretty(state).unwrap_or_default();
+    hoangsa_memory_core::io::atomic_write(&p, body.as_bytes())
 }
 
 /// True iff phase is non-terminal AND `updated_at_epoch` is within

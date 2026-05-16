@@ -125,9 +125,7 @@ impl From<&HistoryEntry> for HistoryEntryOnDisk {
     }
 }
 
-const MEMORY_MD: &str = "MEMORY.md";
-const LESSONS_MD: &str = "LESSONS.md";
-const USER_MD: &str = "USER.md";
+use hoangsa_memory_core::{LESSONS_MD, MEMORY_MD, USER_MD};
 const MEMORY_PENDING_MD: &str = "MEMORY.pending.md";
 const LESSONS_PENDING_MD: &str = "LESSONS.pending.md";
 const LESSONS_QUARANTINED_MD: &str = "LESSONS.quarantined.md";

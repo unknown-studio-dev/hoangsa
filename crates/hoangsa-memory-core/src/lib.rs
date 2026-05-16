@@ -13,8 +13,10 @@
 
 pub mod error;
 pub mod event;
+pub mod io;
 pub mod memory;
 pub mod mode;
+pub mod names;
 pub mod projects;
 pub mod provider;
 pub mod query;
@@ -25,9 +27,10 @@ pub use memory::{
     Enforcement, Fact, FactScope, Lesson, LessonTrigger, MemoryKind, MemoryMeta, Preference, Skill,
 };
 pub use mode::Mode;
+pub use names::{LESSONS_MD, MEMORY_MD, USER_MD};
 pub use projects::{
-    Project, Registry, RegistryError, REGISTRY_VERSION, default_hoangsa_home,
-    discover_orphan_slugs, project_slug, registry_path,
+    Project, REGISTRY_VERSION, Registry, RegistryError, default_hoangsa_home,
+    discover_orphan_slugs, home_dir, is_populated_root, project_slug, registry_path, resolve_root,
 };
 pub use provider::{NudgeProposal, Prompt, Synthesis, Synthesizer};
 pub use query::{

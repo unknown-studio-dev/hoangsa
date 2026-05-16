@@ -1555,6 +1555,7 @@ version = "0.2.4"
 dependencies = [
  "ab_glyph",
  "glob",
+ "hoangsa-memory-core",
  "image",
  "imageproc",
  "regex",
@@ -1669,10 +1670,8 @@ dependencies = [
 name = "hoangsa-memory-policy"
 version = "0.2.4"
 dependencies = [
- "globset",
  "hoangsa-memory-core",
  "hoangsa-memory-store",
- "regex",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1698,6 +1697,7 @@ dependencies = [
  "hoangsa-memory-graph",
  "hoangsa-memory-parse",
  "hoangsa-memory-store",
+ "lru",
  "parking_lot",
  "serde",
  "serde_json",
@@ -1718,7 +1718,6 @@ dependencies = [
  "fastembed",
  "hoangsa-memory-core",
  "parking_lot",
- "paste",
  "redb",
  "rusqlite",
  "serde",
@@ -1740,7 +1739,6 @@ dependencies = [
  "dirs 5.0.1",
  "is-terminal",
  "libc",
- "once_cell",
  "regex",
  "rhai",
  "serde",

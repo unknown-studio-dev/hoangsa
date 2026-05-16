@@ -121,20 +121,20 @@ export type ConfigEffectiveRes = {
   project_path: string;
 };
 
-export type PatchBody = {
+type PatchBody = {
   layer: "global" | "project";
   patch: unknown;
   expected_mtime_ms?: number;
 };
 
-export type DiffRes = {
+type DiffRes = {
   before: unknown;
   after: unknown;
   mtime_ms: number | null;
   path: string;
 };
 
-export type ApplyRes = {
+type ApplyRes = {
   after: unknown;
   mtime_ms: number | null;
   path: string;
