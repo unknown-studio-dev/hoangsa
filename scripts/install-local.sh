@@ -469,10 +469,16 @@ prefetch_embed_model() {
 }
 
 section "vector store"
+# --no-embed writes a `no-embed` marker under the install dir; the runtime
+# bins read it and force the vector store off, so the model is never fetched
+# lazily either. Skipping the prefetch alone would only defer the download.
+_embed_marker="$HOANGSA_INSTALL_DIR/no-embed"
 if [ "$SKIP_EMBED" -eq 0 ]; then
+    rm -f "$_embed_marker"
     prefetch_embed_model
 else
-    info "--no-embed — skipping fastembed model pre-download"
+    : > "$_embed_marker"
+    info "--no-embed — embeddings disabled (BM25 + graph only); model download skipped"
 fi
 
 # --- Hand off to the CLI ----------------------------------------------------

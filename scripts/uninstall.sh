@@ -220,6 +220,8 @@ remove_fastembed_cache() {
     rm -rf "$_cache"
     # Clean up the now-likely-empty $HOANGSA_INSTALL_DIR/cache parent.
     rmdir_if_empty "$HOANGSA_INSTALL_DIR/cache"
+    # Drop the `--no-embed` opt-out marker so a later reinstall starts clean.
+    rm_if_exists "$HOANGSA_INSTALL_DIR/no-embed"
 }
 
 # --- 2. templates via manifest ---------------------------------------------

@@ -125,7 +125,7 @@ pub async fn recall(store: StoreRoot, q: Query, mode: Mode) -> Result<Retrieval>
 /// model download hasn't happened yet) — callers fall back to BM25.
 async fn vector_col_from_config(root: &std::path::Path) -> Option<Arc<dyn VectorCol>> {
     let cfg = VectorStoreConfig::load_or_default(root).await;
-    if !cfg.enabled {
+    if !cfg.is_effectively_enabled() {
         return None;
     }
     let path = cfg

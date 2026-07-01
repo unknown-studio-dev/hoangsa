@@ -101,8 +101,10 @@ USAGE:
 FLAGS (forwarded to `hoangsa-cli install`):
     --global            Install globally for the current user (default)
     --local             Install for the current project (cwd)
-    --no-embed          Skip pre-downloading the fastembed model weights.
-                        Weights will fetch lazily on first index/query.
+    --no-embed          Disable semantic embeddings entirely (BM25 + graph
+                        only). Skips the model pre-download AND records a
+                        marker so the ~118 MB weights are never fetched
+                        lazily. Reinstall without --no-embed to re-enable.
     --dry-run           Print actions without writing files
     --help, -h          Show this help and exit
 
@@ -761,10 +763,18 @@ main() {
 
     # Pre-download the fastembed model weights unless --no-embed was passed.
     # Runs before the CLI hand-off so the CLI inherits a warm cache.
+    #
+    # --no-embed also writes a `no-embed` marker under the install dir. The
+    # runtime bins read it (see `embeddings_disabled_globally`) and force the
+    # vector store off, so the ~118 MB model is never fetched lazily either —
+    # skipping the prefetch alone would only defer the download to first use.
+    _embed_marker="$HOANGSA_INSTALL_DIR/no-embed"
     if [ "$SKIP_EMBED" -eq 0 ]; then
+        rm -f "$_embed_marker"
         prefetch_embed_model
     else
-        info "--no-embed — skipping fastembed model pre-download"
+        : > "$_embed_marker"
+        info "--no-embed — embeddings disabled (BM25 + graph only); model download skipped"
     fi
 
     # Clear the cleanup trap now that we're done with $TMP. We drop the trap
