@@ -12,11 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New Rust subcommand `hoangsa-cli install [--global|--local] [--install-chroma] [--dry-run]` owning all install logic.
 - CI smoke tests on alpine, ubuntu, and macOS for the install pipeline.
 - `scripts/uninstall.sh [--global|--local] [--dry-run] [--purge]` — standalone POSIX-sh uninstaller that removes binaries, manifest-tracked templates, managed hook entries, the `hoangsa-memory` MCP registration, and the managed PATH block.
+- **Global rules layer.** Enforcement now merges a global `~/.hoangsa/rules.json` under the project `.hoangsa/rules.json`; a project rule overrides a global rule with the same `id` (set `enabled: false` to disable a global rule per project). Each layer degrades independently, so a missing or malformed file at one layer never disables the other.
 
 ### Removed
 - `--uninstall` flag on `hoangsa-cli install` (was a stub returning exit 4). Use `scripts/uninstall.sh` instead.
 
 ### Changed (BREAKING)
+- **Rules are now purely file-driven — no built-in defaults are applied implicitly.** A project with no `.hoangsa/rules.json` (or an empty one) enforces nothing. Stateful rules (`require-memory-impact`, `require-detect-changes`, `no-git-add-ignored`) now fire only when explicitly listed **and** enabled in the merged config; the previous behaviour of implicitly enabling a stateful rule whose id was absent from `rules.json` is gone. Run `hoangsa-cli rule init` (or add the rules) to opt back in.
 - **Internal `thoth-*` crates renamed to `hoangsa-memory-*`.** The public
   surface (binaries `hoangsa-memory`, `hoangsa-memory-mcp`; install dir
   `~/.hoangsa/memory/`; MCP tool names `mcp__hoangsa-memory__memory_*`)
