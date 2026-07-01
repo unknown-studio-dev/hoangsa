@@ -701,7 +701,7 @@ fn count_incomplete_tasks(plan: &serde_json::Value) -> usize {
 /// Critical (block) rules fail-CLOSED. Quality (warn) rules fail-OPEN.
 pub fn cmd_enforce(cwd: &str) {
     use crate::cmd::rule::{
-        evaluate_rule_conditions, read_rules_config_pub, Enforcement, RuleAction,
+        evaluate_rule_conditions, read_effective_rules_config, Enforcement, RuleAction,
     };
     use std::io::Read as _;
 
@@ -715,28 +715,13 @@ pub fn cmd_enforce(cwd: &str) {
         .unwrap_or("");
     let tool_input = parsed.get("tool_input").cloned().unwrap_or(json!({}));
 
-    // ── Layer 1: Pattern-based rules from rules.json ──
-    let config = match read_rules_config_pub(cwd) {
-        Ok(Some(c)) => c,
-        Ok(None) => {
-            // No rules.json — still run stateful checks
-            if let Some(result) = stateful_check(cwd, tool_name, &tool_input) {
-                print_decision(&result);
-                return;
-            }
-            out(&json!({"decision": "approve"}));
-            return;
-        }
-        Err(_) => {
-            // Parse error — fail-OPEN for quality, but stateful checks still run
-            if let Some(result) = stateful_check(cwd, tool_name, &tool_input) {
-                print_decision(&result);
-                return;
-            }
-            out(&json!({"decision": "approve"}));
-            return;
-        }
-    };
+    // ── Layer 1: Pattern-based rules (global ~/.hoangsa/rules.json overlaid by
+    // project .hoangsa/rules.json; project overrides global by id) ──
+    // A missing OR malformed file at either layer contributes no rules — the
+    // loop below is then a no-op and control still flows to the Layer 2
+    // stateful checks. Degrading each layer independently means a corrupt
+    // global file can never silently disable a valid project BLOCK rule.
+    let config = read_effective_rules_config(cwd);
 
     let mut warnings: Vec<String> = Vec::new();
 
@@ -814,16 +799,6 @@ struct EnforceResult {
     warning: Option<String>,
 }
 
-fn print_decision(result: &EnforceResult) {
-    if result.decision == "block" {
-        out(&json!({"decision": "block", "reason": result.reason}));
-    } else if let Some(w) = &result.warning {
-        out(&json!({"decision": "approve", "reason": w}));
-    } else {
-        out(&json!({"decision": "approve"}));
-    }
-}
-
 /// Stateful enforcement checks based on event log.
 /// Returns None if no stateful rule applies to this tool call.
 fn stateful_check(cwd: &str, tool_name: &str, tool_input: &serde_json::Value) -> Option<EnforceResult> {
@@ -852,25 +827,24 @@ fn stateful_check(cwd: &str, tool_name: &str, tool_input: &serde_json::Value) ->
     }
 }
 
-/// Look up a stateful rule by its `stateful` field value.
+/// Look up a stateful rule by its `stateful` field value in the effective
+/// (global-overlaid-by-project) rule set.
 ///
-/// Returns `false` when `.hoangsa/rules.json` is absent or unreadable — a
-/// project without rules.json is treated as "stateful enforcement opted out"
-/// so a fresh / uninitialised project never gets warns or blocks from
-/// hoangsa hooks. When rules.json is present but doesn't list this stateful
-/// id, default to enabled (back-compat with installs predating the field).
+/// Returns `false` unless the stateful rule is explicitly present AND enabled.
+/// A project with no rules.json — or a rules.json that simply doesn't list this
+/// stateful id — is treated as opted out: hoangsa never blocks or warns from a
+/// stateful rule the user hasn't explicitly enabled. This is the deliberate
+/// "nothing configured → nothing applied implicitly" contract; the old
+/// back-compat default of enabling unlisted stateful rules is gone.
 fn stateful_rule_enabled(cwd: &str, stateful_id: &str) -> bool {
-    use crate::cmd::rule::read_rules_config_pub;
-    let config = match read_rules_config_pub(cwd) {
-        Ok(Some(c)) => c,
-        _ => return false,
-    };
+    use crate::cmd::rule::read_effective_rules_config;
+    let config = read_effective_rules_config(cwd);
     for rule in &config.rules {
         if rule.stateful.as_deref() == Some(stateful_id) {
             return rule.enabled;
         }
     }
-    true
+    false
 }
 
 /// Rule #9: Require memory_impact for first-touch files before Edit.

@@ -29,6 +29,7 @@ impl TestRunner {
         let output = Command::new(&self.cli)
             .args(args)
             .current_dir(cwd)
+            .env("HOANGSA_HOME", isolated_global_home())
             .output()
             .expect("failed to execute hoangsa-cli");
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -47,6 +48,7 @@ impl TestRunner {
         let mut child = Command::new(&self.cli)
             .args(args)
             .current_dir(cwd)
+            .env("HOANGSA_HOME", isolated_global_home())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -111,6 +113,36 @@ fn tmp_project() -> PathBuf {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join(".hoangsa/sessions")).unwrap();
     dir
+}
+
+/// An empty, hermetic hoangsa-home for subprocess runs. Rules resolution reads
+/// `HOANGSA_HOME` for the global layer, so pointing it at a directory that has
+/// no `rules.json` keeps the developer's real `~/.hoangsa/rules.json` from
+/// leaking into tests. This directory is never populated with rules.
+fn isolated_global_home() -> PathBuf {
+    std::env::temp_dir().join("hoangsa-verify-no-global-home")
+}
+
+/// Run `hook rule-gate` with an explicit global hoangsa-home so a test can
+/// populate `<home>/rules.json` and exercise the global → project scope.
+fn run_gate_with_home(cli: &Path, cwd: &Path, home: &Path, stdin_data: &str) -> Value {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new(cli)
+        .args(["hook", "rule-gate"])
+        .current_dir(cwd)
+        .env("HOANGSA_HOME", home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn hoangsa-cli");
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(stdin_data.as_bytes()).ok();
+    }
+    let output = child.wait_with_output().expect("failed to wait for hoangsa-cli");
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    parse_last_json(&stdout)
 }
 
 fn tmp_git_project() -> PathBuf {
@@ -1574,6 +1606,59 @@ fn test_rule_engine(t: &mut TestRunner) {
                     .contains("R-WARN"),
             &format!("got {out:?}"),
         );
+        cleanup(&dir);
+    }
+
+    // ── T-RULE-10: global → project scope; project overrides global by id ────
+    {
+        let dir = tmp_project();
+        let d = dir.to_str().unwrap();
+
+        // Global hoangsa-home carrying a block rule on Edit + "forbidden".
+        let ghome = dir.join("global-home");
+        fs::create_dir_all(&ghome).unwrap();
+        let global_rules = json!({
+            "version": "1.0",
+            "rules": [{
+                "id": "G-BLOCK", "name": "global block", "enabled": true,
+                "matcher": "Edit",
+                "conditions": [{ "field": "path", "op": "contains", "value": "forbidden" }],
+                "action": "block", "message": "global rule fired"
+            }]
+        })
+        .to_string();
+        fs::write(ghome.join("rules.json"), global_rules).unwrap();
+
+        let hook_payload = json!({
+            "tool_name": "Edit",
+            "tool_input": { "path": "/project/forbidden/secret.rs" }
+        })
+        .to_string();
+
+        // (a) Project has no rules of its own → the global rule applies → block.
+        let out = run_gate_with_home(&t.cli, &dir, &ghome, &hook_payload);
+        t.check(
+            "global rule enforced when project is unruled",
+            out["decision"] == "block",
+            &format!("got {out:?}"),
+        );
+
+        // (b) Project overrides the same id with enabled=false → approve.
+        let override_rule = json!({
+            "id": "G-BLOCK", "name": "disabled locally", "enabled": false,
+            "matcher": "Edit",
+            "conditions": [{ "field": "path", "op": "contains", "value": "forbidden" }],
+            "action": "block", "message": "disabled locally"
+        })
+        .to_string();
+        t.run_json(&["rule", "add", d, &override_rule], &dir);
+        let out2 = run_gate_with_home(&t.cli, &dir, &ghome, &hook_payload);
+        t.check(
+            "project override (enabled=false) disables the global rule",
+            out2["decision"] == "approve",
+            &format!("got {out2:?}"),
+        );
+
         cleanup(&dir);
     }
 }

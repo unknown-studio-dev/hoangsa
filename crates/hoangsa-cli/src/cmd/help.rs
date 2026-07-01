@@ -309,6 +309,12 @@ Usage:
   hoangsa-cli rule disable [projectDir] <id>
   hoangsa-cli rule sync    [projectDir]            Write Prompt rules → CLAUDE.md
 
+Scope: enforcement reads the global layer (~/.hoangsa/rules.json) overlaid
+by the project layer (.hoangsa/rules.json); a project rule overrides a global
+rule with the same id. A missing file at either layer contributes no rules —
+an uninitialised project simply has nothing enforced (no implicit defaults).
+These `rule` subcommands manage the PROJECT layer.
+
 Note: `rule sync` refreshes CLAUDE.md from the current rules.json but
 does NOT reconcile default rules. To pick up newly-added default rules
 in an existing project, delete rules.json and re-run `rule init`."
