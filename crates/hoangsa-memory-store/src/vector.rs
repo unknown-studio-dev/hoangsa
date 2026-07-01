@@ -322,6 +322,35 @@ pub fn fastembed_cache_dir() -> PathBuf {
     PathBuf::from(".fastembed_cache")
 }
 
+/// Resolve the hoangsa install root — the directory that holds `bin/` and
+/// `cache/`. Mirrors [`fastembed_cache_dir`]'s resolution, minus the
+/// `FASTEMBED_CACHE_DIR` override (which names a cache dir, not the root)
+/// and the trailing `cache/fastembed`.
+fn install_root() -> Option<PathBuf> {
+    if let Some(root) = std::env::var_os("HOANGSA_INSTALL_DIR") {
+        return Some(PathBuf::from(root));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let resolved = std::fs::canonicalize(&exe).unwrap_or(exe);
+        if let Some(root) = derive_install_root_from_exe(&resolved) {
+            return Some(root);
+        }
+    }
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(|home| PathBuf::from(home).join(".hoangsa"))
+}
+
+/// True when the installer recorded a global "no embeddings" opt-out by
+/// writing a `no-embed` marker file under the install root (i.e. the user
+/// passed `--no-embed`). When set, the vector store stays off regardless of
+/// any project's `[vector_store] enabled`, so `--no-embed` means "never
+/// download the ~118 MB model", not merely "skip the install-time prefetch".
+/// Reinstalling without `--no-embed` removes the marker and re-enables it.
+pub fn embeddings_disabled_globally() -> bool {
+    install_root().is_some_and(|r| r.join("no-embed").exists())
+}
+
 /// Build the `InitOptions` we use everywhere the embedder is
 /// constructed. Centralising this keeps the `prefetch` command and the
 /// runtime `open` path in lockstep — otherwise they'd download into

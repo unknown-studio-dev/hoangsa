@@ -338,6 +338,18 @@ impl VectorStoreConfig {
             }
         }
     }
+
+    /// Whether the embedder should actually run. This is `enabled` from
+    /// `config.toml` AND-ed with the absence of the installer's global
+    /// `--no-embed` opt-out (a `no-embed` marker under the install dir).
+    ///
+    /// Callers gate the vector store on this rather than the raw `enabled`
+    /// field so that `--no-embed` at install time durably prevents the
+    /// ~118 MB model download — otherwise a per-project default of
+    /// `enabled = true` would pull the weights lazily on first use.
+    pub fn is_effectively_enabled(&self) -> bool {
+        self.enabled && !hoangsa_memory_store::embeddings_disabled_globally()
+    }
 }
 
 /// TOML file schema — the outer document. We only care about `[index]`,

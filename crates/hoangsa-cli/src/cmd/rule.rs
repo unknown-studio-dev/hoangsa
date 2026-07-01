@@ -97,18 +97,107 @@ fn rules_path(project_dir: &str) -> std::path::PathBuf {
     Path::new(project_dir).join(".hoangsa/rules.json")
 }
 
-fn read_rules_config(project_dir: &str) -> Result<Option<RulesConfig>, Box<dyn std::error::Error>> {
-    let path = rules_path(project_dir);
+/// Path to the global rules file (`~/.hoangsa/rules.json`).
+///
+/// Honors `HOANGSA_HOME` (the hoangsa home dir) when set so tests and isolated
+/// setups can point the global layer elsewhere; otherwise resolves `~/.hoangsa`
+/// the same way the rest of the toolchain does. Returns `None` only when no
+/// home directory can be resolved at all.
+fn global_rules_path() -> Option<std::path::PathBuf> {
+    // An empty HOANGSA_HOME is treated as unset — otherwise `Path::new("")`
+    // would yield the relative path "rules.json" resolved against the process
+    // cwd, letting a stray file in the working directory masquerade as the
+    // global rules layer.
+    match std::env::var_os("HOANGSA_HOME") {
+        Some(home) if !home.is_empty() => Some(Path::new(&home).join("rules.json")),
+        _ => hoangsa_memory_core::default_hoangsa_home()
+            .ok()
+            .map(|h| h.join("rules.json")),
+    }
+}
+
+fn read_rules_config_at(path: &Path) -> Result<Option<RulesConfig>, Box<dyn std::error::Error>> {
     if !path.exists() {
         return Ok(None);
     }
-    let content = fs::read_to_string(&path)?;
+    let content = fs::read_to_string(path)?;
     let config: RulesConfig = serde_json::from_str(&content)?;
     Ok(Some(config))
 }
 
+fn read_rules_config(project_dir: &str) -> Result<Option<RulesConfig>, Box<dyn std::error::Error>> {
+    read_rules_config_at(&rules_path(project_dir))
+}
+
+/// Project-layer-only read of `<project_dir>/.hoangsa/rules.json`.
+///
+/// Kept as a library export for `hoangsa-ui-server`, which manages the project
+/// rules file directly (not the merged view). Unused by the CLI binary itself —
+/// enforcement paths go through [`read_effective_rules_config`] instead.
+#[allow(dead_code)]
 pub fn read_rules_config_pub(project_dir: &str) -> Result<Option<RulesConfig>, Box<dyn std::error::Error>> {
     read_rules_config(project_dir)
+}
+
+/// Merge the global rule layer under the project layer. Project rules override
+/// global rules with the same `id`; project-only ids are appended after the
+/// (possibly overridden) global rules, preserving global order. A missing layer
+/// contributes zero rules — no implicit defaults are ever injected.
+fn merge_rule_layers(global: Option<RulesConfig>, project: Option<RulesConfig>) -> RulesConfig {
+    let version = project
+        .as_ref()
+        .map(|c| c.version.clone())
+        .or_else(|| global.as_ref().map(|c| c.version.clone()))
+        .unwrap_or_else(|| "1.0".to_string());
+
+    let mut rules: Vec<Rule> = global.map(|c| c.rules).unwrap_or_default();
+    if let Some(project) = project {
+        for pr in project.rules {
+            match rules.iter().position(|r| r.id == pr.id) {
+                Some(pos) => {
+                    rules[pos] = pr;
+                    // A hand-authored layer may repeat an id; the project
+                    // override must win uniquely, so drop any later duplicates
+                    // of the same id rather than leaving a stale copy that would
+                    // keep enforcing after the override.
+                    let id = rules[pos].id.clone();
+                    let mut i = rules.len();
+                    while i > pos + 1 {
+                        i -= 1;
+                        if rules[i].id == id {
+                            rules.remove(i);
+                        }
+                    }
+                }
+                None => rules.push(pr),
+            }
+        }
+    }
+    RulesConfig { version, rules }
+}
+
+/// Read a single rules layer, tolerating both absence and malformed content:
+/// a missing OR unparseable file yields `None` (that layer contributes no
+/// rules) rather than an error. This keeps one corrupt file from taking down
+/// enforcement for the OTHER layer.
+fn read_layer_lenient(path: &Path) -> Option<RulesConfig> {
+    read_rules_config_at(path).ok().flatten()
+}
+
+/// Resolve the effective rule set for `project_dir`: the global layer
+/// (`~/.hoangsa/rules.json`) overlaid by the project layer
+/// (`<project_dir>/.hoangsa/rules.json`), with project rules overriding global
+/// rules of the same `id`.
+///
+/// Both layers are optional and each degrades independently. A missing OR
+/// malformed file at either layer simply contributes no rules — so a project
+/// that never ran `rule init` is unruled (nothing enforced implicitly), and a
+/// corrupt global file can never silently disable a valid project rule. When
+/// neither layer yields rules the result is an empty set.
+pub fn read_effective_rules_config(project_dir: &str) -> RulesConfig {
+    let global = global_rules_path().and_then(|path| read_layer_lenient(&path));
+    let project = read_layer_lenient(&rules_path(project_dir));
+    merge_rule_layers(global, project)
 }
 
 pub fn cmd_rule_gate() -> Result<(), Box<dyn std::error::Error>> {
@@ -134,19 +223,11 @@ pub fn cmd_rule_gate() -> Result<(), Box<dyn std::error::Error>> {
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    // Graceful degradation: rules.json missing → approve
-    let config = match read_rules_config(&cwd) {
-        Ok(Some(c)) => c,
-        Ok(None) => {
-            out(&json!({"decision": "approve"}));
-            return Ok(());
-        }
-        Err(_) => {
-            // Parse/IO error → approve (graceful degradation, REQ-09)
-            out(&json!({"decision": "approve"}));
-            return Ok(());
-        }
-    };
+    // Effective rules = global (~/.hoangsa/rules.json) overlaid by project;
+    // project overrides global by id. A missing OR malformed file at either
+    // layer contributes no rules (graceful degradation, REQ-09); with an empty
+    // rule set nothing matches and the gate approves.
+    let config = read_effective_rules_config(&cwd);
 
     let mut warnings: Vec<(String, String, String)> = Vec::new(); // (rule_id, rule_name, message)
 
@@ -883,5 +964,90 @@ mod tests {
             .split('|')
             .any(|m| m.trim() == tool_name);
         assert!(!matcher_matches, "Expected tool_name 'Bash' NOT to match matcher 'Edit|Write'");
+    }
+
+    // ── layered scope (global → project) tests ─────────────────────────────────
+
+    fn rule_with_id(id: &str) -> Rule {
+        let mut r = make_rule("Edit", vec![]);
+        r.id = id.to_string();
+        r
+    }
+
+    fn config(rules: Vec<Rule>) -> RulesConfig {
+        RulesConfig { version: "1.0".to_string(), rules }
+    }
+
+    #[test]
+    fn merge_both_absent_is_empty_no_implicit_defaults() {
+        // The core "chưa init → coi như không có rules" contract: nothing on
+        // either layer means an empty rule set, never the built-in defaults.
+        let merged = merge_rule_layers(None, None);
+        assert!(merged.rules.is_empty());
+    }
+
+    #[test]
+    fn merge_single_layer_passes_through() {
+        let g = merge_rule_layers(Some(config(vec![rule_with_id("g")])), None);
+        assert_eq!(g.rules.len(), 1);
+        assert_eq!(g.rules[0].id, "g");
+
+        let p = merge_rule_layers(None, Some(config(vec![rule_with_id("p")])));
+        assert_eq!(p.rules.len(), 1);
+        assert_eq!(p.rules[0].id, "p");
+    }
+
+    #[test]
+    fn merge_project_overrides_global_by_id_and_appends_new() {
+        let mut g_shared = rule_with_id("shared");
+        g_shared.message = "GLOBAL".to_string();
+        let global = config(vec![g_shared, rule_with_id("global-only")]);
+
+        let mut p_shared = rule_with_id("shared");
+        p_shared.message = "PROJECT".to_string();
+        let project = config(vec![p_shared, rule_with_id("project-only")]);
+
+        let merged = merge_rule_layers(Some(global), Some(project));
+        // shared id → project wins
+        let shared = merged.rules.iter().find(|r| r.id == "shared").unwrap();
+        assert_eq!(shared.message, "PROJECT");
+        // global-only kept, project-only appended, no duplicate for shared
+        assert_eq!(merged.rules.len(), 3);
+        assert!(merged.rules.iter().any(|r| r.id == "global-only"));
+        assert!(merged.rules.iter().any(|r| r.id == "project-only"));
+    }
+
+    #[test]
+    fn merge_project_can_disable_a_global_rule() {
+        let mut g = rule_with_id("x");
+        g.enabled = true;
+        let mut p = rule_with_id("x");
+        p.enabled = false;
+        let merged = merge_rule_layers(Some(config(vec![g])), Some(config(vec![p])));
+        assert_eq!(merged.rules.len(), 1);
+        assert!(!merged.rules[0].enabled, "project override switches the global rule off");
+    }
+
+    #[test]
+    fn merge_override_removes_duplicate_global_ids() {
+        // A malformed global layer repeats an id; a project override must win
+        // uniquely and not leave a stale enabled copy still enforcing.
+        let mut g1 = rule_with_id("dup");
+        g1.enabled = true;
+        let mut g2 = rule_with_id("dup");
+        g2.enabled = true;
+        let mut p = rule_with_id("dup");
+        p.enabled = false;
+        let merged = merge_rule_layers(
+            Some(config(vec![g1, rule_with_id("keep"), g2])),
+            Some(config(vec![p])),
+        );
+        let dups: Vec<&Rule> = merged.rules.iter().filter(|r| r.id == "dup").collect();
+        assert_eq!(dups.len(), 1, "only one rule with the overridden id survives");
+        assert!(!dups[0].enabled, "the survivor is the project override");
+        assert!(
+            merged.rules.iter().any(|r| r.id == "keep"),
+            "an unrelated global rule is untouched"
+        );
     }
 }

@@ -265,7 +265,9 @@ impl Server {
     }
 
     async fn is_vector_store_enabled(root: &Path) -> bool {
-        VectorStoreConfig::load_or_default(root).await.enabled
+        VectorStoreConfig::load_or_default(root)
+            .await
+            .is_effectively_enabled()
     }
 
     pub(crate) async fn get_vector_store(&self) -> Option<EmbeddedVectorStore> {

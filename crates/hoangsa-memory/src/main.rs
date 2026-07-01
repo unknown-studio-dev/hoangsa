@@ -447,7 +447,7 @@ pub(crate) async fn open_vector_store(
     store: &StoreRoot,
 ) -> Option<Arc<dyn VectorCol>> {
     let cfg = VectorStoreConfig::load_or_default(&store.path).await;
-    if !cfg.enabled {
+    if !cfg.is_effectively_enabled() {
         return None;
     }
     let path = cfg
