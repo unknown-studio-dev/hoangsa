@@ -90,7 +90,12 @@ Config & preferences:
 Planning:
   plan task-ids|resolve <plan_path>       Extract/resolve tasks from plan.json
   validate plan|spec|tests <path>         JSON schema validation
+  validate plan <path> --tests <spec>     + cross-check embeddings vs TEST-SPEC
   dag check|waves <plan_path>             Task DAG sanity + wave layout
+
+Workers:
+  rules compose <dir> [--task-type][--role]  Middleware-chain worker rules → JSON
+  envelope <sessionDir> <taskId> [--kind cook|fix]  Full worker prompt → stdout
 
 Rules & enforcement:
   rule init|list|add|remove|enable|disable|sync [projectDir] [args...]
@@ -370,9 +375,15 @@ store so subsequent launches are non-interactive."
             "validate — JSON-schema validation.
 
 Usage:
-  hoangsa-cli validate plan  <path>
+  hoangsa-cli validate plan  <path> [--tests <TEST-SPEC path>]
   hoangsa-cli validate spec  <path>
   hoangsa-cli validate tests <path>
+
+With --tests, `validate plan` also cross-checks plan.json against the
+TEST-SPEC: every Edge Cases row must be embedded in ≥1 implementation
+task AND ≥1 test task, every spec test must appear in some task's
+test_cases, ## E2E Tests requires an e2e task, and surface: ui requires
+a task flagged \"ui\": true.
 
 Emits the schema-path + message for each violation."
         }

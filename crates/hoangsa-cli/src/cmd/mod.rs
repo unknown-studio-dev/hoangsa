@@ -7,6 +7,7 @@ pub mod config;
 pub mod context;
 pub mod ctx;
 pub mod dag;
+pub mod envelope;
 pub mod guidance;
 pub mod help;
 pub mod hook;
