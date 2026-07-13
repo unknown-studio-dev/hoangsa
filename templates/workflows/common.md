@@ -36,6 +36,18 @@ Absence is a no-op — workflows fall back to their existing boot sequence.
 
 ---
 
+## Contract format
+
+Core workflows (menu, prepare, cook, taste, fix) are **contracts, not
+scripts**: Mission → Deliverables → Hard gates → Judgment notes → Escalation.
+Anything under "Suggested flow" is guidance — choose the shortest path that
+produces the deliverables. **Gates are the law**: a deliverable is done only
+when its gate command passes; never claim completion past a failing gate.
+User-interaction beats (AskUserQuestion blocks) and artifact templates are
+part of the contract — don't skip or reshape them.
+
+---
+
 ## Universal rules
 
 These apply to **every** workflow. Do not restate them in per-workflow
@@ -76,7 +88,53 @@ workflow is not done — go back and complete it before reporting.
 |--------|---------|
 | `git-context.md` | Branch detection, dirty-state handling, stash recovery, post-commit PR flow. |
 | `task-link.md` | External task link detection (Linear/Jira/ClickUp/…), attachment download, sync-back chain. |
-| `worker-rules.md` | Worker-rules composition (middleware chain, addon priorities, gates). |
+| `worker-rules/base.md` | Base worker rules; composed with addons by `hoangsa-cli rules compose` (used inside `hoangsa-cli envelope`). |
 
 Reference them with `Read $HOANGSA_ROOT/workflows/<module>.md` at the step
 that needs them — not at the top of the file.
+
+---
+
+## Worker skill registry
+
+`hoangsa-cli envelope` inserts this block into every worker prompt (edit here, not in Rust):
+
+```
+Available skills — read the full SKILL.md only if relevant to your task:
+- git-flow: Git branching, task switching, PR creation → .claude/skills/hoangsa/git-flow/SKILL.md
+- visual-debug: Screenshot/video analysis for visual bugs → .claude/skills/hoangsa/visual-debug/SKILL.md
+- fe-testing: FE verification loop — criteria, test layers, run-and-observe, mutation check → .claude/skills/hoangsa/fe-testing/SKILL.md
+
+To use a skill: read_file("<path>") to get full instructions, then follow them.
+Do NOT read skills unless your task specifically requires them.
+```
+
+---
+
+## Media detection (menu Step 2f / fix Step 1b)
+
+Scan two sources: (1) file paths or pasted screenshots/videos in the user's
+input, (2) task-link attachments in `$SESSION_DIR/attachments/` (`ls` it if it
+exists). Images: `.png .jpg .jpeg .webp .gif` — read natively, note paths as
+visual context. Videos: `.mp4 .mov .webm .avi .mkv` — invoke the
+`visual-debug` skill:
+
+```bash
+hoangsa-cli media check-ffmpeg
+# Always quote the path; reject paths with shell metacharacters
+hoangsa-cli media analyze "$VIDEO_PATH" --output-dir "/tmp/hoangsa-media-$(date +%s)"
+```
+
+Read the output `montage.png` (annotated frame grid) and `diff-montage.png`
+(red overlay of frame changes); fold findings into the workflow's context.
+No media → skip.
+
+---
+
+## Lesson injection (workflows that spawn workers)
+
+`hoangsa-cli envelope` already injects LESSONS.md entries keyword-matched to
+the task. For workers spawned WITHOUT envelope (analyzers, research agents),
+optionally recall relevant lessons yourself:
+`memory_recall({query: "<task summary>", scope: "curated", top_k: 5, log_event: false})`
+and include matching lessons verbatim; no matches → omit.

@@ -1,33 +1,51 @@
-# HOANGSA Menu Workflow
+# HOANGSA Menu — Contract
 
-> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — universal rules + CLI reference + self-verification template.
+> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — universal rules, contract format, CLI reference, self-verification template.
 
-You are the design lead. Mission: take user from vague idea → DESIGN-SPEC + TEST-SPEC, ready for planning.
+## Mission
 
-**Principles:** Don't skip discussion. Ask one question at a time, not a dump list. User always has final say. ≥3 options for every important decision.
+Take the user from an idea to validated, user-approved `DESIGN-SPEC.md` + `TEST-SPEC.md`, ready for `/hoangsa:prepare`. You are the design lead: surface real decisions with real trade-offs (≥3 options where the choice matters, one question at a time), and let the user have the final say — but don't manufacture ceremony for tasks that carry no decisions.
 
-> **MUST complete ALL steps in order. DO NOT skip any step. DO NOT stop before Step 8.**
->
-> 1. Init session → 2. Gather input → 3. Create context → 4. Research → 5. Design spec → 6. Test spec → 7. Validate → 8. Complete (save + commit)
+## Deliverables
+
+`$SESSION_DIR/`: `CONTEXT.md`, `RESEARCH.md`, `DESIGN-SPEC.md`, `TEST-SPEC.md` — saved, committed (`menu(<scope>): complete spec for <component>`), state → `design`.
+
+## Hard gates
+
+| # | Gate | Check |
+|---|------|-------|
+| 1 | Spec valid | `validate spec "$SESSION_DIR/DESIGN-SPEC.md"` |
+| 2 | Tests valid | `validate tests "$SESSION_DIR/TEST-SPEC.md"` (enforces Edge Cases non-empty; `surface: ui\|api\|cli` ⇒ `## E2E Tests`; `ui` ⇒ `## Visual Verification`) |
+| 3 | Cross-check | TEST-SPEC `component` == DESIGN-SPEC `component`; every `[REQ-xx]` in TEST-SPEC exists in DESIGN-SPEC |
+| 4 | User approval | user approved both documents (review loop below — revisable indefinitely) |
+
+## Express lane — triage BEFORE any ceremony
+
+When the request is plainly trivial — single known file, no new user-facing surface, no design decision worth discussing (config tweak, copy change, obvious small bugfix, dependency bump) — offer:
+
+Use AskUserQuestion:
+  question: "Task này nhỏ — đi express lane?"
+  header: "Express"
+  options:
+    - label: "Express (Recommended)", description: "Bỏ vòng hỏi đáp: spec tối giản + plan 1-2 task, gates giữ nguyên — ra cook nhanh nhất"
+    - label: "Full menu", description: "Đi đủ discussion → design spec → test spec — cho task cần bàn"
+  multiSelect: false
+
+**Express path** (all gates still apply — express cuts questions, never quality):
+1. Create session (§Session creation below) + git context.
+2. Write a minimal DESIGN-SPEC (frontmatter + Overview with 1–3 REQs + Acceptance Criteria) and TEST-SPEC (frontmatter with correct `category`/`surface`; Unit Tests and/or E2E per surface; `## Edge Cases` with ≥1 real row or explicit waiver; `## Visual Verification` when `surface: ui`) — Gates 1–3 must pass.
+3. Write `plan.json` directly (schema: `prepare.md §plan.json schema` — `type`, `ui`, embedded `test_cases`/`edge_cases` included) — must pass `validate plan --tests "$SESSION_DIR/TEST-SPEC.md"` + `dag check`.
+4. ONE combined confirmation (spec + plan on one screen) → on approval chain straight to `/hoangsa:cook`, skipping `/hoangsa:prepare`.
+
+If express work reveals hidden complexity (multi-file, real design choices) → stop, tell the user, switch to Full menu keeping what's already written. When in doubt, Full menu.
 
 ---
 
----
+## Session creation (invoked from Step 3c — or express-lane step 1)
 
-## Step 1: Init session
-
-**Do NOT create the session yet.** Session creation happens automatically in Step 3c after the task type and description are collected. Continue to Step 2.
-
----
-
-## Step 1b: Create session (called from Step 3c)
-
-After Step 3a (task type) and Step 3c (description) are done, auto-extract a slug from the user's description and create the session. The user never types the session name — you derive it.
-
-**How to derive the slug:** Take the user's task description, extract 2-4 key words that capture the essence, join with hyphens. Examples:
-- "Thêm authentication cho API" → `api-authentication`
-- "Fix lỗi null pointer trong UserService" → `userservice-null-pointer`
-- "Refactor session naming to be descriptive" → `session-naming`
+After Step 3a (task type) and Step 3c (description) are done, derive the slug
+yourself — 2-4 key words from the description, hyphenated, lowercase (e.g.
+"Thêm authentication cho API" → `api-authentication`). The user never types it.
 
 ```bash
 # SLUG is auto-derived from user's description — NEVER ask them to type it
@@ -164,101 +182,32 @@ Check if a brainstorm session produced a `BRAINSTORM.md` that should feed into t
 BRAINSTORM_SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)
 ```
 
-Parse the result — if `type` is `"brainstorm"` and `files` contains `"BRAINSTORM.md"`:
-
-1. Read `BRAINSTORM.md` from the brainstorm session directory
-2. Extract from the brainstorm:
-   - **Idea** → use as initial description in Step 3c (pre-fill, user can override)
-   - **Chosen approach** → carry forward as design direction
-   - **Decisions** → import LOCKED decisions into DESIGN-SPEC later
-   - **Open questions** → surface during Step 3d deep-dive
-   - **Out of scope** → carry into CONTEXT.md
-3. Show the user what was found:
-
-```
-🧠 Brainstorm detected: <brainstorm session id>
-   Idea:      <idea summary>
-   Approach:  <chosen approach>
-   Decisions: <N> locked, <N> flexible
-
-   Dùng brainstorm này làm context cho design.
-```
-
-4. Continue to Step 2e with pre-filled context — the user can still override everything.
-
-**If no brainstorm session or latest session is not a brainstorm:** Skip this step.
+If `type` is `"brainstorm"` and `files` contains `"BRAINSTORM.md"` → read it
+and pre-fill: **Idea** → Step 3c description; **Chosen approach** → design
+direction; **Decisions** → LOCKED decisions in DESIGN-SPEC; **Open questions**
+→ Step 3d deep-dive; **Out of scope** → CONTEXT.md. Show what was found
+(`🧠 Brainstorm detected: <id> — idea / approach / N decisions`), then continue
+to Step 2e — the user can still override everything. Otherwise skip.
 
 ---
 
 ## Step 2e: Task link detection (auto)
 
-Apply the shared task-link detection from `task-link.md`.
-
-Before gathering requirements, scan the user's input for task manager URLs (Linear, Jira, ClickUp, GitHub, Asana).
-
-**If a task URL is detected:**
-
-1. Fetch task details via MCP (see `task-link.md` for detection logic and URL patterns)
-2. Fetch and process attachments (see `task-link.md` Step 3b) — download to `$SESSION_DIR/attachments/`, classify by type. **Do NOT process videos here** — video analysis is deferred to Step 2f (media detection) which handles both user-provided and task-link media in one pass.
-3. Set task status to "In Progress" (non-blocking, best-effort)
-4. Save to `$SESSION_DIR/EXTERNAL-TASK.md` + store reference in session state
-5. Auto-extract from the fetched task:
-   - **Task type** → infer from labels/tags (bug→fix, feature→feat, etc.) — still confirm with user in 3a
-   - **Description** → use task title + body as initial description in 3c
-   - **Acceptance criteria** → carry over to DESIGN-SPEC later
-6. Show the user what was fetched:
-
-```
-📋 Task linked: <provider> <task_id>
-   <title>
-   Status: <status>  Priority: <priority>
-
-   Description preview:
-   <first 3 lines of description>
-
-   Dùng thông tin này làm context cho design.
-```
-
-7. Continue to Step 3 with pre-filled context — the user can still override everything.
-
-**If no task URL detected:** Skip this step, proceed to Step 3 normally.
+Apply `task-link.md`: scan the user's input for task manager URLs (Linear,
+Jira, ClickUp, GitHub, Asana). If found → fetch via MCP, download attachments
+to `$SESSION_DIR/attachments/` (defer video analysis to Step 2f), set status
+"In Progress" (non-blocking), save `$SESSION_DIR/EXTERNAL-TASK.md` + session
+state. Pre-fill: labels → task type (still confirm in 3a); title + body →
+3c description; acceptance criteria → DESIGN-SPEC. Show a short summary
+(`📋 Task linked: <provider> <id> — <title>`), continue to Step 3 — the user
+can override everything. No URL → skip.
 
 ---
 
 ## Step 2f: Media detection (auto)
 
-Scan **two sources** for media files:
-
-1. **User's input** — file paths or pasted screenshots/videos in the message
-2. **Task-link attachments** — files downloaded to `$SESSION_DIR/attachments/` by Step 2e
-
-**Detection patterns:**
-- File paths ending in: `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif` (images)
-- File paths ending in: `.mp4`, `.mov`, `.webm`, `.avi`, `.mkv` (videos)
-- Screenshots pasted or attached by the user
-
-**Check task-link attachments:**
-```bash
-# If task-link downloaded attachments, scan them too
-if [ -d "$SESSION_DIR/attachments" ]; then
-  ls "$SESSION_DIR/attachments/"
-fi
-```
-
-**If images detected (from either source):**
-- Claude reads images natively — no processing needed
-- Note the image paths for reference during design discussion (Step 3–5)
-- Use as visual context when generating DESIGN-SPEC (e.g., layout descriptions, component structure)
-
-**If videos detected (from either source):**
-1. Invoke the `visual-debug` skill for video processing:
-   - Check ffmpeg availability: `hoangsa-cli media check-ffmpeg`
-   - **Always quote the path** and validate it contains no shell metacharacters: `hoangsa-cli media analyze "$VIDEO_PATH" --output-dir "/tmp/hoangsa-menu-$(date +%s)"`
-   - Read the output `montage.png` (annotated frame grid with timestamps)
-   - Read the output `diff-montage.png` (red overlay showing changes between frames)
-2. Include visual analysis findings as design context for Step 3–5
-
-**If no media detected (from either source):** Skip this step, proceed to Step 3.
+Apply `common.md §Media detection` — findings become design context for
+Steps 3–5 (layout descriptions, component structure). No media → Step 3.
 
 ---
 
@@ -352,12 +301,9 @@ Still ask one question at a time. Adapt questions to the task type — different
 - `docs`: audience, format (markdown/docsite/inline), depth level, examples needed
 - `design`: target audience, responsive needs, brand/style guide, key sections, CTA goals
 
-**Cross-cutting (ask when relevant regardless of type):**
-- Timeline pressure? (affects depth of spec)
-- Who else is affected? (team coordination)
-- Any existing examples or references to follow?
+**Cross-cutting (when relevant):** timeline pressure, who else is affected, existing examples/references to follow.
 
-Be smart about depth: a quick config change doesn't need 5 deep-dive questions. A complex new feature does. Match the number of questions to the complexity of the task — 1-2 for simple tasks, 3-5 for complex ones.
+Match question count to complexity: 1-2 for simple tasks, 3-5 for complex ones.
 
 If the user's choices reveal strong design preferences (e.g., "always use interfaces", "prefer functional over OOP", "no magic strings"):
 
@@ -429,30 +375,17 @@ First, read the `research_mode` preference to determine how to run this step:
 RESEARCH_MODE=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . research_mode | python3 -c "import sys,json; print(json.load(sys.stdin).get('value','') or 'inline')")
 ```
 
-**If `RESEARCH_MODE` is `"full"`:** delegate codebase research to the research workflow in **auto mode**, scoped to **codebase only**. Pass the `codebase` metadata from config so research agents don't re-detect project structure from scratch:
+**`"full"`:** invoke /hoangsa:research with Topic = task description from
+CONTEXT.md, Scope = "codebase", Mode = "auto", Session = current $SESSION_DIR
+(output → `$SESSION_DIR/RESEARCH.md`), passing MEMORY_STATUS and the
+`codebase` config metadata so agents don't re-detect structure. Soft timeout
+120s — on timeout proceed with available context and note the gap in
+DESIGN-SPEC. Wait for RESEARCH.md before proceeding.
 
-```
-Invoke /hoangsa:research with:
-  - Topic: the task description from CONTEXT.md
-  - Scope: "codebase"
-  - Mode: "auto"
-  - Session: use the current $SESSION_DIR (research output goes to $SESSION_DIR/RESEARCH.md)
-  - hoangsa-memory: pass MEMORY_STATUS so research agents use hoangsa-memory tools when available
-```
-
-This avoids duplicating the parallel research agents — the research workflow handles structure, patterns, dependencies, and tests analysis with hoangsa-memory-first fallback.
-
-Set a soft timeout of 120 seconds for research. If research does not complete, proceed with available context and note in DESIGN-SPEC that research was incomplete.
-
-Wait for RESEARCH.md to be written to `$SESSION_DIR/` before proceeding.
-
-**If `RESEARCH_MODE` is `"inline"` (default):** skip the full research agent and perform lightweight inline research instead:
-
-1. Use hoangsa-memory recall (if available) or Grep/Glob to find code relevant to the task description from CONTEXT.md
-2. Read key files identified in CONTEXT.md (context_pointers, referenced paths)
-3. Write a minimal `RESEARCH.md` to `$SESSION_DIR/` summarising findings (relevant symbols, files, patterns, dependencies)
-
-Report: `⏭️ Full research skipped (research_mode=inline) — using inline research`
+**`"inline"` (default):** lightweight instead: (1) hoangsa-memory recall or
+Grep/Glob for code relevant to the task, (2) read key files from CONTEXT.md,
+(3) write a minimal `RESEARCH.md` (relevant symbols, files, patterns,
+dependencies). Report: `⏭️ Full research skipped (research_mode=inline)`.
 
 ---
 
@@ -607,7 +540,7 @@ status: "draft"
 <Verification sequence appropriate to the task category>
 ```
 
-**Important:** Only include sections relevant to the task. A docs task should NOT have empty "Types / Data Models" sections. A CI task should NOT have "Interfaces / APIs". Delete irrelevant sections entirely — don't leave them blank.
+**Important:** Delete irrelevant sections entirely — never leave them blank (a docs task has no "Types / Data Models"; a CI task has no "Interfaces / APIs").
 
 **After drafting:** Show the full document to user.
 
@@ -680,6 +613,28 @@ Use AskUserQuestion with preview:
       description: "Unit cho logic phức tạp, integration cho luồng chính — cân bằng tốt nhất"
   multiSelect: false
 
+**Code tasks — determine `surface` (E2E is NOT a strategy option; it's mandatory for user-facing work):**
+
+Infer from the DESIGN-SPEC Interfaces/APIs section: does the task expose anything a user or external client touches directly — a UI screen/component, an HTTP endpoint, a CLI command? If the answer is obvious (e.g., the task IS a UI feature), set `surface` yourself and report it. Only ask when genuinely ambiguous:
+
+Use AskUserQuestion:
+  question: "Task này expose surface nào cho user/client chạm trực tiếp?"
+  header: "Surface"
+  options:
+    - label: "UI"
+      description: "Screen/component người dùng nhìn thấy — bắt buộc ## E2E Tests + ## Visual Verification"
+    - label: "API"
+      description: "HTTP endpoint client gọi trực tiếp — bắt buộc ## E2E Tests"
+    - label: "CLI"
+      description: "Command người dùng chạy trực tiếp — bắt buộc ## E2E Tests"
+    - label: "Internal"
+      description: "Chỉ logic nội bộ / library — unit + integration là đủ"
+  multiSelect: false
+
+Enforcement (`hoangsa-cli validate tests` fails the spec otherwise):
+`ui|api|cli` ⇒ `## E2E Tests` with runnable commands; `ui` ⇒ additionally a
+`## Visual Verification` table with ≥1 row.
+
 **Ops tasks** → ask validation approach:
 
 Use AskUserQuestion:
@@ -709,6 +664,7 @@ spec_ref: "<component>-spec-v1.0"
 component: "<MUST MATCH DESIGN-SPEC.md>"
 category: "code"
 strategy: "<unit|integration|property|mixed>"
+surface: "<ui|api|cli|internal>"
 language: "<same as DESIGN-SPEC>"
 ---
 
@@ -732,9 +688,30 @@ language: "<same as DESIGN-SPEC>"
 - **Expected**: <outcome>
 - **Verify**: `<runnable test command>`
 
+## E2E Tests
+<!-- REQUIRED when surface: ui|api|cli. Drive the WHOLE flow like a real user/client
+     — through the UI, the HTTP endpoint, or the CLI binary — not through internal APIs. -->
+
+### Test: <flow_name>
+- **Covers**: [REQ-xx, ...]
+- **Entry point**: <URL / screen / CLI invocation>
+- **Steps**: <user-observable actions — click, type, call endpoint>
+- **Expected**: <observable outcome — visible text, HTTP status + body, exit code>
+- **Verify**: `<runnable command — playwright / maestro / curl script / CLI>`
+
 ## Edge Cases
+<!-- MUST be non-empty (`validate tests` fails an empty table). Pull every boundary,
+     error path, and weird input from the Step 3d deep-dive. A REQ with truly no
+     edge case gets a waiver row: | None for REQ-xx | — | — | <reason> | -->
 | Case | Input | Expected | Covers |
 |------|-------|----------|--------|
+
+## Visual Verification
+<!-- REQUIRED when surface: ui (≥1 row). Each state gets verified against the REAL
+     running app (fe-testing flow 5) — screenshots are the evidence. Delete for non-UI. -->
+| Screen / Component | States to verify | How |
+|--------------------|------------------|-----|
+| <name> | empty / loading / error / success / disabled / long-text overflow / responsive | run app + screenshot each state |
 
 ## Test Data / Fixtures
 <Mock data, factories, sample inputs>
@@ -903,10 +880,14 @@ Universal rules live in `common.md §Universal rules`. Menu-specific additions:
 
 | Rule | Detail |
 |------|--------|
-| **DON'T skip discussion** | Ask before deciding |
+| **DON'T skip discussion** | Ask before deciding — except on the express lane, where there's nothing to decide |
+| **Express cuts questions, not gates** | Express specs/plans pass the same validate commands |
 | **≥3 options** | For every important decision |
 | **Language-agnostic** | Use the actual stack's syntax |
 | **Acceptance = command** | Runnable, not prose |
+| **Edge cases mandatory** | Code TEST-SPEC needs a non-empty Edge Cases table — explicit waiver rows only, never silent omission |
+| **ui/api/cli ⇒ E2E** | `surface: ui|api|cli` requires a runnable `## E2E Tests` section |
+| **ui ⇒ Visual Verification** | `surface: ui` additionally requires a `## Visual Verification` table |
 | **Loop until approved** | User can revise indefinitely |
 | **Validate before done** | Run hoangsa-cli before step 8 |
 | **Auto-detect before asking** | Detect tech stack from manifests, don't ask what's detectable |

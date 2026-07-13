@@ -192,6 +192,12 @@ gh pr create --title "$PR_TITLE" --body "$(cat <<'EOF'
 ## Test plan
 <from session TEST-SPEC if available, otherwise "Manual testing required">
 
+## Visual evidence
+<UI sessions only, else omit. One line per task with screenshots in
+$SESSION_DIR/evidence/<task.id>/ listing captured states; attach the
+screenshots (`gh pr comment` after create) so reviewers see the rendered
+states without booting the app.>
+
 ---
 Generated with HOANGSA /ship
 EOF
