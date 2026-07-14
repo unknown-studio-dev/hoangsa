@@ -19,6 +19,10 @@
 #![deny(rust_2018_idioms)]
 #![warn(missing_docs)]
 
+/// Graph analytics: community detection and process tracing.
+pub mod analytics;
+pub use analytics::{Community, ProcessFlow};
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
