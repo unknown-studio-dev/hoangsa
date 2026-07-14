@@ -42,11 +42,25 @@ pub struct TaintReport {
     pub sink_matches: usize,
 }
 
-/// Returns `true` when `node` matches `pattern` — checked against FQN and
-/// the optional `text` field in the node's KV payload. The payload is fetched
-/// once (from the `NodeRow`) and passed in here as `text`.
+impl Default for TaintSpec {
+    fn default() -> Self {
+        Self {
+            sources: Vec::new(),
+            sinks: Vec::new(),
+            max_depth: 12,
+            max_findings: 50,
+        }
+    }
+}
+
+/// Returns `true` when `node` matches `pattern` — case-insensitive substring
+/// match checked against FQN and the optional `text` field in the node's KV
+/// payload. The payload is fetched once (from the `NodeRow`) and passed in
+/// here as `text`.
 fn node_matches(fqn: &str, text: Option<&str>, pattern: &str) -> bool {
-    fqn.contains(pattern) || text.is_some_and(|t| t.contains(pattern))
+    let p = pattern.to_lowercase();
+    fqn.to_lowercase().contains(&p)
+        || text.is_some_and(|t| t.to_lowercase().contains(&p))
 }
 
 impl Graph {
