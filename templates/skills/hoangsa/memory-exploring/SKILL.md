@@ -21,6 +21,7 @@ the graph answers directly — reach for these INSTEAD of grepping:
 - **"How does A reach B?"** → `memory_graph_paths({from, to})` — shortest dependency path.
 - **"Everything connected to X"** → `memory_graph_query({start})` — traverse callers/callees/refs/imports to any depth.
 - **"Can untrusted input reach a dangerous call?"** → `memory_taint_paths({sources, sinks})` — source→sink dataflow (index with `--pdg`).
+- **"Who publishes / subscribes to this event?"** → `memory_event_trace({topic})` — pub/sub flow the call graph can't connect (decoupled by a broker).
 
 A single one of these usually replaces a dozen `Grep`s.
 
