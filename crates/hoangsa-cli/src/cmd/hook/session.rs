@@ -161,12 +161,14 @@ pub fn cmd_lesson_guard(cwd: &str) {
         return;
     }
 
-    // Find hoangsa-memory binary
-    let memory_root = Path::new(cwd).join(".hoangsa").join("memory");
-    if !memory_root.exists() {
+    // Resolve the memory root the same way the rest of the system does —
+    // local .hoangsa/memory when populated, else the global per-slug root.
+    // A hardcoded local path silently no-ops the guard on every project
+    // migrated to ~/.hoangsa/memory/projects/<slug>/.
+    let Some(memory_root) = hoangsa_memory_root(cwd).filter(|r| r.exists()) else {
         out(&json!({"decision": "approve"}));
         return;
-    }
+    };
 
     // Call hoangsa-memory CLI to recall lessons relevant to this file path
     let memory_bin = find_memory_bin();
@@ -214,7 +216,15 @@ pub fn cmd_lesson_guard(cwd: &str) {
             let path = c.get("path").and_then(|p| p.as_str()).unwrap_or("");
             path == "LESSONS.md" || path == "MEMORY.md"
         })
-        .filter_map(|c| c.get("body").and_then(|b| b.as_str()))
+        .filter_map(|c| {
+            // The query CLI strips bodies by default (preview carries the
+            // text) — an empty body here would hollow out both the NEVER
+            // check and the advisory context.
+            c.get("body")
+                .and_then(|b| b.as_str())
+                .filter(|s| !s.is_empty())
+                .or_else(|| c.get("preview").and_then(|p| p.as_str()))
+        })
         .collect();
 
     if lessons.is_empty() {

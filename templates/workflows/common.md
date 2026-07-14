@@ -131,6 +131,23 @@ No media → skip.
 
 ---
 
+## Phase chaining (`chain_mode` preference)
+
+When a workflow auto-chains to the next phase (cook → taste, taste → plate):
+
+- `inline` (default) — continue in the current context. Cheapest for short
+  sessions; a long design conversation rides along into every later phase.
+- `fresh` — spawn the next phase as a fresh-context subagent whose prompt is
+  just: "Read `$HOANGSA_ROOT/workflows/<phase>.md` and execute it for session
+  `$SESSION_DIR`", then relay its report. The session dir (artifacts +
+  state.json) is the complete handoff — same principle as fresh-context
+  workers, applied at phase level. Use for long sessions where accumulated
+  context taxes every subsequent phase.
+
+`pref get . chain_mode` — unset means `inline`.
+
+---
+
 ## Lesson injection (workflows that spawn workers)
 
 `hoangsa-cli envelope` already injects LESSONS.md entries keyword-matched to

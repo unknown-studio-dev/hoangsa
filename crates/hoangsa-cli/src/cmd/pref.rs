@@ -77,6 +77,7 @@ const KNOWN_KEYS: &[&str] = &[
     "quality_gate",
     "test_runs",
     "context_mode",
+    "chain_mode",
     "memory_strict",
     "profile",
 ];

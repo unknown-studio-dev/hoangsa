@@ -136,11 +136,14 @@ State + stats at the boundaries:
 
 ```bash
 "$HOANGSA_ROOT/bin/hoangsa-cli" state update "$SESSION_DIR" '{"status":"cooking"}'   # after Gate 2
-"$HOANGSA_ROOT/bin/hoangsa-cli" state update "$SESSION_DIR" '{"status":"done"}'      # or "failed"
+# Record WHAT was verified, not just that it was — taste inherits Tier-2
+# instead of re-running the same suite at the same commit:
+"$HOANGSA_ROOT/bin/hoangsa-cli" state update "$SESSION_DIR" \
+  '{"status":"done","verified_head":"'$(git rev-parse HEAD)'","tier2":"pass x'$TEST_RUNS'"}'   # or "failed" (omit verified_head)
 "$HOANGSA_ROOT/bin/hoangsa-cli" stats phase "$SESSION_DIR" cook <estimated tokens this run>
 ```
 
-Chain: `auto_taste` true → run `/hoangsa:taste`; null → ask once (AskUserQuestion, adapt to `$LANG_PREF`: "Run /hoangsa:taste automatically after cook completes?" — Always / No) and save via `pref set . auto_taste`. External task in state → sync-back chain is cook → taste → plate → serve (plate is the authoritative sync point; cook never chains straight to serve). Task-link detection per `task-link.md` sets "In Progress" at cook start, non-blocking.
+Chain: `auto_taste` true → run `/hoangsa:taste` per `common.md §Phase chaining` (`chain_mode` fresh → spawn taste as a fresh-context subagent, relay its report); null → ask once (AskUserQuestion, adapt to `$LANG_PREF`: "Run /hoangsa:taste automatically after cook completes?" — Always / No) and save via `pref set . auto_taste`. External task in state → sync-back chain is cook → taste → plate → serve (plate is the authoritative sync point; cook never chains straight to serve). Task-link detection per `task-link.md` sets "In Progress" at cook start, non-blocking.
 
 ## Judgment notes
 

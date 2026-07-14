@@ -37,7 +37,7 @@ Use AskUserQuestion:
 3. Write `plan.json` directly (schema: `prepare.md §plan.json schema` — `type`, `ui`, embedded `test_cases`/`edge_cases` included) — must pass `validate plan --tests "$SESSION_DIR/TEST-SPEC.md"` + `dag check`.
 4. ONE combined confirmation (spec + plan on one screen) → on approval chain straight to `/hoangsa:cook`, skipping `/hoangsa:prepare`.
 
-If express work reveals hidden complexity (multi-file, real design choices) → stop, tell the user, switch to Full menu keeping what's already written. When in doubt, Full menu.
+If express work reveals hidden complexity (multi-file, real design choices) → stop, tell the user, switch to Full menu keeping what's already written. When in doubt, Full menu — but let history vote: `stats summary` (workspace task records) showing similar recent tasks landing small and clean with zero fix rounds is a point for express.
 
 ---
 
