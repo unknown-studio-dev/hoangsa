@@ -24,6 +24,7 @@ Commands:
   /hoangsa:prepare   Turn spec into executable JSON plan with DAG
   /hoangsa:cook      Execute plan wave-by-wave, verify results
   /hoangsa:taste     Run acceptance tests, report results
+  /hoangsa:qc        QC from a spec — design test cases, execute, evidence-backed verdicts
   /hoangsa:fix       Hotfix — analyze bug → fix → auto-test
   /hoangsa:plate     Commit completed work with conventional message
   /hoangsa:check     Show session progress overview

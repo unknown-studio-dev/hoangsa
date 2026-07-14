@@ -276,6 +276,7 @@ After `/hoangsa:menu`, run `/hoangsa:prepare` to plan, then `/hoangsa:cook` to e
 | `/hoangsa:prepare` | Plan — specs → executable task DAG (`plan.json`) |
 | `/hoangsa:cook` | Execute — wave-by-wave, fresh context per worker task |
 | `/hoangsa:taste` | Test — run acceptance tests per task |
+| `/hoangsa:qc` | QC — spec → test cases → execute; every verdict backed by evidence |
 | `/hoangsa:plate` | Commit — stage + generate conventional commit message |
 | `/hoangsa:ship` | Ship — code + security review, then push or create PR |
 | `/hoangsa:serve` | Sync — bidirectional sync with connected task manager |
