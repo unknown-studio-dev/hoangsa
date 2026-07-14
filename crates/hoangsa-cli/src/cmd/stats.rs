@@ -809,6 +809,112 @@ mod tests {
         assert_eq!(result.high, 1.0);
     }
 
+    /// Write a session fixture dir: phase-stats.jsonl lines plus optional plan.json.
+    fn write_session(session_dir: &std::path::Path, jsonl_lines: &[&str], plan: Option<&Value>) {
+        fs::create_dir_all(session_dir).expect("create session dir");
+        let mut f =
+            fs::File::create(session_dir.join("phase-stats.jsonl")).expect("create phase-stats");
+        for line in jsonl_lines {
+            writeln!(f, "{}", line).expect("write jsonl line");
+        }
+        if let Some(p) = plan {
+            fs::write(
+                session_dir.join("plan.json"),
+                serde_json::to_string_pretty(p).expect("serialize plan"),
+            )
+            .expect("write plan.json");
+        }
+    }
+
+    #[test]
+    fn report_all_aggregates_sessions() {
+        let dir = make_temp_dir("report_all_aggregates");
+        let alpha = dir.join(".hoangsa/sessions/feat/alpha");
+        let beta = dir.join(".hoangsa/sessions/fix/beta");
+        write_session(
+            &alpha,
+            &[
+                r#"{"phase":"prepare","tokens":1000}"#,
+                r#"{"phase":"cook","tokens":3000}"#,
+                r#"{"phase":"fix","tokens":500}"#,
+            ],
+            Some(&json!({ "tasks": [
+                { "id": "T-01", "status": "completed" },
+                { "id": "T-02", "status": "failed" },
+                { "id": "T-03", "status": "done", "ui": true },
+            ]})),
+        );
+        write_session(
+            &beta,
+            &[
+                r#"{"phase":"prepare","tokens":700}"#,
+                r#"{"phase":"cook","tokens":800}"#,
+            ],
+            Some(&json!({ "tasks": [{ "id": "T-01", "status": "completed" }] })),
+        );
+
+        let a = aggregate_session(alpha.to_str().expect("alpha path str"));
+        let b = aggregate_session(beta.to_str().expect("beta path str"));
+        cleanup(&dir);
+
+        // Per-session rows
+        assert_eq!(a.phases.get("prepare"), Some(&1000));
+        assert_eq!(a.phases.get("cook"), Some(&3000));
+        assert_eq!(a.phases.get("fix"), Some(&500));
+        assert_eq!(a.total_tokens, 4500, "alpha total must sum all phases");
+        assert_eq!(a.fix_rounds, 1);
+        assert_eq!(a.tasks_total, 3);
+        assert_eq!(a.completed, 2, "'completed' and 'done' both count as completed");
+        assert_eq!(a.failed, 1);
+        assert_eq!(a.ui_tasks, 1);
+
+        assert_eq!(b.phases.get("prepare"), Some(&700));
+        assert_eq!(b.phases.get("cook"), Some(&800));
+        assert_eq!(b.total_tokens, 1500);
+        assert_eq!(b.fix_rounds, 0);
+        assert_eq!(b.tasks_total, 1);
+        assert_eq!(b.completed, 1);
+        assert_eq!(b.failed, 0);
+
+        // Workspace totals across both sessions
+        let total_tokens = a.total_tokens + b.total_tokens;
+        let completed = a.completed + b.completed;
+        assert_eq!(total_tokens, 6000, "workspace total_tokens must sum sessions");
+        assert_eq!(completed, 3, "workspace completed must sum sessions");
+        // tokens_per_completed_task = total / completed
+        assert_eq!(total_tokens / completed, 2000);
+    }
+
+    #[test]
+    fn report_all_skips_malformed_and_planless() {
+        let dir = make_temp_dir("report_all_malformed_planless");
+        let session = dir.join(".hoangsa/sessions/feat/gamma");
+        // One malformed (non-JSON) line among valid records; no plan.json at all.
+        write_session(
+            &session,
+            &[
+                r#"{"phase":"prepare","tokens":100}"#,
+                "this is not json {]",
+                r#"{"phase":"cook","tokens":200}"#,
+            ],
+            None,
+        );
+
+        let r = aggregate_session(session.to_str().expect("session path str"));
+        cleanup(&dir);
+
+        // Malformed line skipped: only the two valid records aggregate.
+        assert_eq!(r.phases.len(), 2, "malformed line must not create a phase entry");
+        assert_eq!(r.phases.get("prepare"), Some(&100));
+        assert_eq!(r.phases.get("cook"), Some(&200));
+        assert_eq!(r.total_tokens, 300);
+        // No plan.json: tokens still counted, all task counts zero.
+        assert_eq!(r.tasks_total, 0);
+        assert_eq!(r.completed, 0);
+        assert_eq!(r.failed, 0);
+        assert_eq!(r.ui_tasks, 0);
+    }
+
     #[test]
     fn test_stats_empty_file_returns_default_calibration() {
         // REQ-10: empty JSONL file returns (1.0, 1.0, 1.0) for all factors
