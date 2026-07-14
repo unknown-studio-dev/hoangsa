@@ -186,10 +186,21 @@ fn chrono_like_now() -> String {
     format!("{secs}")
 }
 
-/// `stats report <sessionDir>` — tokens per phase + task outcomes from plan.json.
-/// The effectiveness dashboard: tokens spent per completed task, failure counts,
-/// fix rounds. This is what tells us whether the harness overhead pays for itself.
-pub fn cmd_report(session_dir: &str) {
+/// Per-session aggregation of phase-stats.jsonl + plan.json task outcomes.
+struct SessionReport {
+    phases: std::collections::BTreeMap<String, u64>,
+    total_tokens: u64,
+    fix_rounds: u64,
+    tasks_total: u64,
+    completed: u64,
+    failed: u64,
+    ui_tasks: u64,
+}
+
+/// Aggregate one session dir: tokens per phase from phase-stats.jsonl
+/// (malformed lines skipped) and task outcomes from plan.json (missing
+/// plan.json → all task counts zero).
+fn aggregate_session(session_dir: &str) -> SessionReport {
     let mut phases: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
     let mut fix_rounds = 0u64;
     let path = Path::new(session_dir).join("phase-stats.jsonl");
@@ -205,7 +216,7 @@ pub fn cmd_report(session_dir: &str) {
             }
         }
     }
-    let total: u64 = phases.values().sum();
+    let total_tokens: u64 = phases.values().sum();
 
     let plan = crate::helpers::read_json(
         Path::new(session_dir).join("plan.json").to_str().unwrap_or(""),
@@ -228,13 +239,90 @@ pub fn cmd_report(session_dir: &str) {
         }
     }
 
+    SessionReport {
+        phases,
+        total_tokens,
+        fix_rounds,
+        tasks_total,
+        completed,
+        failed,
+        ui_tasks,
+    }
+}
+
+/// `stats report <sessionDir>` — tokens per phase + task outcomes from plan.json.
+/// The effectiveness dashboard: tokens spent per completed task, failure counts,
+/// fix rounds. This is what tells us whether the harness overhead pays for itself.
+pub fn cmd_report(session_dir: &str) {
+    let r = aggregate_session(session_dir);
     out(&json!({
-        "phases": phases,
-        "total_tokens": total,
-        "tokens_per_completed_task": if completed > 0 { total / completed } else { 0 },
-        "tasks": { "total": tasks_total, "completed": completed, "failed": failed },
-        "ui_tasks": ui_tasks,
-        "fix_rounds": fix_rounds,
+        "phases": r.phases,
+        "total_tokens": r.total_tokens,
+        "tokens_per_completed_task": if r.completed > 0 { r.total_tokens / r.completed } else { 0 },
+        "tasks": { "total": r.tasks_total, "completed": r.completed, "failed": r.failed },
+        "ui_tasks": r.ui_tasks,
+        "fix_rounds": r.fix_rounds,
+    }));
+}
+
+/// `stats report --all [projectDir]` — aggregate every session under
+/// `<projectDir>/.hoangsa/sessions/<type>/<name>/phase-stats.jsonl`.
+/// Missing sessions dir → empty sessions list and zeroed totals.
+pub fn cmd_report_all(project_dir: &str) {
+    let sessions_root = Path::new(project_dir).join(".hoangsa").join("sessions");
+    let mut sessions: Vec<Value> = Vec::new();
+    let mut total_tokens = 0u64;
+    let mut completed_tasks = 0u64;
+    let mut failed_tasks = 0u64;
+    let mut fix_rounds = 0u64;
+
+    let mut session_dirs: Vec<(String, std::path::PathBuf)> = Vec::new();
+    if let Ok(types) = fs::read_dir(&sessions_root) {
+        for type_entry in types.flatten() {
+            let type_path = type_entry.path();
+            if !type_path.is_dir() {
+                continue;
+            }
+            let type_name = type_entry.file_name().to_string_lossy().to_string();
+            if let Ok(names) = fs::read_dir(&type_path) {
+                for name_entry in names.flatten() {
+                    let session_path = name_entry.path();
+                    if !session_path.join("phase-stats.jsonl").is_file() {
+                        continue;
+                    }
+                    let name = name_entry.file_name().to_string_lossy().to_string();
+                    session_dirs.push((format!("{type_name}/{name}"), session_path));
+                }
+            }
+        }
+    }
+    session_dirs.sort_by(|a, b| a.0.cmp(&b.0));
+
+    for (id, session_path) in &session_dirs {
+        let r = aggregate_session(session_path.to_str().unwrap_or(""));
+        total_tokens += r.total_tokens;
+        completed_tasks += r.completed;
+        failed_tasks += r.failed;
+        fix_rounds += r.fix_rounds;
+        sessions.push(json!({
+            "id": id,
+            "total_tokens": r.total_tokens,
+            "phases": r.phases,
+            "tasks": { "total": r.tasks_total, "completed": r.completed, "failed": r.failed },
+            "fix_rounds": r.fix_rounds,
+        }));
+    }
+
+    out(&json!({
+        "sessions": sessions,
+        "totals": {
+            "sessions": sessions.len() as u64,
+            "total_tokens": total_tokens,
+            "completed_tasks": completed_tasks,
+            "failed_tasks": failed_tasks,
+            "fix_rounds": fix_rounds,
+            "tokens_per_completed_task": if completed_tasks > 0 { total_tokens / completed_tasks } else { 0 },
+        },
     }));
 }
 

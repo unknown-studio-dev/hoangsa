@@ -293,7 +293,13 @@ fn main() {
             rest.get(2).unwrap_or(&"0"),
             rest.get(3).copied(),
         ),
-        ("stats", "report") => cmd::stats::cmd_report(rest.first().unwrap_or(&"")),
+        ("stats", "report") => {
+            if rest.first().copied() == Some("--all") {
+                cmd::stats::cmd_report_all(rest.get(1).copied().unwrap_or(&cwd));
+            } else {
+                cmd::stats::cmd_report(rest.first().unwrap_or(&""));
+            }
+        }
         ("stats", "cache") => {
             cmd::cache::cmd_cache(&rest, &cwd);
         }

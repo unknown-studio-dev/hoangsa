@@ -354,6 +354,7 @@ Usage:
   hoangsa-cli stats record '<json>'
   hoangsa-cli stats summary [--last N] [--complexity low|medium|high]
   hoangsa-cli stats cache   [-n top] [-s session_id]
+  hoangsa-cli stats report  --all [projectDir]
 
 `record` appends an event; `summary` aggregates recent sessions; `cache`
 prints cache-hit statistics per session."
