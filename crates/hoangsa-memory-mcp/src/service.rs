@@ -159,20 +159,18 @@ impl ServiceState {
         let Some((_, slot)) = self.projects.remove(slug) else {
             return false;
         };
-        if let Ok(mut g) = slot.listener.lock() {
-            if let Some(handle) = g.take() {
+        if let Ok(mut g) = slot.listener.lock()
+            && let Some(handle) = g.take() {
                 handle.abort();
             }
-        }
         if let Some(server) = slot.server.get() {
             server.abort_watcher();
         }
         let sock = project_socket_path(&self.hoangsa_home, slug);
-        if let Err(e) = std::fs::remove_file(&sock) {
-            if e.kind() != std::io::ErrorKind::NotFound {
+        if let Err(e) = std::fs::remove_file(&sock)
+            && e.kind() != std::io::ErrorKind::NotFound {
                 warn!(slug, sock = %sock.display(), error = %e, "removing socket file failed");
             }
-        }
         info!(slug, "unregistered");
         true
     }
@@ -778,6 +776,12 @@ mod tests {
         // handle stays resident for the lifetime of the daemon even
         // after the rest of the project is dropped.
         let home = tempdir().unwrap();
+        // install_root() honours HOANGSA_INSTALL_DIR; pin it to the test's
+        // tempdir so a dev machine's global `no-embed` marker can't disable
+        // the vector store this test asserts on (same pattern as
+        // hoangsa-memory-store/tests/no_embed_marker.rs). Must be set before
+        // get_or_open — enablement is computed at server construction.
+        unsafe { std::env::set_var("HOANGSA_INSTALL_DIR", home.path()) };
         let mem_root = project_memory_root(home.path(), "alpha");
         std::fs::create_dir_all(&mem_root).unwrap();
 
