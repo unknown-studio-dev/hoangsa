@@ -43,3 +43,11 @@ path = "tests/integration_stats.rs"
 [[test]]
 name = "integration_prompt_guard"
 path = "tests/integration_prompt_guard.rs"
+
+[[test]]
+name = "hook_dispatch_parity"
+path = "tests/hook_dispatch_parity.rs"
+
+[[test]]
+name = "envelope_model_gate"
+path = "tests/envelope_model_gate.rs"
