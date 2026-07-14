@@ -5,6 +5,220 @@ use std::path::Path;
 
 use super::{enforcement_events_path, find_memory_bin, reflect_sentinel_path};
 
+// ── Frustration Sensor ───────────────────────────────────────────────────────
+
+/// Which class of signal triggered detection.
+#[derive(Debug, PartialEq)]
+pub(super) enum FrustrationSignal {
+    Lexicon(&'static str),
+    ExclamationRun,
+    CapsRatio,
+    ConfigPattern,
+}
+
+impl FrustrationSignal {
+    fn as_str(&self) -> &str {
+        match self {
+            FrustrationSignal::Lexicon(p) => p,
+            FrustrationSignal::ExclamationRun => "exclamation_run",
+            FrustrationSignal::CapsRatio => "caps_ratio",
+            FrustrationSignal::ConfigPattern => "config_pattern",
+        }
+    }
+}
+
+/// Vietnamese + English frustration lexicon (word-boundary, checked
+/// case-insensitively). Entries are literal strings; we apply `\b`
+/// word-boundary anchors only where the term is a standalone word.
+static VI_LEXICON: &[&str] = &[
+    "đm", "vcl", "vãi", "ngu thế", "óc", "đã bảo", "bao nhiêu lần",
+    "lại nữa", "sao mày", "mày bị", "bực", "phẫn nộ",
+];
+static EN_LEXICON: &[&str] = &[
+    "wtf", "ffs", "fucking", "stupid", "i told you", "how many times",
+    "stop doing", "again?!",
+];
+
+/// Strip markdown code fences from `text` so curse words inside quoted
+/// code do not trigger detection.
+fn strip_code_fences(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut inside = false;
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            inside = !inside;
+            out.push('\n');
+            continue;
+        }
+        if !inside {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// True if `pattern` appears as a word-boundary match in `haystack`
+/// (case-insensitive). Multi-word patterns use substring match
+/// (word boundary on first word only).
+fn lexicon_match(haystack: &str, pattern: &str) -> bool {
+    let hl = haystack.to_lowercase();
+    let pl = pattern.to_lowercase();
+    // Multi-word or punctuation-containing patterns: substring
+    if pl.contains(' ') || !pl.chars().all(|c| c.is_alphabetic()) {
+        return hl.contains(&pl);
+    }
+    // Single word: require word boundary (not adjacent to alphanumeric)
+    let mut start = 0;
+    while let Some(pos) = hl[start..].find(&pl) {
+        let abs = start + pos;
+        let before_ok = abs == 0
+            || !hl.as_bytes().get(abs - 1).copied().unwrap_or(b' ').is_ascii_alphanumeric();
+        let after_ok = abs + pl.len() >= hl.len()
+            || !hl.as_bytes()
+                .get(abs + pl.len())
+                .copied()
+                .unwrap_or(b' ')
+                .is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            return true;
+        }
+        start = abs + 1;
+    }
+    false
+}
+
+/// Pure frustration detector. Returns `Some(signal_class)` when the
+/// prompt text exhibits frustration, `None` otherwise.
+///
+/// Input: raw prompt text.
+/// Extra patterns: substring-match strings from config.
+///
+/// Edge cases:
+///   - Text inside ``` code fences is ignored.
+///   - "OK!!" must NOT trigger (≥3 consecutive `!` or `?` on prompts
+///     with ≥5 alphabetic characters only — guards "OK!!").
+pub(super) fn detect_frustration(
+    text: &str,
+    extra_patterns: &[String],
+) -> Option<FrustrationSignal> {
+    let stripped = strip_code_fences(text);
+    let s = stripped.as_str();
+
+    // Lexicon checks
+    for &pat in VI_LEXICON.iter().chain(EN_LEXICON.iter()) {
+        if lexicon_match(s, pat) {
+            return Some(FrustrationSignal::Lexicon(pat));
+        }
+    }
+    // Config extra patterns (substring)
+    for pat in extra_patterns {
+        if !pat.is_empty() && s.to_lowercase().contains(&pat.to_lowercase()) {
+            return Some(FrustrationSignal::ConfigPattern);
+        }
+    }
+
+    // Heuristic: ≥3 consecutive '!' or '?' — only on prompts with ≥5
+    // alphabetic chars (guards "OK!!")
+    let alpha_count = s.chars().filter(|c| c.is_alphabetic()).count();
+    if alpha_count >= 5 {
+        let mut run = 0u32;
+        let mut prev = '\0';
+        for ch in s.chars() {
+            if ch == '!' || ch == '?' {
+                if ch == prev { run += 1; } else { run = 1; }
+                if run >= 3 {
+                    return Some(FrustrationSignal::ExclamationRun);
+                }
+            } else {
+                run = 0;
+            }
+            prev = ch;
+        }
+    }
+
+    // Heuristic: caps ratio >0.6 on prompts with ≥20 alphabetic chars
+    if alpha_count >= 20 {
+        let upper = s.chars().filter(|c| c.is_uppercase()).count();
+        if upper as f64 / alpha_count as f64 > 0.6 {
+            return Some(FrustrationSignal::CapsRatio);
+        }
+    }
+
+    None
+}
+
+/// Load `enforcement.frustration_patterns` from `.hoangsa/config.json`.
+fn load_extra_patterns(cwd: &str) -> Vec<String> {
+    let config_path = Path::new(cwd).join(".hoangsa").join("config.json");
+    if !config_path.exists() {
+        return vec![];
+    }
+    let cfg = read_json(config_path.to_str().unwrap_or(""));
+    cfg.get("enforcement")
+        .and_then(|e| e.get("frustration_patterns"))
+        .and_then(|p| p.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `hook prompt-guard`
+///
+/// UserPromptSubmit hook: reads the hook payload JSON from stdin,
+/// extracts the prompt text, runs the frustration detector, and emits:
+///   - If frustration detected: append_event + hookSpecificOutput advice.
+///   - Otherwise: `{}` (no-op, never blocks).
+pub fn cmd_prompt_guard(cwd: &str) {
+    use std::io::Read as _;
+
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input).ok();
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(input.trim()).unwrap_or(json!({}));
+
+    // Extract prompt text: try .prompt, then .user_prompt, then raw string
+    let prompt_text = parsed
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .or_else(|| parsed.get("user_prompt").and_then(|v| v.as_str()))
+        .or_else(|| parsed.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    if prompt_text.is_empty() {
+        print!("{{}}");
+        return;
+    }
+
+    let extra = load_extra_patterns(cwd);
+    if let Some(signal) = detect_frustration(&prompt_text, &extra) {
+        let digest: String = prompt_text.chars().take(200).collect();
+        use super::events::append_event;
+        append_event(
+            cwd,
+            &json!({
+                "event": "frustration",
+                "signal": signal.as_str(),
+                "digest": digest,
+            }),
+        );
+        let advice = "User frustration detected. Before proceeding: (1) identify which pattern caused this — check LESSONS.md for any existing lesson that was violated; (2) if a lesson was violated, call memory_remember_lesson NOW with a concrete trigger+advice pair; (3) repair the issue rather than apologising.";
+        out(&json!({
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": advice,
+            }
+        }));
+    } else {
+        print!("{{}}");
+    }
+}
+
 /// `hook stop-check [sessions_dir]`
 ///
 /// Deterministic workflow-completion check for the Claude Code Stop hook.
@@ -94,6 +308,8 @@ pub(super) fn evaluate_reflect_prompt(cwd: &str, stdin_raw: &str) -> ReflectOutc
 
     // Claude Code sets stop_hook_active=true while it is already continuing
     // from a previous Stop-hook block. Re-blocking here would loop forever.
+    // Check this FIRST — before frustration escalation — so the loop guard
+    // always wins regardless of event log state.
     let stop_hook_active = payload
         .get("stop_hook_active")
         .and_then(|v| v.as_bool())
@@ -119,12 +335,107 @@ pub(super) fn evaluate_reflect_prompt(cwd: &str, stdin_raw: &str) -> ReflectOutc
         return ReflectOutcome::Skip;
     }
 
+    // Read the event log to check for frustration escalation and
+    // collect lesson_surfaced triggers for feedback.
+    let events_text = fs::read_to_string(enforcement_events_path(cwd))
+        .unwrap_or_default();
+    let (has_frustration, lesson_saved_after, surfaced_triggers) =
+        parse_stop_events(&events_text);
+
+    // Frustration escalation: if a frustration event exists with NO
+    // lesson_saved event after it, block and demand lesson distillation.
+    if has_frustration && !lesson_saved_after {
+        // Write sentinel so the next Stop (stop_hook_active=true path above)
+        // approves — but do NOT write it here; the agent must save a lesson
+        // first. We intentionally do NOT write the sentinel so the block
+        // can recur until the agent persists a lesson. The loop guard is the
+        // stop_hook_active check at the very top.
+        return ReflectOutcome::Prompt(
+            "HOANGSA FRUSTRATION BLOCK: A frustration signal was detected in this session \
+             and no lesson has been saved yet. Before stopping, call \
+             `memory_remember_lesson` with a concrete trigger and advice pair that \
+             explains what went wrong. Repair over apology.".to_string(),
+        );
+    }
+
+    // Emit lesson_surfaced event when we have surfaced triggers (best-effort).
+    if !surfaced_triggers.is_empty() {
+        use super::events::append_event;
+        append_event(
+            cwd,
+            &json!({
+                "event": "lesson_surfaced",
+                "triggers": surfaced_triggers.clone(),
+            }),
+        );
+
+        // Best-effort feedback to hoangsa-memory for each trigger.
+        // Binary missing or subcommand absent → silently skip, never panic.
+        // Interface: hoangsa-memory --root <root> memory lesson-feedback success|failure <TRIGGER>...
+        if let Some(memory_bin) = find_memory_bin() {
+            let memory_root = Path::new(cwd).join(".hoangsa").join("memory");
+            let kind = if has_frustration { "failure" } else { "success" };
+            for trigger in &surfaced_triggers {
+                let _ = std::process::Command::new(&memory_bin)
+                    .args(["--root", &memory_root.to_string_lossy()])
+                    .args(["memory", "lesson-feedback", kind, trigger.as_str()])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn();
+            }
+        }
+    }
+
     if let Some(parent) = sentinel.parent() {
         let _ = fs::create_dir_all(parent);
     }
     let _ = fs::write(&sentinel, "");
 
     ReflectOutcome::Prompt(REFLECT_REASON.to_string())
+}
+
+/// Scan the JSONL event log and return:
+///   (has_frustration, lesson_saved_after_last_frustration, lesson_surfaced_triggers)
+///
+/// `lesson_saved_after` is true when a `lesson_saved` event appears
+/// anywhere after the most recent `frustration` event.
+/// `surfaced_triggers` are trigger texts from `lesson_surfaced` events.
+pub(super) fn parse_stop_events(events_text: &str) -> (bool, bool, Vec<String>) {
+    let mut last_frustration_pos: Option<usize> = None;
+    let mut lesson_saved_positions: Vec<usize> = Vec::new();
+    let mut surfaced_triggers: Vec<String> = Vec::new();
+
+    for (pos, line) in events_text.lines().enumerate() {
+        let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        match entry.get("event").and_then(|e| e.as_str()) {
+            Some("frustration") => {
+                last_frustration_pos = Some(pos);
+            }
+            Some("lesson_saved") => {
+                lesson_saved_positions.push(pos);
+            }
+            Some("lesson_surfaced") => {
+                if let Some(triggers) = entry.get("triggers").and_then(|t| t.as_array()) {
+                    for t in triggers {
+                        if let Some(s) = t.as_str() {
+                            surfaced_triggers.push(s.to_string());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let has_frustration = last_frustration_pos.is_some();
+    let lesson_saved_after = last_frustration_pos
+        .map(|fp| lesson_saved_positions.iter().any(|&lp| lp > fp))
+        .unwrap_or(false);
+
+    (has_frustration, lesson_saved_after, surfaced_triggers)
 }
 
 /// `hook lesson-guard`
@@ -277,6 +588,25 @@ pub fn cmd_lesson_guard(cwd: &str) {
         .unwrap_or(false);
 
     let all_lessons_text = lessons.join("\n---\n");
+
+    // Emit lesson_surfaced event for the triggers we're about to surface.
+    {
+        use super::events::append_event;
+        let triggers: Vec<String> = lessons
+            .iter()
+            .map(|l| l.lines().next().unwrap_or("").trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !triggers.is_empty() {
+            append_event(
+                cwd,
+                &json!({
+                    "event": "lesson_surfaced",
+                    "triggers": triggers,
+                }),
+            );
+        }
+    }
 
     if let Some(lesson) = blocking_lesson {
         // Hard-block when editing an installed-copy path that a NEVER lesson
@@ -838,4 +1168,136 @@ fn now_iso_for_usage() -> String {
             "[year]-[month]-[day]T[hour]:[minute]:[second]Z"
         ))
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+
+    // ── Test 1: prompt_guard_detects_vi_and_en_frustration ───────────────────
+
+    #[test]
+    fn prompt_guard_detects_vi_and_en_frustration() {
+        // Vietnamese multi-word: "đã bảo bao nhiêu lần rồi" contains "đã bảo"
+        let result = detect_frustration("đã bảo bao nhiêu lần rồi", &[]);
+        assert!(result.is_some(), "đã bảo bao nhiêu lần rồi must detect frustration");
+
+        // English: "wtf again" matches "wtf" in lexicon
+        let result = detect_frustration("wtf again", &[]);
+        assert!(result.is_some(), "wtf again must detect frustration");
+
+        // All-caps Vietnamese: "SAO MÀY NGU THẾ" — ≥20 alpha chars with caps ratio >0.6
+        // or lexicon hit via "sao mày" / "ngu thế"
+        let result = detect_frustration("SAO MÀY NGU THẾ", &[]);
+        assert!(result.is_some(), "SAO MÀY NGU THẾ must detect frustration");
+    }
+
+    // ── Test 2: prompt_guard_ignores_normal_prompts ──────────────────────────
+
+    #[test]
+    fn prompt_guard_ignores_normal_prompts() {
+        // Ordinary technical prompt
+        let result = detect_frustration("Please fix the null pointer in auth.rs line 42", &[]);
+        assert!(result.is_none(), "ordinary technical prompt must not trigger detection");
+
+        // Sketchy word inside a code fence must be stripped
+        let fenced = "Here is the function:\n```\nfn stupid_var() { }\n```\nPlease review.";
+        let result = detect_frustration(fenced, &[]);
+        assert!(result.is_none(), "lexicon hit inside ``` fence must not trigger; got: {result:?}");
+
+        // "OK!!" — only two exclamation marks, alpha_count < 5
+        let result = detect_frustration("OK!!", &[]);
+        assert!(result.is_none(), "OK!! must not trigger (length guard)");
+    }
+
+    // ── Test 3: stop_check_blocks_frustration_without_lesson ─────────────────
+
+    #[test]
+    fn stop_check_blocks_frustration_without_lesson() {
+        use std::fs;
+
+        // ── Case A: frustration with no lesson_saved → block ─────────────────
+        {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let cwd = tmp.path();
+            // Write a non-empty events file with a frustration event but no lesson_saved
+            let events_path = cwd
+                .join(".hoangsa")
+                .join("state")
+                .join("enforcement.events");
+            fs::create_dir_all(events_path.parent().unwrap()).unwrap();
+            fs::write(
+                &events_path,
+                "{\"event\":\"impact\"}\n{\"event\":\"frustration\",\"signal\":\"wtf\"}\n",
+            )
+            .unwrap();
+
+            let outcome = evaluate_reflect_prompt(cwd.to_str().unwrap(), "{}");
+            match outcome {
+                ReflectOutcome::Prompt(reason) => {
+                    assert!(
+                        reason.contains("FRUSTRATION BLOCK") || reason.contains("lesson"),
+                        "block reason must mention frustration or lesson; got: {reason}"
+                    );
+                }
+                ReflectOutcome::Skip => panic!("expected frustration block, got Skip"),
+            }
+        }
+
+        // ── Case B: frustration followed by lesson_saved → normal reflect, not frustration-block ─
+        {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let cwd = tmp.path();
+            let events_path = cwd
+                .join(".hoangsa")
+                .join("state")
+                .join("enforcement.events");
+            fs::create_dir_all(events_path.parent().unwrap()).unwrap();
+            // frustration at line 0, lesson_saved at line 1 → lesson_saved_after=true
+            fs::write(
+                &events_path,
+                "{\"event\":\"frustration\",\"signal\":\"wtf\"}\n{\"event\":\"lesson_saved\"}\n",
+            )
+            .unwrap();
+
+            let outcome = evaluate_reflect_prompt(cwd.to_str().unwrap(), "{}");
+            // Should NOT be a frustration block; the normal memory-reflect prompt fires instead
+            match &outcome {
+                ReflectOutcome::Prompt(reason) => {
+                    assert!(
+                        !reason.contains("FRUSTRATION BLOCK"),
+                        "must not be frustration-block when lesson_saved follows frustration; got: {reason}"
+                    );
+                    assert!(
+                        reason.contains("memory-reflect"),
+                        "expected normal memory-reflect prompt; got: {reason}"
+                    );
+                }
+                ReflectOutcome::Skip => panic!("expected reflect Prompt, got Skip"),
+            }
+        }
+
+        // ── Case C: stop_hook_active=true → approve (loop guard) ────────────
+        {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let cwd = tmp.path();
+            let events_path = cwd
+                .join(".hoangsa")
+                .join("state")
+                .join("enforcement.events");
+            fs::create_dir_all(events_path.parent().unwrap()).unwrap();
+            fs::write(
+                &events_path,
+                "{\"event\":\"frustration\",\"signal\":\"wtf\"}\n",
+            )
+            .unwrap();
+
+            let outcome =
+                evaluate_reflect_prompt(cwd.to_str().unwrap(), r#"{"stop_hook_active":true}"#);
+            assert!(
+                matches!(outcome, ReflectOutcome::Skip),
+                "stop_hook_active=true must always approve (loop guard)"
+            );
+        }
+    }
 }

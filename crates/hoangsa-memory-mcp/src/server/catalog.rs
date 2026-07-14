@@ -474,6 +474,127 @@ pub(super) fn tools_catalog() -> Vec<Tool> {
                 }
             }),
         },
+        // ---- graph traversal / analytics tools ----
+        Tool {
+            name: "memory_graph_query".to_string(),
+            description: "BFS traversal of the code graph from one or more starting FQNs. \
+                          Returns a subgraph of reachable nodes and edges in JSON (default) \
+                          or Graphviz DOT format. Unknown FQNs are listed in `unresolved` \
+                          rather than causing an error."
+                .to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "start": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Starting FQN(s) for BFS (exact or suffix-resolved)."
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["out", "in", "both"],
+                        "default": "out",
+                        "description": "Edge direction to follow."
+                    },
+                    "edge_kinds": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Filter to these edge kinds only (calls, imports, references, extends, declared_in, emits, subscribes). Omit for all kinds."
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 3,
+                        "description": "Maximum BFS depth."
+                    },
+                    "max_nodes": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 500,
+                        "description": "Maximum number of nodes in the output. `truncated` is set when the cap is hit."
+                    },
+                    "format": {
+                        "type": "string",
+                        "enum": ["json", "dot"],
+                        "default": "json",
+                        "description": "Output format: json (default) or Graphviz DOT."
+                    }
+                },
+                "required": ["start"]
+            }),
+        },
+        Tool {
+            name: "memory_graph_paths".to_string(),
+            description: "Find the shortest path between two FQNs in the code graph. \
+                          Returns `found: false` when no path exists (unknown FQNs or \
+                          unreachable within max_depth). Does not error on unknown FQNs."
+                .to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "from": { "type": "string", "description": "Source FQN." },
+                    "to":   { "type": "string", "description": "Destination FQN." },
+                    "edge_kinds": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Restrict path search to these edge kinds. Omit for all kinds."
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["out", "in", "both"],
+                        "default": "out"
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 10,
+                        "description": "Maximum hop count."
+                    }
+                },
+                "required": ["from", "to"]
+            }),
+        },
+        Tool {
+            name: "memory_graph_communities".to_string(),
+            description: "Detect communities of closely-related symbols via label propagation \
+                          over Calls, Imports, and Extends edges. Returns communities sorted \
+                          by size (largest first). Empty graph returns an empty list."
+                .to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "min_size": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 3,
+                        "description": "Drop communities smaller than this."
+                    }
+                }
+            }),
+        },
+        Tool {
+            name: "memory_graph_processes".to_string(),
+            description: "Trace process flows from entry-point symbols (those ending in `::main` \
+                          or matching `entry_globs`). Follows Calls edges depth-first up to \
+                          max_depth, cycle-safe. Returns one flow per entry point."
+                .to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "max_depth": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 8,
+                        "description": "Maximum DFS depth from each entry point."
+                    },
+                    "entry_globs": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Additional glob patterns for entry-point detection (supports * prefix/suffix). Symbols ending in `::main` are always included."
+                    }
+                }
+            }),
+        },
     ]
 }
 

@@ -154,6 +154,10 @@ impl Server {
             "memory_archive_topics" => self.tool_archive_topics(arguments).await,
             "memory_archive_search" => self.tool_archive_search(arguments).await,
             "memory_archive_ingest" => self.tool_archive_ingest(arguments).await,
+            "memory_graph_query" => self.tool_graph_query(arguments).await,
+            "memory_graph_paths" => self.tool_graph_paths(arguments).await,
+            "memory_graph_communities" => self.tool_graph_communities(arguments).await,
+            "memory_graph_processes" => self.tool_graph_processes(arguments).await,
             other => {
                 return Err(RpcError::new(
                     error_codes::METHOD_NOT_FOUND,

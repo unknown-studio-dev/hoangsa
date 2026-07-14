@@ -54,6 +54,8 @@ PROMPT=$("$HOANGSA_ROOT/bin/hoangsa-cli" envelope "$SESSION_DIR" "<task.id>" --k
 
 This emits the complete worker prompt: composed worker rules (middleware chain over base + matched addons + project overrides — `hoangsa-cli help rules`), the task envelope from plan.json (files, context pointers, test cases, edge cases), matched lessons from LESSONS.md, context pack, skill registry, tool restrictions, and instructions. It also creates the evidence dir for `ui: true` tasks. Do NOT hand-assemble worker prompts.
 
+**The first line of the envelope is `MODEL: <resolved>`** — config routing already applied (role from task.type, override > profile). Spawn the worker with EXACTLY that model; a worker silently inheriting the orchestrator's model burns the cost difference on every task. Include the model in the task's `stats record` JSON (`"model"` field) so `stats summary` exposes routing drift.
+
 **2. Spawn one subagent per task** (Task tool, `WORKER_MODEL`, `MEMORY_ACTOR=hoangsa/cook-wave-<N>`), agent type by `task.type`:
 
 | task.type | Agent definition |

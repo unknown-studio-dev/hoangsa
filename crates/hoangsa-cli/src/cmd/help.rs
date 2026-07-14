@@ -224,7 +224,8 @@ Usage:
   hoangsa-cli hook post-enforce     PostToolUse — record outcomes
   hoangsa-cli hook rule-gate        Legacy alias for pattern-only gating
   hoangsa-cli hook stop-check       Stop — block if workflow not closed
-  hoangsa-cli hook lesson-guard     UserPromptSubmit — inject lessons
+  hoangsa-cli hook prompt-guard     UserPromptSubmit — frustration sensor
+  hoangsa-cli hook lesson-guard     PreToolUse — inject lessons before edits
   hoangsa-cli hook session-start    SessionStart — auto-inject USER/MEMORY/LESSONS
   hoangsa-cli hook session-archive  PreCompact — archive curated turns
   hoangsa-cli hook session-usage    Session usage snapshot
@@ -354,6 +355,7 @@ Usage:
   hoangsa-cli stats record '<json>'
   hoangsa-cli stats summary [--last N] [--complexity low|medium|high]
   hoangsa-cli stats cache   [-n top] [-s session_id]
+  hoangsa-cli stats report  --all [projectDir]
 
 `record` appends an event; `summary` aggregates recent sessions; `cache`
 prints cache-hit statistics per session."

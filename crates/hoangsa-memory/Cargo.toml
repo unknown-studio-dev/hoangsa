@@ -34,4 +34,9 @@ indicatif            = "0.18"
 tikv-jemallocator = { workspace = true }
 
 [dev-dependencies]
-tempfile = { workspace = true }
+tempfile   = { workspace = true }
+serde_json = { workspace = true }
+
+[[test]]
+name = "integration_graph"
+path = "tests/integration_graph.rs"

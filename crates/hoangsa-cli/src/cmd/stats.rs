@@ -18,6 +18,10 @@ pub struct TaskUsageRecord {
     pub content_tokens_received: u64,
     pub cache_scenario: String,
     pub timestamp: String,
+    /// Model the worker actually ran on — surfaces config-vs-reality routing
+    /// drift in `stats summary`. Optional for pre-existing records.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -186,10 +190,21 @@ fn chrono_like_now() -> String {
     format!("{secs}")
 }
 
-/// `stats report <sessionDir>` — tokens per phase + task outcomes from plan.json.
-/// The effectiveness dashboard: tokens spent per completed task, failure counts,
-/// fix rounds. This is what tells us whether the harness overhead pays for itself.
-pub fn cmd_report(session_dir: &str) {
+/// Per-session aggregation of phase-stats.jsonl + plan.json task outcomes.
+struct SessionReport {
+    phases: std::collections::BTreeMap<String, u64>,
+    total_tokens: u64,
+    fix_rounds: u64,
+    tasks_total: u64,
+    completed: u64,
+    failed: u64,
+    ui_tasks: u64,
+}
+
+/// Aggregate one session dir: tokens per phase from phase-stats.jsonl
+/// (malformed lines skipped) and task outcomes from plan.json (missing
+/// plan.json → all task counts zero).
+fn aggregate_session(session_dir: &str) -> SessionReport {
     let mut phases: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
     let mut fix_rounds = 0u64;
     let path = Path::new(session_dir).join("phase-stats.jsonl");
@@ -205,7 +220,7 @@ pub fn cmd_report(session_dir: &str) {
             }
         }
     }
-    let total: u64 = phases.values().sum();
+    let total_tokens: u64 = phases.values().sum();
 
     let plan = crate::helpers::read_json(
         Path::new(session_dir).join("plan.json").to_str().unwrap_or(""),
@@ -228,13 +243,90 @@ pub fn cmd_report(session_dir: &str) {
         }
     }
 
+    SessionReport {
+        phases,
+        total_tokens,
+        fix_rounds,
+        tasks_total,
+        completed,
+        failed,
+        ui_tasks,
+    }
+}
+
+/// `stats report <sessionDir>` — tokens per phase + task outcomes from plan.json.
+/// The effectiveness dashboard: tokens spent per completed task, failure counts,
+/// fix rounds. This is what tells us whether the harness overhead pays for itself.
+pub fn cmd_report(session_dir: &str) {
+    let r = aggregate_session(session_dir);
     out(&json!({
-        "phases": phases,
-        "total_tokens": total,
-        "tokens_per_completed_task": if completed > 0 { total / completed } else { 0 },
-        "tasks": { "total": tasks_total, "completed": completed, "failed": failed },
-        "ui_tasks": ui_tasks,
-        "fix_rounds": fix_rounds,
+        "phases": r.phases,
+        "total_tokens": r.total_tokens,
+        "tokens_per_completed_task": if r.completed > 0 { r.total_tokens / r.completed } else { 0 },
+        "tasks": { "total": r.tasks_total, "completed": r.completed, "failed": r.failed },
+        "ui_tasks": r.ui_tasks,
+        "fix_rounds": r.fix_rounds,
+    }));
+}
+
+/// `stats report --all [projectDir]` — aggregate every session under
+/// `<projectDir>/.hoangsa/sessions/<type>/<name>/phase-stats.jsonl`.
+/// Missing sessions dir → empty sessions list and zeroed totals.
+pub fn cmd_report_all(project_dir: &str) {
+    let sessions_root = Path::new(project_dir).join(".hoangsa").join("sessions");
+    let mut sessions: Vec<Value> = Vec::new();
+    let mut total_tokens = 0u64;
+    let mut completed_tasks = 0u64;
+    let mut failed_tasks = 0u64;
+    let mut fix_rounds = 0u64;
+
+    let mut session_dirs: Vec<(String, std::path::PathBuf)> = Vec::new();
+    if let Ok(types) = fs::read_dir(&sessions_root) {
+        for type_entry in types.flatten() {
+            let type_path = type_entry.path();
+            if !type_path.is_dir() {
+                continue;
+            }
+            let type_name = type_entry.file_name().to_string_lossy().to_string();
+            if let Ok(names) = fs::read_dir(&type_path) {
+                for name_entry in names.flatten() {
+                    let session_path = name_entry.path();
+                    if !session_path.join("phase-stats.jsonl").is_file() {
+                        continue;
+                    }
+                    let name = name_entry.file_name().to_string_lossy().to_string();
+                    session_dirs.push((format!("{type_name}/{name}"), session_path));
+                }
+            }
+        }
+    }
+    session_dirs.sort_by(|a, b| a.0.cmp(&b.0));
+
+    for (id, session_path) in &session_dirs {
+        let r = aggregate_session(session_path.to_str().unwrap_or(""));
+        total_tokens += r.total_tokens;
+        completed_tasks += r.completed;
+        failed_tasks += r.failed;
+        fix_rounds += r.fix_rounds;
+        sessions.push(json!({
+            "id": id,
+            "total_tokens": r.total_tokens,
+            "phases": r.phases,
+            "tasks": { "total": r.tasks_total, "completed": r.completed, "failed": r.failed },
+            "fix_rounds": r.fix_rounds,
+        }));
+    }
+
+    out(&json!({
+        "sessions": sessions,
+        "totals": {
+            "sessions": sessions.len() as u64,
+            "total_tokens": total_tokens,
+            "completed_tasks": completed_tasks,
+            "failed_tasks": failed_tasks,
+            "fix_rounds": fix_rounds,
+            "tokens_per_completed_task": if completed_tasks > 0 { total_tokens / completed_tasks } else { 0 },
+        },
     }));
 }
 
@@ -351,6 +443,13 @@ pub fn cmd_summary(args: &[&str]) {
         }
     }
 
+    // Model distribution — makes config-vs-reality routing drift visible
+    let mut by_model: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    for r in &all_records {
+        let key = r.model.clone().unwrap_or_else(|| "unrecorded".to_string());
+        *by_model.entry(key).or_insert(0) += 1;
+    }
+
     let output = json!({
         "total_records": total_records,
         "filtered_records": filtered_count,
@@ -359,6 +458,7 @@ pub fn cmd_summary(args: &[&str]) {
         "avg_ratio": avg_ratio,
         "calibration": calibration,
         "by_complexity": Value::Object(by_complexity),
+        "by_model": by_model,
     });
 
     out(&output);
@@ -439,6 +539,7 @@ mod tests {
             content_tokens_received: 4000,
             cache_scenario: "warm".to_string(),
             timestamp: "2026-04-20T05:00:00Z".to_string(),
+            model: None,
         }
     }
 
@@ -719,6 +820,112 @@ mod tests {
         // low and high with no records should default to 1.0
         assert_eq!(result.low, 1.0);
         assert_eq!(result.high, 1.0);
+    }
+
+    /// Write a session fixture dir: phase-stats.jsonl lines plus optional plan.json.
+    fn write_session(session_dir: &std::path::Path, jsonl_lines: &[&str], plan: Option<&Value>) {
+        fs::create_dir_all(session_dir).expect("create session dir");
+        let mut f =
+            fs::File::create(session_dir.join("phase-stats.jsonl")).expect("create phase-stats");
+        for line in jsonl_lines {
+            writeln!(f, "{}", line).expect("write jsonl line");
+        }
+        if let Some(p) = plan {
+            fs::write(
+                session_dir.join("plan.json"),
+                serde_json::to_string_pretty(p).expect("serialize plan"),
+            )
+            .expect("write plan.json");
+        }
+    }
+
+    #[test]
+    fn report_all_aggregates_sessions() {
+        let dir = make_temp_dir("report_all_aggregates");
+        let alpha = dir.join(".hoangsa/sessions/feat/alpha");
+        let beta = dir.join(".hoangsa/sessions/fix/beta");
+        write_session(
+            &alpha,
+            &[
+                r#"{"phase":"prepare","tokens":1000}"#,
+                r#"{"phase":"cook","tokens":3000}"#,
+                r#"{"phase":"fix","tokens":500}"#,
+            ],
+            Some(&json!({ "tasks": [
+                { "id": "T-01", "status": "completed" },
+                { "id": "T-02", "status": "failed" },
+                { "id": "T-03", "status": "done", "ui": true },
+            ]})),
+        );
+        write_session(
+            &beta,
+            &[
+                r#"{"phase":"prepare","tokens":700}"#,
+                r#"{"phase":"cook","tokens":800}"#,
+            ],
+            Some(&json!({ "tasks": [{ "id": "T-01", "status": "completed" }] })),
+        );
+
+        let a = aggregate_session(alpha.to_str().expect("alpha path str"));
+        let b = aggregate_session(beta.to_str().expect("beta path str"));
+        cleanup(&dir);
+
+        // Per-session rows
+        assert_eq!(a.phases.get("prepare"), Some(&1000));
+        assert_eq!(a.phases.get("cook"), Some(&3000));
+        assert_eq!(a.phases.get("fix"), Some(&500));
+        assert_eq!(a.total_tokens, 4500, "alpha total must sum all phases");
+        assert_eq!(a.fix_rounds, 1);
+        assert_eq!(a.tasks_total, 3);
+        assert_eq!(a.completed, 2, "'completed' and 'done' both count as completed");
+        assert_eq!(a.failed, 1);
+        assert_eq!(a.ui_tasks, 1);
+
+        assert_eq!(b.phases.get("prepare"), Some(&700));
+        assert_eq!(b.phases.get("cook"), Some(&800));
+        assert_eq!(b.total_tokens, 1500);
+        assert_eq!(b.fix_rounds, 0);
+        assert_eq!(b.tasks_total, 1);
+        assert_eq!(b.completed, 1);
+        assert_eq!(b.failed, 0);
+
+        // Workspace totals across both sessions
+        let total_tokens = a.total_tokens + b.total_tokens;
+        let completed = a.completed + b.completed;
+        assert_eq!(total_tokens, 6000, "workspace total_tokens must sum sessions");
+        assert_eq!(completed, 3, "workspace completed must sum sessions");
+        // tokens_per_completed_task = total / completed
+        assert_eq!(total_tokens / completed, 2000);
+    }
+
+    #[test]
+    fn report_all_skips_malformed_and_planless() {
+        let dir = make_temp_dir("report_all_malformed_planless");
+        let session = dir.join(".hoangsa/sessions/feat/gamma");
+        // One malformed (non-JSON) line among valid records; no plan.json at all.
+        write_session(
+            &session,
+            &[
+                r#"{"phase":"prepare","tokens":100}"#,
+                "this is not json {]",
+                r#"{"phase":"cook","tokens":200}"#,
+            ],
+            None,
+        );
+
+        let r = aggregate_session(session.to_str().expect("session path str"));
+        cleanup(&dir);
+
+        // Malformed line skipped: only the two valid records aggregate.
+        assert_eq!(r.phases.len(), 2, "malformed line must not create a phase entry");
+        assert_eq!(r.phases.get("prepare"), Some(&100));
+        assert_eq!(r.phases.get("cook"), Some(&200));
+        assert_eq!(r.total_tokens, 300);
+        // No plan.json: tokens still counted, all task counts zero.
+        assert_eq!(r.tasks_total, 0);
+        assert_eq!(r.completed, 0);
+        assert_eq!(r.failed, 0);
+        assert_eq!(r.ui_tasks, 0);
     }
 
     #[test]

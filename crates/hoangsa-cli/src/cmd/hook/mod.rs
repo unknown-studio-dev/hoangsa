@@ -11,7 +11,8 @@ pub use enforce::cmd_enforce;
 pub use enforce::{intent_guard_bash_commit, intent_guard_edit, IntentOutcome};
 pub use events::{cmd_enforce_override, cmd_enforce_report, cmd_post_enforce};
 pub use session::{
-    cmd_lesson_guard, cmd_session_archive, cmd_session_start, cmd_session_usage, cmd_stop_check,
+    cmd_lesson_guard, cmd_prompt_guard, cmd_session_archive, cmd_session_start, cmd_session_usage,
+    cmd_stop_check,
 };
 pub use state::{cmd_state_check, cmd_state_clear, cmd_state_record};
 

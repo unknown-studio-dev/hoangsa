@@ -1,12 +1,19 @@
-//! Code-graph tools: impact, symbol context, event trace, and diff-driven
-//! change detection.
+//! Code-graph tools: impact, symbol context, event trace, diff-driven
+//! change detection, and new graph traversal/analytics tools.
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use hoangsa_memory_graph::{Direction, EdgeKind, TraverseSpec};
+
 use crate::proto::ToolOutput;
 
 use super::Server;
+
+/// All valid edge-kind tag strings for user-facing error messages.
+const VALID_EDGE_KINDS: &[&str] = &[
+    "calls", "imports", "references", "extends", "declared_in", "emits", "subscribes",
+];
 
 impl Server {
     // ---- graph tools -----------------------------------------------------
@@ -751,4 +758,418 @@ fn parse_post_image_range(header: &str) -> Option<(u32, u32)> {
         None => (body, "1"),
     };
     Some((start_str.parse().ok()?, count_str.parse().ok()?))
+}
+
+// ---- new graph traversal / analytics tools ---------------------------------
+
+impl Server {
+    /// BFS traversal from one or more FQNs, returning a Subgraph in JSON or DOT format.
+    pub(super) async fn tool_graph_query(&self, args: Value) -> anyhow::Result<ToolOutput> {
+        #[derive(Deserialize)]
+        struct Args {
+            start: Vec<String>,
+            #[serde(default)]
+            direction: Option<String>,
+            #[serde(default)]
+            edge_kinds: Option<Vec<String>>,
+            #[serde(default)]
+            max_depth: Option<usize>,
+            #[serde(default)]
+            max_nodes: Option<usize>,
+            #[serde(default)]
+            format: Option<String>,
+        }
+        let Args {
+            start,
+            direction,
+            edge_kinds,
+            max_depth,
+            max_nodes,
+            format,
+        } = serde_json::from_value(args)?;
+
+        if start.is_empty() {
+            return Ok(ToolOutput::error("start must be a non-empty array".to_string()));
+        }
+
+        let dir = parse_direction(direction.as_deref().unwrap_or("out"))?;
+        let kinds = parse_edge_kinds(edge_kinds.as_deref())?;
+        let max_depth = max_depth.unwrap_or(3);
+        let max_nodes = max_nodes.unwrap_or(500);
+        let use_dot = matches!(format.as_deref(), Some("dot"));
+
+        let res = self.resources().await?;
+        let g = &res.graph;
+
+        let spec = TraverseSpec {
+            start,
+            direction: dir,
+            edge_kinds: kinds,
+            max_depth,
+            max_nodes,
+        };
+        let sg = g.traverse(&spec).await?;
+
+        if use_dot {
+            let dot = sg.to_dot();
+            Ok(ToolOutput::new(json!({ "dot": dot }), dot))
+        } else {
+            let json = sg.to_json();
+            let text = format!(
+                "subgraph: {} node(s), {} edge(s){}{}",
+                sg.nodes.len(),
+                sg.edges.len(),
+                if sg.truncated { ", truncated" } else { "" },
+                if sg.unresolved.is_empty() {
+                    String::new()
+                } else {
+                    format!(", unresolved: {}", sg.unresolved.join(", "))
+                },
+            );
+            Ok(ToolOutput::new(json, text))
+        }
+    }
+
+    /// BFS shortest path between two FQNs.
+    pub(super) async fn tool_graph_paths(&self, args: Value) -> anyhow::Result<ToolOutput> {
+        #[derive(Deserialize)]
+        struct Args {
+            from: String,
+            to: String,
+            #[serde(default)]
+            edge_kinds: Option<Vec<String>>,
+            #[serde(default)]
+            direction: Option<String>,
+            #[serde(default)]
+            max_depth: Option<usize>,
+        }
+        let Args {
+            from,
+            to,
+            edge_kinds,
+            direction,
+            max_depth,
+        } = serde_json::from_value(args)?;
+
+        let dir = parse_direction(direction.as_deref().unwrap_or("out"))?;
+        let kinds = parse_edge_kinds(edge_kinds.as_deref())?;
+        let max_depth = max_depth.unwrap_or(10);
+
+        let res = self.resources().await?;
+        let g = &res.graph;
+
+        let path = g
+            .shortest_path(&from, &to, kinds.as_deref(), dir, max_depth)
+            .await?;
+
+        match path {
+            None => {
+                let text = format!("no path from {from} to {to}");
+                Ok(ToolOutput::new(
+                    json!({ "found": false, "path": [] }),
+                    text,
+                ))
+            }
+            Some(edges) => {
+                let path_json: Vec<Value> = edges
+                    .iter()
+                    .map(|e| {
+                        json!({
+                            "from": e.from,
+                            "to": e.to,
+                            "kind": e.kind.tag(),
+                        })
+                    })
+                    .collect();
+                let text = if edges.is_empty() {
+                    format!("{from} == {to} (same node)")
+                } else {
+                    let hops: Vec<String> = edges.iter().map(|e| e.to.clone()).collect();
+                    format!("{from} → {}", hops.join(" → "))
+                };
+                Ok(ToolOutput::new(
+                    json!({ "found": true, "path": path_json }),
+                    text,
+                ))
+            }
+        }
+    }
+
+    /// Detect communities via label propagation.
+    pub(super) async fn tool_graph_communities(&self, args: Value) -> anyhow::Result<ToolOutput> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default)]
+            min_size: Option<usize>,
+        }
+        let Args { min_size } = serde_json::from_value(args)?;
+        let min_size = min_size.unwrap_or(3);
+
+        let res = self.resources().await?;
+        let g = &res.graph;
+
+        let communities = g.communities(min_size).await?;
+
+        let communities_json: Vec<Value> = communities
+            .iter()
+            .map(|c| {
+                json!({
+                    "id": c.id,
+                    "name": c.name,
+                    "size": c.members.len(),
+                    "members": c.members,
+                })
+            })
+            .collect();
+
+        let text = if communities.is_empty() {
+            format!("no communities of size >= {min_size}")
+        } else {
+            let mut s = format!("{} community/communities (min_size={min_size}):\n", communities.len());
+            for c in &communities {
+                s.push_str(&format!("  {} [{}]: {} members\n", c.name, c.id, c.members.len()));
+            }
+            s
+        };
+
+        Ok(ToolOutput::new(json!({ "communities": communities_json }), text))
+    }
+
+    /// Trace process flows from entry points.
+    pub(super) async fn tool_graph_processes(&self, args: Value) -> anyhow::Result<ToolOutput> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default)]
+            max_depth: Option<usize>,
+            #[serde(default)]
+            entry_globs: Option<Vec<String>>,
+        }
+        let Args {
+            max_depth,
+            entry_globs,
+        } = serde_json::from_value(args)?;
+        let max_depth = max_depth.unwrap_or(8);
+        let entry_globs = entry_globs.unwrap_or_default();
+
+        let res = self.resources().await?;
+        let g = &res.graph;
+
+        let flows = g.processes(max_depth, &entry_globs).await?;
+
+        let flows_json: Vec<Value> = flows
+            .iter()
+            .map(|f| {
+                let chain: Vec<Value> = f
+                    .chain
+                    .iter()
+                    .map(|e| {
+                        json!({
+                            "from": e.from,
+                            "to": e.to,
+                            "kind": e.kind.tag(),
+                        })
+                    })
+                    .collect();
+                json!({
+                    "entry": f.entry,
+                    "chain_length": f.chain.len(),
+                    "chain": chain,
+                })
+            })
+            .collect();
+
+        let text = if flows.is_empty() {
+            "no process entry points found".to_string()
+        } else {
+            let mut s = format!("{} process flow(s):\n", flows.len());
+            for f in &flows {
+                s.push_str(&format!("  {} ({} edges)\n", f.entry, f.chain.len()));
+            }
+            s
+        };
+
+        Ok(ToolOutput::new(json!({ "processes": flows_json }), text))
+    }
+}
+
+// ---- spec-named tests (T-04) -----------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use crate::Server;
+    use crate::proto::RpcIncoming;
+
+    async fn open_server() -> (Server, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let srv = Server::open(tmp.path()).await.expect("Server::open");
+        (srv, tmp)
+    }
+
+    fn rpc_call(id: i64, tool: &str, args: serde_json::Value) -> RpcIncoming {
+        serde_json::from_value(json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "hoangsa-memory.call",
+            "params": {
+                "name": tool,
+                "arguments": args,
+            }
+        }))
+        .expect("valid RpcIncoming")
+    }
+
+    /// Seed the server's graph with a tiny fixture:
+    ///   crate::main -calls-> crate::run -calls-> crate::helper
+    /// plus two dense clusters a::* and b::* for communities.
+    async fn seed_graph(srv: &Server) {
+        let res = srv.resources().await.expect("resources");
+        let g = &res.graph;
+
+        use hoangsa_memory_graph::{Edge, EdgeKind, Node};
+        use std::path::PathBuf;
+
+        let node = |fqn: &str| Node {
+            fqn: fqn.to_string(),
+            kind: "function".to_string(),
+            path: PathBuf::from("src/lib.rs"),
+            line: 1,
+        };
+        let edge = |from: &str, to: &str, kind: EdgeKind| Edge {
+            from: from.to_string(),
+            to: to.to_string(),
+            kind,
+        };
+
+        g.upsert_nodes_batch(vec![
+            node("crate::main"),
+            node("crate::run"),
+            node("crate::helper"),
+            node("a::f1"),
+            node("a::f2"),
+            node("a::f3"),
+            node("b::g1"),
+            node("b::g2"),
+            node("b::g3"),
+        ])
+        .await
+        .expect("upsert_nodes_batch");
+
+        g.upsert_edges_batch(vec![
+            edge("crate::main", "crate::run", EdgeKind::Calls),
+            edge("crate::run", "crate::helper", EdgeKind::Calls),
+            edge("a::f1", "a::f2", EdgeKind::Calls),
+            edge("a::f2", "a::f3", EdgeKind::Calls),
+            edge("a::f3", "a::f1", EdgeKind::Calls),
+            edge("b::g1", "b::g2", EdgeKind::Calls),
+            edge("b::g2", "b::g3", EdgeKind::Calls),
+            edge("b::g3", "b::g1", EdgeKind::Calls),
+        ])
+        .await
+        .expect("upsert_edges_batch");
+    }
+
+    /// Spec test 7: all four graph tools dispatch and return JSON results without RPC error.
+    #[tokio::test]
+    async fn graph_tools_dispatch_all_four() {
+        let (srv, _tmp) = open_server().await;
+        seed_graph(&srv).await;
+
+        // 1. memory_graph_query
+        let resp = srv
+            .handle(rpc_call(
+                1,
+                "memory_graph_query",
+                json!({ "start": ["crate::main"], "direction": "out", "max_depth": 2 }),
+            ))
+            .await
+            .expect("response");
+        assert!(resp.error.is_none(), "memory_graph_query: RPC error: {:?}", resp.error);
+        let result = resp.result.expect("memory_graph_query result");
+        assert_eq!(result["isError"], false, "memory_graph_query isError: {result}");
+        // The tool returns ToolOutput with data holding nodes/edges/truncated.
+        let data = &result["data"];
+        assert!(data.get("nodes").is_some(), "graph_query data must have nodes; got {data}");
+        assert!(data.get("edges").is_some(), "graph_query data must have edges; got {data}");
+        assert!(data.get("truncated").is_some(), "graph_query data must have truncated; got {data}");
+
+        // 2. memory_graph_paths
+        let resp = srv
+            .handle(rpc_call(
+                2,
+                "memory_graph_paths",
+                json!({ "from": "crate::main", "to": "crate::helper", "direction": "out" }),
+            ))
+            .await
+            .expect("response");
+        assert!(resp.error.is_none(), "memory_graph_paths: RPC error: {:?}", resp.error);
+        let result = resp.result.expect("memory_graph_paths result");
+        assert_eq!(result["isError"], false, "memory_graph_paths isError: {result}");
+        let data = &result["data"];
+        assert!(data.get("found").is_some(), "graph_paths data must have found; got {data}");
+        assert!(data.get("path").is_some(), "graph_paths data must have path; got {data}");
+        assert_eq!(data["found"], true, "path crate::main→crate::helper must be found");
+
+        // 3. memory_graph_communities
+        let resp = srv
+            .handle(rpc_call(
+                3,
+                "memory_graph_communities",
+                json!({ "min_size": 2 }),
+            ))
+            .await
+            .expect("response");
+        assert!(resp.error.is_none(), "memory_graph_communities: RPC error: {:?}", resp.error);
+        let result = resp.result.expect("memory_graph_communities result");
+        assert_eq!(result["isError"], false, "memory_graph_communities isError: {result}");
+        let data = &result["data"];
+        assert!(data.get("communities").is_some(), "graph_communities data must have communities; got {data}");
+
+        // 4. memory_graph_processes
+        let resp = srv
+            .handle(rpc_call(
+                4,
+                "memory_graph_processes",
+                json!({ "max_depth": 5 }),
+            ))
+            .await
+            .expect("response");
+        assert!(resp.error.is_none(), "memory_graph_processes: RPC error: {:?}", resp.error);
+        let result = resp.result.expect("memory_graph_processes result");
+        assert_eq!(result["isError"], false, "memory_graph_processes isError: {result}");
+        let data = &result["data"];
+        assert!(data.get("processes").is_some(), "graph_processes data must have processes; got {data}");
+    }
+}
+
+fn parse_direction(s: &str) -> anyhow::Result<Direction> {
+    match s {
+        "out" => Ok(Direction::Out),
+        "in" => Ok(Direction::In),
+        "both" => Ok(Direction::Both),
+        other => anyhow::bail!(
+            "invalid direction {other:?}; expected one of: out | in | both"
+        ),
+    }
+}
+
+/// Parse optional edge-kind strings. Returns `None` (= all kinds) when the
+/// slice is empty. Returns a tool error (via `Err`) when any tag is unknown.
+fn parse_edge_kinds(kinds: Option<&[String]>) -> anyhow::Result<Option<Vec<EdgeKind>>> {
+    let Some(ks) = kinds else { return Ok(None) };
+    if ks.is_empty() {
+        return Ok(None);
+    }
+    let mut out = Vec::with_capacity(ks.len());
+    for tag in ks {
+        match EdgeKind::from_tag(tag) {
+            Some(k) => out.push(k),
+            None => anyhow::bail!(
+                "unknown edge kind {tag:?}; valid values: {}",
+                VALID_EDGE_KINDS.join(", ")
+            ),
+        }
+    }
+    Ok(Some(out))
 }

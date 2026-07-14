@@ -26,6 +26,27 @@ pub enum MemoryCmd {
         #[arg(required = true)]
         advice: Vec<String>,
     },
+    /// Record a success or failure outcome for existing lesson(s).
+    LessonFeedback {
+        #[command(subcommand)]
+        cmd: LessonFeedbackCmd,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+pub enum LessonFeedbackCmd {
+    /// Increment the success counter for matching lesson(s).
+    Success {
+        /// Trigger(s) to match (case-insensitive).
+        #[arg(required = true)]
+        triggers: Vec<String>,
+    },
+    /// Increment the failure counter for matching lesson(s).
+    Failure {
+        /// Trigger(s) to match (case-insensitive).
+        #[arg(required = true)]
+        triggers: Vec<String>,
+    },
 }
 
 use anyhow::Result;
@@ -167,4 +188,93 @@ pub async fn run_lesson(root: &Path, when: String, advice: String) -> Result<()>
         store.path.join("LESSONS.md").display()
     );
     Ok(())
+}
+
+pub async fn run_lesson_feedback(
+    root: &Path,
+    triggers: Vec<String>,
+    success: bool,
+    json: bool,
+) -> Result<()> {
+    let store = StoreRoot::open(root).await?;
+    let bumped = if success {
+        store.markdown.bump_lesson_success(&triggers).await?
+    } else {
+        store.markdown.bump_lesson_failure(&triggers).await?
+    };
+    let kind = if success { "success" } else { "failure" };
+    // Output is JSON either way — machine consumers (stop-check) parse it
+    let _ = json;
+    println!("{}", serde_json::json!({ "bumped": bumped, "kind": kind }));
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hoangsa_memory_core::{Enforcement, Lesson, MemoryKind, MemoryMeta};
+
+    // ── Test 4: lesson_feedback_bumps_counters ────────────────────────────────
+
+    #[tokio::test]
+    async fn lesson_feedback_bumps_counters() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join(".hoangsa").join("memory");
+
+        // Seed a lesson in the store's exact format via append_lesson.
+        {
+            let store = StoreRoot::open(&root).await.expect("open store");
+            let lesson = Lesson {
+                meta: MemoryMeta::new(MemoryKind::Reflective),
+                trigger: "when editing migrations".to_string(),
+                advice: "Always run sqlx prepare after changing SQL.".to_string(),
+                success_count: 0,
+                failure_count: 0,
+                enforcement: Enforcement::Advise,
+                suggested_enforcement: None,
+                block_message: None,
+            };
+            store
+                .markdown
+                .append_lesson(&lesson)
+                .await
+                .expect("append lesson");
+        }
+
+        let trigger = vec!["when editing migrations".to_string()];
+
+        // success ×2
+        run_lesson_feedback(&root, trigger.clone(), true, false)
+            .await
+            .expect("feedback success 1");
+        run_lesson_feedback(&root, trigger.clone(), true, false)
+            .await
+            .expect("feedback success 2");
+        // failure ×1
+        run_lesson_feedback(&root, trigger.clone(), false, false)
+            .await
+            .expect("feedback failure 1");
+
+        // Read back LESSONS.md and assert rendered counters
+        let lessons_md = tokio::fs::read_to_string(root.join("LESSONS.md"))
+            .await
+            .expect("read LESSONS.md");
+        assert!(
+            lessons_md.contains("<!-- success: 2 / failure: 1 -->"),
+            "expected '<!-- success: 2 / failure: 1 -->' in LESSONS.md; got:\n{lessons_md}"
+        );
+
+        // Unknown trigger → bumped 0 (no-op)
+        run_lesson_feedback(&root, vec!["nonexistent trigger".to_string()], true, false)
+            .await
+            .expect("unknown trigger must not error");
+        // Counters should still be 2/1 — unknown trigger changes nothing
+        let lessons_md2 = tokio::fs::read_to_string(root.join("LESSONS.md"))
+            .await
+            .expect("read LESSONS.md again");
+        assert!(
+            lessons_md2.contains("<!-- success: 2 / failure: 1 -->"),
+            "unknown trigger must not change counters; got:\n{lessons_md2}"
+        );
+    }
 }
