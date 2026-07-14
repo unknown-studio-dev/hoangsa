@@ -1,4 +1,4 @@
-use crate::helpers::{out, read_json};
+use crate::helpers::{ERR_READ_CONFIG, out, read_json, require_arg};
 use serde_json::{Map, Value, json};
 use std::fs;
 use std::path::Path;
@@ -55,13 +55,7 @@ fn default_config() -> Value {
 
 /// `config get <projectDir>` — reads or creates default config.
 pub fn cmd_get(project_dir: Option<&str>) {
-    let project_dir = match project_dir {
-        Some(d) => d,
-        None => {
-            out(&json!({ "error": "projectDir is required" }));
-            return;
-        }
-    };
+    let Some(project_dir) = require_arg(project_dir, "projectDir") else { return };
 
     let config_dir = Path::new(project_dir).join(".hoangsa");
     let config_file = config_dir.join("config.json");
@@ -115,13 +109,7 @@ fn ensure_config(project_dir: &str) -> Option<Value> {
 
 /// `config set <projectDir> <jsonPatch>`
 pub fn cmd_set(project_dir: Option<&str>, json_patch: Option<&str>) {
-    let project_dir = match project_dir {
-        Some(d) => d,
-        None => {
-            out(&json!({ "error": "projectDir is required" }));
-            return;
-        }
-    };
+    let Some(project_dir) = require_arg(project_dir, "projectDir") else { return };
     let json_patch = match json_patch {
         Some(p) => p,
         None => {
@@ -131,12 +119,9 @@ pub fn cmd_set(project_dir: Option<&str>, json_patch: Option<&str>) {
     };
 
     // Ensure config exists (creates defaults silently — no extra JSON output)
-    let config = match ensure_config(project_dir) {
-        Some(c) => c,
-        None => {
-            out(&json!({ "error": "Cannot read config.json" }));
-            return;
-        }
+    let Some(config) = ensure_config(project_dir) else {
+        out(&json!({ "error": ERR_READ_CONFIG }));
+        return;
     };
 
     let patch: Value = match serde_json::from_str(json_patch) {

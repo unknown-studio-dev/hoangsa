@@ -150,6 +150,94 @@ pub fn cmd_record(json_data: Option<&str>) {
 
 /// `stats summary [--last N] [--complexity low|medium|high]`
 /// Reads token-usage.jsonl and outputs aggregated stats with calibration.
+/// `stats phase <sessionDir> <phase> <tokens> [note]` — append one phase-boundary
+/// record to `<sessionDir>/phase-stats.jsonl`. Called by workflows at each phase end.
+pub fn cmd_phase(session_dir: &str, phase: &str, tokens: &str, note: Option<&str>) {
+    let tokens: u64 = match tokens.parse() {
+        Ok(t) => t,
+        Err(_) => {
+            out(&json!({ "error": format!("tokens must be a number, got: {tokens}") }));
+            return;
+        }
+    };
+    let path = Path::new(session_dir).join("phase-stats.jsonl");
+    let record = json!({
+        "phase": phase,
+        "tokens": tokens,
+        "note": note,
+        "timestamp": chrono_like_now(),
+    });
+    let line = format!("{record}\n");
+    let ok = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut f| f.write_all(line.as_bytes()))
+        .is_ok();
+    out(&json!({ "recorded": ok, "phase": phase, "tokens": tokens }));
+}
+
+/// ISO-ish timestamp without pulling in chrono.
+fn chrono_like_now() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("{secs}")
+}
+
+/// `stats report <sessionDir>` — tokens per phase + task outcomes from plan.json.
+/// The effectiveness dashboard: tokens spent per completed task, failure counts,
+/// fix rounds. This is what tells us whether the harness overhead pays for itself.
+pub fn cmd_report(session_dir: &str) {
+    let mut phases: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    let mut fix_rounds = 0u64;
+    let path = Path::new(session_dir).join("phase-stats.jsonl");
+    if let Ok(f) = fs::File::open(&path) {
+        for line in BufReader::new(f).lines().map_while(Result::ok) {
+            if let Ok(v) = serde_json::from_str::<Value>(&line) {
+                let phase = v.get("phase").and_then(|p| p.as_str()).unwrap_or("?").to_string();
+                let tokens = v.get("tokens").and_then(|t| t.as_u64()).unwrap_or(0);
+                if phase == "fix" {
+                    fix_rounds += 1;
+                }
+                *phases.entry(phase).or_insert(0) += tokens;
+            }
+        }
+    }
+    let total: u64 = phases.values().sum();
+
+    let plan = crate::helpers::read_json(
+        Path::new(session_dir).join("plan.json").to_str().unwrap_or(""),
+    );
+    let mut tasks_total = 0u64;
+    let mut completed = 0u64;
+    let mut failed = 0u64;
+    let mut ui_tasks = 0u64;
+    if let Some(tasks) = plan.get("tasks").and_then(|t| t.as_array()) {
+        tasks_total = tasks.len() as u64;
+        for t in tasks {
+            match t.get("status").and_then(|s| s.as_str()) {
+                Some("completed") | Some("done") | Some("passed") => completed += 1,
+                Some("failed") => failed += 1,
+                _ => {}
+            }
+            if t.get("ui").and_then(|u| u.as_bool()).unwrap_or(false) {
+                ui_tasks += 1;
+            }
+        }
+    }
+
+    out(&json!({
+        "phases": phases,
+        "total_tokens": total,
+        "tokens_per_completed_task": if completed > 0 { total / completed } else { 0 },
+        "tasks": { "total": tasks_total, "completed": completed, "failed": failed },
+        "ui_tasks": ui_tasks,
+        "fix_rounds": fix_rounds,
+    }));
+}
+
 pub fn cmd_summary(args: &[&str]) {
     let workspace = current_workspace();
 

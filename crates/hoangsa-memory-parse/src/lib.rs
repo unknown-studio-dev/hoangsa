@@ -557,14 +557,13 @@ fn walk_ast(
         && let Some((owner, _)) = stack.last()
         && let Some(occ) = lang.extract_events(node, source)
     {
-        let (role, topic, topic_expr, bus_symbol, handler) = occ;
         table.events.push(EventEdge {
             owner: owner.clone(),
-            role,
-            topic,
-            topic_expr,
-            bus_symbol,
-            handler,
+            role: occ.role,
+            topic: occ.topic,
+            topic_expr: occ.topic_expr,
+            bus_symbol: occ.bus_symbol,
+            handler: occ.handler,
         });
     }
 

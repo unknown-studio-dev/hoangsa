@@ -193,6 +193,27 @@ Artifacts:
 
 ---
 
+## Step 5b: Effectiveness snapshot
+
+```bash
+"$HOANGSA_ROOT/bin/hoangsa-cli" stats report "$SESSION_DIR"
+```
+
+Show the numbers that answer "is the harness paying for itself" (skip the
+section when there are no phase records yet):
+
+```
+Hiệu quả:
+  Tokens: 70k tổng — menu 3k · prepare 2k · cook 49k · fix 14k · taste 2k
+  23.4k tokens/task hoàn thành · 1 vòng fix · 0 task fail
+```
+
+Flag anomalies plainly: a fix-round count ≥ task count means specs are too
+thin (route the user to tighten TEST-SPEC edge cases); a phase dwarfing the
+others is where the next optimization lives.
+
+---
+
 ## Rules
 
 Universal rules live in `common.md §Universal rules`. Check-specific additions:

@@ -1,4 +1,4 @@
-use crate::helpers::{out, read_json};
+use crate::helpers::{out, read_json, require_arg};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
@@ -206,20 +206,8 @@ fn build_context_pack(session_dir: &str, task_id: &str) -> Result<Value, Value> 
 
 /// `context pack <sessionDir> <taskId>`
 pub fn cmd_pack(session_dir: Option<&str>, task_id: Option<&str>) {
-    let session_dir = match session_dir {
-        Some(d) => d,
-        None => {
-            out(&json!({ "error": "sessionDir is required" }));
-            return;
-        }
-    };
-    let task_id = match task_id {
-        Some(t) => t,
-        None => {
-            out(&json!({ "error": "taskId is required" }));
-            return;
-        }
-    };
+    let Some(session_dir) = require_arg(session_dir, "sessionDir") else { return };
+    let Some(task_id) = require_arg(task_id, "taskId") else { return };
 
     let context_data = match build_context_pack(session_dir, task_id) {
         Ok(data) => data,
@@ -250,20 +238,8 @@ pub fn cmd_pack(session_dir: Option<&str>, task_id: Option<&str>) {
 
 /// `context get <sessionDir> <taskId>` — auto-packs if context file doesn't exist yet.
 pub fn cmd_get(session_dir: Option<&str>, task_id: Option<&str>) {
-    let session_dir = match session_dir {
-        Some(d) => d,
-        None => {
-            out(&json!({ "error": "sessionDir is required" }));
-            return;
-        }
-    };
-    let task_id = match task_id {
-        Some(t) => t,
-        None => {
-            out(&json!({ "error": "taskId is required" }));
-            return;
-        }
-    };
+    let Some(session_dir) = require_arg(session_dir, "sessionDir") else { return };
+    let Some(task_id) = require_arg(task_id, "taskId") else { return };
 
     let context_file = Path::new(session_dir).join(format!("task-{task_id}.context.json"));
     if context_file.exists() {

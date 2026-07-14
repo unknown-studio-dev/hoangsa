@@ -24,7 +24,6 @@ pub mod cap;
 pub mod config;
 pub mod manager;
 pub mod text_sim;
-pub mod working;
 
 // Re-export the most commonly used items at the crate root.
 pub use cap::{
@@ -33,7 +32,6 @@ pub use cap::{
 };
 pub use config::{CurationConfig, MemoryConfig};
 pub use manager::{ForgetReport, MemoryManager};
-pub use working::{WorkingMemory, WorkingNote};
 
 use time::OffsetDateTime;
 

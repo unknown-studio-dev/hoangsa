@@ -91,7 +91,7 @@ fn list(home: &std::path::Path, with_orphans: bool, json: bool) -> anyhow::Resul
     if projects.is_empty() {
         println!("(no registered projects)");
     } else {
-        println!("{:<32} {:<12} {}", "SLUG", "LAST_USED", "PATH");
+        println!("{:<32} {:<12} PATH", "SLUG", "LAST_USED");
         for p in &projects {
             let last = format_relative(p.last_used_at);
             println!("{:<32} {:<12} {}", p.slug, last, p.path.display());

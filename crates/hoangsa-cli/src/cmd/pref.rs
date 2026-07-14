@@ -1,4 +1,4 @@
-use crate::helpers::{out, read_json};
+use crate::helpers::{ERR_READ_CONFIG, out, read_json, require_arg};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
@@ -77,29 +77,21 @@ const KNOWN_KEYS: &[&str] = &[
     "quality_gate",
     "test_runs",
     "context_mode",
+    "chain_mode",
     "memory_strict",
     "profile",
 ];
 
 /// `pref get <projectDir> <key>` — read a preference from config.json
 pub fn cmd_get(project_dir: Option<&str>, key: Option<&str>) {
-    let project_dir = match project_dir {
-        Some(d) => d,
-        None => {
-            out(&json!({ "error": "projectDir is required" }));
-            return;
-        }
-    };
+    let Some(project_dir) = require_arg(project_dir, "projectDir") else { return };
     let key = match key {
         Some(k) => k,
         None => {
             // No key → return all preferences
-            let config = match ensure_config(project_dir) {
-                Some(c) => c,
-                None => {
-                    out(&json!({ "error": "Cannot read config.json" }));
-                    return;
-                }
+            let Some(config) = ensure_config(project_dir) else {
+                out(&json!({ "error": ERR_READ_CONFIG }));
+                return;
             };
             let prefs = config.get("preferences").cloned().unwrap_or(json!({}));
             out(&prefs);
@@ -114,12 +106,9 @@ pub fn cmd_get(project_dir: Option<&str>, key: Option<&str>) {
         return;
     }
 
-    let config = match ensure_config(project_dir) {
-        Some(c) => c,
-        None => {
-            out(&json!({ "error": "Cannot read config.json" }));
-            return;
-        }
+    let Some(config) = ensure_config(project_dir) else {
+        out(&json!({ "error": ERR_READ_CONFIG }));
+        return;
     };
 
     let value = config
@@ -133,20 +122,8 @@ pub fn cmd_get(project_dir: Option<&str>, key: Option<&str>) {
 
 /// `pref set <projectDir> <key> <value>` — write a preference to config.json
 pub fn cmd_set(project_dir: Option<&str>, key: Option<&str>, value: Option<&str>) {
-    let project_dir = match project_dir {
-        Some(d) => d,
-        None => {
-            out(&json!({ "error": "projectDir is required" }));
-            return;
-        }
-    };
-    let key = match key {
-        Some(k) => k,
-        None => {
-            out(&json!({ "error": "key is required" }));
-            return;
-        }
-    };
+    let Some(project_dir) = require_arg(project_dir, "projectDir") else { return };
+    let Some(key) = require_arg(key, "key") else { return };
 
     if !KNOWN_KEYS.contains(&key) {
         out(
@@ -155,12 +132,9 @@ pub fn cmd_set(project_dir: Option<&str>, key: Option<&str>, value: Option<&str>
         return;
     }
 
-    let mut config = match ensure_config(project_dir) {
-        Some(c) => c,
-        None => {
-            out(&json!({ "error": "Cannot read config.json" }));
-            return;
-        }
+    let Some(mut config) = ensure_config(project_dir) else {
+        out(&json!({ "error": ERR_READ_CONFIG }));
+        return;
     };
 
     // Handle profile preset — expands to 6 optimization keys

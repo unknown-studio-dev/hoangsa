@@ -1,201 +1,51 @@
-# Fix Workflow
+# HOANGSA Fix — Contract
 
-> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — universal rules + CLI reference + self-verification template.
+> **Boot:** Read `$HOANGSA_ROOT/workflows/common.md` first — universal rules, contract format, CLI reference, self-verification template.
 
-Analyze a bug, create a minimal fix plan, implement the fixes, and chain to taste.
+## Mission
 
-> **MUST complete ALL steps in order. DO NOT skip any step. DO NOT stop before Step 6.**
->
-> 1. Analyze bug → 2. Cross-layer trace → 3. Confirm fix plan → 4. Implement fixes → 5. Chain to taste → 6. Report + sync
+Find the real root cause of a bug (which is often in a different layer than the symptom), fix it minimally through fresh-context workers, verify, and chain to taste. Never patch a symptom while leaving the root cause standing — and never let a fix silently regress the original task's contract.
 
----
+## Inputs
 
----
+- Bug description from the user (error output, repro steps, files if known).
+- Task link (Linear/Jira/ClickUp/GitHub/Asana) → apply `task-link.md`: fetch to `EXTERNAL-TASK.md`, download attachments, set "In Progress" (non-blocking); labels hint the affected layer, comments may hold repro steps.
+- Media → apply `common.md §Media detection`; findings become bug context.
+- Past fixes: `memory_archive_search({query: "<error message or bug description>"})` — same root cause may have been seen before.
 
-## Step 0c: Task link detection
+## Deliverables
 
-Apply the shared task-link detection from `task-link.md`:
+1. Root-cause analysis the user has confirmed (origin layer vs symptom layer, trace, affected files).
+2. A minimal fix plan (1–3 tasks) in `$SESSION_DIR/plan.json`, executed with atomic `fix(<scope>):` commits.
+3. Chain to `/hoangsa:taste`; results reported, phase stat recorded.
 
-1. Scan user input for task manager URLs (Linear, Jira, ClickUp, GitHub, Asana)
-2. If found → fetch task details via MCP → save to `EXTERNAL-TASK.md`
-3. Fetch and process attachments (see `task-link.md` Step 3b) — download to `$SESSION_DIR/attachments/`, classify by type. **Do NOT process videos here** — video analysis is deferred to Step 1b (media detection) which handles both user-provided and task-link media in one pass.
-4. Set task status to "In Progress" (non-blocking, best-effort)
-5. Extract from fetched task:
-   - **Bug description** → supplement user's bug report in Step 1
-   - **Labels/tags** → identify affected layer (frontend, backend, api, database, etc.)
-   - **Comments** → may contain reproduction steps or prior investigation
-   - **Related tasks/PRs** → clues about recent changes that may have caused the bug
+## Hard gates
 
-If no task URL → skip, proceed normally.
+| # | Gate | Check |
+|---|------|-------|
+| 1 | Root cause confirmed | user approved the analysis (and the fix location, when it differs from the symptom layer) |
+| 2 | Plan valid | `validate plan "$SESSION_DIR/plan.json"` passes; 1–3 tasks, each with runnable `acceptance` |
+| 3 | Contract inherited | tasks fixing a taste-failed task carry that task's `test_cases`, `edge_cases`, `ui` flag verbatim |
+| 4 | Per-task acceptance | `acceptance` passes before commit; max 3 worker retries |
+| 5 | Minimal scope | `memory_detect_changes` on each commit shows only expected symbols |
+| 6 | UI evidence | a `ui: true` fix has re-rendered screenshots in `$SESSION_DIR/evidence/<task.id>/` |
 
----
+## Analysis — root cause before plan
 
-## Step 1: Gather bug context
+Read only what's needed to trace the failure. Use `memory_symbol_context` / `memory_impact` when available.
 
-Ask the user to describe the bug (if not already provided):
-
-```
-What's the bug?
-- Error message or unexpected behaviour
-- Steps to reproduce (if known)
-- Relevant file(s) or component(s) (if known)
-```
-
-Read any error output, stack traces, or failing test output the user provides.
-
-If an external task was linked (Step 0c), merge its description and comments into the bug context — the user may not need to re-describe it.
-
----
-
-## Step 1b: Media detection (auto)
-
-Scan **two sources** for media files:
-
-1. **User's input** — file paths or pasted screenshots/videos in the message
-2. **Task-link attachments** — files downloaded to `$SESSION_DIR/attachments/` by Step 0c
-
-**Detection patterns:**
-- File paths ending in: `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif` (images)
-- File paths ending in: `.mp4`, `.mov`, `.webm`, `.avi`, `.mkv` (videos)
-- Screenshots pasted or attached by the user
-
-**Check task-link attachments:**
-```bash
-# If task-link downloaded attachments, scan them too
-if [ -d "$SESSION_DIR/attachments" ]; then
-  ls "$SESSION_DIR/attachments/"
-fi
-```
-
-**If images detected (from either source):**
-- Claude reads images natively — no processing needed
-- Note the image paths for reference in bug analysis
-
-**If videos detected (from either source):**
-1. Invoke the `visual-debug` skill for video processing:
-   - Check ffmpeg availability: `hoangsa-cli media check-ffmpeg`
-   - **Always quote the path** and validate it contains no shell metacharacters: `hoangsa-cli media analyze "$VIDEO_PATH" --output-dir "/tmp/hoangsa-debug-$(date +%s)"`
-   - Read the output `montage.png` (annotated frame grid with timestamps)
-   - Read the output `diff-montage.png` (red overlay showing changes between frames)
-2. Include visual analysis findings in the bug context for Step 2
-
-**If no media detected (from either source):** Skip this step, proceed to Step 2.
-
----
-
-## Step 2: Analyze the bug
-
-### 2a-pre. Search past conversations
-
-Search for past fixes of similar bugs:
-```
-memory_archive_search({query: "<error message or bug description>"})
-```
-
-If results found → check if same root cause was seen before, learn from prior fix approach.
-
-### 2a. Initial analysis
-
-Read the relevant source files to trace the root cause. Keep analysis focused — read only what is needed to understand the failure.
-
-### 2b. Cross-layer tracing (auto)
-
-Bugs often cross layer boundaries. A frontend bug may originate from a backend API returning wrong data, or a backend bug may stem from a database schema issue. This step spawns a research agent to trace the root cause across layers.
-
-**When to trigger cross-layer tracing:**
-
-| Signal | Action |
-|--------|--------|
-| Bug is in frontend code but error involves API response data | Trace to backend |
-| Bug is in backend but relates to database query/schema | Trace to database layer |
-| Bug is in API but involves auth/middleware | Trace to auth layer |
-| Stack trace crosses package/service boundaries | Trace all involved layers |
-| External task labels indicate a specific layer but symptoms appear elsewhere | Trace both layers |
-| User reports "it worked before" + recent changes in another layer | Trace recent changes |
-
-**Always trigger if:** The project has multiple layers (FE+BE, or monorepo with multiple packages) and the initial analysis in 2a does not find a clear root cause within the reported layer.
-
-**How to trace:**
-
-Spawn a research subagent (using Task tool) with this prompt:
+**Cross-layer tracing** — trigger when: symptom involves data from another layer (FE bug ↔ API response, BE bug ↔ schema), stack trace crosses package/service boundaries, "it worked before" + recent changes elsewhere, or a multi-layer project where the reported layer shows no clear cause. Spawn a readonly research subagent:
 
 ```
-You are a HOANGSA cross-layer bug tracer. Your job is to determine whether this bug originates from a different layer than where the symptoms appear.
-
-Bug report:
-<bug description from Step 1>
-
-Symptom layer: <frontend / backend / database / etc.>
-Symptom files: <files identified in Step 2a>
-
-Instructions:
-1. Read the symptom code to understand what data/behavior it expects
-2. Trace the data flow backward:
-   - If FE bug → check the API endpoint it calls → check the backend handler → check the data source
-   - If BE bug → check the database queries/schema → check upstream services → check middleware
-   - If API bug → check request validation → check auth middleware → check client-side request
-3. Look for mismatches:
-   - API contract vs actual response shape
-   - Expected types vs actual types
-   - Recent changes in upstream layers (git log --since="2 weeks ago" on related files)
-4. Check for recent changes that may have broken the contract:
-   - git log on API route handlers, schema files, shared types
-   - Any migration files added recently
-5. Report your findings:
-
-## Cross-Layer Analysis
-
-**Root cause layer:** <where the actual bug is>
-**Symptom layer:** <where the bug appears>
-**Trace path:** <layer1> → <layer2> → <layer3>
-
-**Finding:**
-<one paragraph explaining what crosses the boundary and why>
-
-**Evidence:**
-- <file:line> — <what's wrong>
-- <file:line> — <what it should be>
-
-**Recommendation:**
-- Fix in <layer> by <action>
-- Also update <other layer> if needed
+You are a HOANGSA cross-layer bug tracer. Determine whether this bug originates in a different layer than where symptoms appear.
+Bug report: <description> · Symptom layer: <layer> · Symptom files: <files>
+1. Read the symptom code — what data/behavior does it expect?
+2. Trace data flow backward (FE → endpoint → handler → data source; BE → queries/schema → upstream → middleware)
+3. Look for contract mismatches (response shape, types) and recent changes (git log --since="2 weeks ago" on handlers, schemas, shared types, migrations)
+Report: root cause layer, symptom layer, trace path, finding (1 paragraph), evidence (file:line — wrong vs expected), recommendation.
 ```
 
-### 2c. Consolidate findings
-
-Merge initial analysis (2a) with cross-layer findings (2b):
-
-```
-🔍 Bug Analysis
-
-Root cause: <one-line description>
-Origin layer: <frontend / backend / API / database / shared>
-Symptom layer: <where the user sees the bug>
-
-Trace:
-  ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-  │  <symptom layer>  │────►│  <intermediate>   │────►│ <root cause>     │
-  └──────────────────┘     └──────────────────┘     └──────────────────┘
-
-  Example:
-  ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-  │ React component  │────►│   API call        │────►│ Express handler  │
-  └──────────────────┘     └──────────────────┘     │ returns wrong    │
-                                                     │ shape            │
-                                                     └──────────────────┘
-
-Affected files:
-  - <file path> — <what needs to change> [ROOT CAUSE]
-  - <file path> — <what needs to change> [SYMPTOM FIX]
-  - <file path> — <what needs to change> [CONTRACT UPDATE]
-
-Cross-layer notes:
-  <if applicable — e.g., "API response shape changed in commit abc123 but frontend types were not updated">
-```
-
-If cross-layer analysis found the real root cause is in a different layer:
-- Clearly communicate this to the user — the fix may need to happen somewhere unexpected
-- If the root cause is in a layer the user didn't expect, confirm before proceeding:
+Consolidate into one report for the user: root cause, origin vs symptom layer, trace path, affected files tagged [ROOT CAUSE] / [SYMPTOM FIX] / [CONTRACT UPDATE]. If the root cause is in an unexpected layer, confirm before proceeding:
 
 Use AskUserQuestion:
   question: "Bug xuất phát từ <root_layer>, không phải <symptom_layer>. Fix ở đâu?"
@@ -206,323 +56,38 @@ Use AskUserQuestion:
     - label: "Patch tạm (<symptom_layer>)", description: "Chỉ sửa triệu chứng — root cause vẫn còn"
   multiSelect: false
 
----
+## Plan — minimal, ordered, inherited
 
-## Step 3: Create minimal fix plan
+Session: `session latest`, or auto-create `session init fix "$SLUG"` (slug = 2-4 key words from the root cause, hyphenated, lowercase — the user never types it). Then apply `git-context.md` Parts A, B, D — fix branches fork from `main`/`master` in gitflow repos.
 
-Create a fix plan with 1–3 tasks. Each task must be:
-- Independently verifiable (has an acceptance command)
-- Scoped to <10k tokens of work
-- Targeted — no scope creep beyond the bug
+Write `$SESSION_DIR/plan.json`: `task_type: "fix"`, `status: "cooking"`, 1–3 tasks, each independently verifiable, <10k tokens, zero scope creep. Cross-layer order: root cause → contracts/types → symptom layer (only if a separate patch is needed).
 
-For cross-layer bugs: always include the root cause layer AND any affected contract/type layers (API types, shared interfaces). If the symptom layer only needs a type import update, include it. Do NOT create a plan that only patches the symptom without fixing root cause.
+**Inherit the spec contract (Gate 3).** If this fix targets a task that failed taste, copy that task's `test_cases`, `edge_cases`, and `ui` flag into the fix task verbatim, plus taste's visual failure detail for UI tasks — a fix worker that never sees the edge cases will re-break them.
 
-If cross-layer fix is needed, tasks should be ordered by dependency:
-1. Fix root cause layer first
-2. Update contracts/types/schemas
-3. Fix symptom layer (if separate patch needed)
+Show the plan (root cause, tasks + acceptance commands); proceed only on user confirmation.
 
-Initialize session state:
-
-```bash
-SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)
-```
-
-If no active session exists, auto-create a fix session. Derive the slug from the bug context (root cause summary from Step 2) — the user never types it. Derive slug by extracting 2-4 key nouns/verbs from the root cause summary, joined by hyphens, lowercase, max 32 chars. Examples: 'null-pointer-user-service', 'broken-login-redirect', 'missing-auth-header'.
-
-```bash
-# SLUG auto-derived from bug summary (e.g. "null-pointer-user-service", "broken-login-redirect")
-SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session init fix "$SLUG")
-# → { "id": "fix/null-pointer-user-service", ... }
-```
-
-### Git context check
-
-Apply the shared git-context module from `git-context.md`:
-
-1. Run Part A (detect branching context) — detect base branch, current branch, dirty state
-2. Run Part B (git state check) — handle dirty state, create/checkout branch for bugfix
-3. Run Part D (stash recovery) — notify if stashed work exists for this task
-
-The expected branch is derived from `SESSION_ID` (e.g., `fix/null-pointer-user-service`). For gitflow repos, fix branches are created from `main`/`master` (not `develop`).
-
-Write a minimal `plan.json` to `$SESSION_DIR/plan.json` with:
-- `task_type: "fix"`
-- `status: "cooking"`
-- 1–3 tasks covering the fix
-
-Show the plan to the user:
-
-```
-Bug fix plan: <bug summary>
-
-  Root cause: <layer> — <description>
-
-  Tasks:
-    [T-01] <fix description>  — <acceptance command>
-    [T-02] <fix description>  — <acceptance command>  (if needed)
-
-Proceed? (yes/no)
-```
-
-Only continue when user confirms.
-
----
-
-## Step 4: Implement fixes
-
-### Model selection + config metadata
+## Execute
 
 ```bash
 MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model worker)
-INTERACTION=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . interaction_level)
-CONFIG=$("$HOANGSA_ROOT/bin/hoangsa-cli" config get .)
+PROMPT=$("$HOANGSA_ROOT/bin/hoangsa-cli" envelope "$SESSION_DIR" "<task.id>" --kind fix --memory-status "<MEMORY_STATUS>")
 ```
 
-Extract from config:
-- `codebase.testing` → test frameworks and config — used to build acceptance commands if not specified in plan
-- `codebase.packages` → package build/test commands for verification
+`envelope --kind fix` emits the complete worker prompt (composed rules, task envelope with inherited contract, lessons, skills, fix instructions) with one placeholder: replace the `<BUG_CONTEXT …>` line with the root-cause summary and cross-layer notes from your analysis. Do NOT hand-assemble the prompt. Spawn one subagent per task (Task tool, `MODEL`).
 
-**Apply `interaction_level`:**
-- `"detailed"` → show full cross-layer trace, all affected files with reasoning
-- `"concise"` → show root cause + fix plan only, skip trace details
-- `null` → default to `"detailed"`
+After each task's acceptance passes: run the simplify pass exactly as in `cook.md §Execution model` step 3 (respect `simplify_pass`).
 
-### For each task:
+Escalation: same ladder as `cook.md §Escalation`.
 
-Spawn a subagent using the `Task` tool with this prompt:
+## Verify, report, chain
 
-```
-You are a HOANGSA worker. Execute this fix task precisely.
+- Gate 5: `memory_detect_changes` per commit — a hotfix touching unexpected symbols gets reverted or re-scoped, not waved through.
+- Chain to `/hoangsa:taste` (it re-runs acceptance, the test-quality gate, and visual verification for `ui: true` tasks).
+- Report: root cause, what changed per layer, acceptance results, taste outcome. Update state, then `stats phase "$SESSION_DIR" fix <estimated tokens>`.
+- External task linked → sync-back happens at plate (`serve` push mode), not here.
 
-Task: <task.name>
-ID: <task.id>
-Workspace: <workspace_dir>
-hoangsa-memory: <MEMORY_STATUS — MEMORY_AVAILABLE or MEMORY_UNAVAILABLE>
+## Judgment notes
 
-Files to modify:
-<task.files — list>
-
-Context to read first:
-<task.context_pointers — list>
-
-Bug context:
-<root cause summary from Step 2>
-
-Cross-layer notes:
-<if applicable — trace path and contract mismatches>
-
-Instructions:
-1. Read all context_pointers files first
-2. Use memory_symbol_context({name: "buggySymbol"}) to understand all callers and callees before fixing (if hoangsa-memory is available)
-3. Run memory_impact({target: "symbolName", direction: "upstream"}) on every symbol you modify — if HIGH/CRITICAL, report to orchestrator
-4. Implement the minimal fix — do not change anything outside scope
-5. Run the acceptance command to verify: <task.acceptance>
-6. If acceptance fails, fix and retry (max 3 attempts)
-7. Commit with message: "fix(<scope>): <task.name>" — `<scope>` = primary module/package from task.files, NOT session_id/branch name
-8. After committing, verify change scope:
-   memory_detect_changes({diff: "<git diff of your commit>"})
-   Confirm only expected symbols were affected — hotfix must be minimal.
-
-Acceptance command: <task.acceptance>
-```
-
-### Worker rules:
-
-Load worker rules before dispatching using a base + addons approach:
-
-1. **Read base rules:**
-   - If `.hoangsa/worker-rules.md` exists in workspace → use it as base (project override)
-   - Otherwise → use `$HOANGSA_ROOT/workflows/worker-rules/base.md`
-
-2. **Detect applicable addons:**
-   - Read `tech_stack` from config.json preferences
-   - Read `frameworks` from config.json `codebase.packages[].frameworks` (if available)
-   - Read `test_frameworks` from config.json `codebase.testing.frameworks`
-   - Match against addon file frontmatter `frameworks` field
-
-3. **Load matching addons:**
-   - For each matching addon: read `$HOANGSA_ROOT/workflows/worker-rules/addons/<name>.md`
-   - Project-level addons override: `.hoangsa/worker-rules/addons/<name>.md`
-
-4. **Compose final rules:**
-   - Base rules + `"\n---\n"` + each addon content (frontmatter stripped)
-   - Append to worker prompt
-
-Include the composed rules in every worker prompt, appended after the task context above.
-
-### Post-task: Simplify pass
-
-After each worker completes a task successfully (acceptance passes), spawn a **simplify subagent** on the changed files before marking the task as done. This catches code quality issues, duplication, and inefficiencies while the context is still fresh.
-
-For each completed task:
-
-1. Collect the list of files the worker created or modified
-2. Spawn a subagent with `/simplify` targeting those files:
-
-```
-Review the following files that were just created/modified for task <task.id>:
-<list of changed files>
-
-Use /simplify to check for:
-- Code reuse opportunities (duplicated logic)
-- Quality issues (unused imports, dead code, naming inconsistencies)
-- Efficiency problems (unnecessary allocations, redundant operations)
-
-Fix any issues found. Do NOT change behavior or add features — only improve code quality.
-Commit fixes with message: "refactor(<scope>): simplify <task.id>" — `<scope>` = primary module/package from changed files, NOT session_id/branch name
-```
-
-3. If the simplify pass finds and fixes issues → mark task as `✅ completed (simplified)`
-4. If no issues found → mark task as `✅ completed`
-
-**Important:** The simplify pass runs sequentially after each worker (not in parallel with other workers). This ensures the simplified code is what subsequent tasks see.
-
-Track progress:
-
-```
-Fixing...
-
-  T-01 <fix description>  ✅ / ✅ ✨ / 🔄 / ❌
-  T-02 <fix description>  ✅ / ✅ ✨ / 🔄 / ❌
-```
-
----
-
-## Step 4b: Persist bug lesson (if hoangsa-memory available)
-
-After a successful fix, persist the root cause as a lesson so future agents avoid the same trap:
-
-```
-memory_remember_lesson({
-  when: "touching <module/file where bug lived>",
-  then: "<root cause pattern — what was wrong and why>",
-  stage: true
-})
-```
-
-### Update invalidated facts
-
-If the bug revealed that an existing fact in MEMORY.md is wrong (e.g., "X uses Y" was incorrect):
-
-```
-memory_replace({kind: "fact", old_text: "<incorrect fact substring>", new_text: "<corrected fact>"})
-```
-
-This keeps the memory accurate — bugs often expose incorrect assumptions that were persisted as facts.
-
-### Skill proposal check
-
-If this fix revealed a pattern seen in ≥5 existing lessons (e.g., same module keeps breaking, same root cause pattern):
-
-1. Check LESSONS.md for clusters of related lessons
-2. If cluster ≥5 with good success rates → `memory_skill_propose({slug: "<pattern-name>", body: "<SKILL.md content>", source_triggers: ["<trigger1>", "<trigger2>", ...]})`
-3. Report draft to user
-
-Skip this step if hoangsa-memory is unavailable or the fix was trivial (typo, missing import).
-
-### Save fix summary for future reference
-
-```
-memory_turn_save({role: "assistant", text: "Fix: <bug summary> | Root cause: <root cause layer> — <description> | Files: <changed files>"})
-```
-
-This creates a searchable record of the fix that future `memory_archive_search` can find.
-
----
-
-## Step 5: Auto-chain to taste
-
-After all fix tasks complete, automatically chain to `/hoangsa:taste` to verify the fix did not introduce regressions.
-
-If taste reports failures after this fix attempt, do NOT auto-chain back to fix. Present results to user and let them decide: retry /hoangsa:fix, fix manually, or skip.
-
-Inform the user:
-
-```
-Fix applied. Running tests via /hoangsa:taste...
-```
-
-Then invoke the taste workflow.
-
----
-
-## Step 6: Sync-back to task manager
-
-If an external task was linked (Step 0c), after taste completes:
-
-1. Compose a fix summary comment:
-
-```markdown
-## 🔧 Bug Fix — HOANGSA
-
-**Session:** <session_id>
-**Root cause:** <one-line from Step 2c>
-**Origin layer:** <layer where root cause was>
-**Symptom layer:** <layer where bug appeared>
-
-### Fix applied
-- T-01: <description> ✅
-- T-02: <description> ✅
-
-### Files changed
-| File | Action |
-|------|--------|
-| `src/api/handler.ts` | MODIFIED — fixed response shape |
-| `src/components/UserList.tsx` | MODIFIED — updated type handling |
-
-### Test results
-- ✅ All acceptance tests passed
-- ✅ No regressions detected
-
-### Commits
-- `abc1234` fix: correct API response shape
-- `def5678` fix: update frontend type handling
-```
-
-2. Ask user what to sync (via `/serve` push mode — Step 5c):
-
-Use AskUserQuestion:
-  question: "Bug fixed. Cập nhật gì lên task manager?"
-  header: "Sync"
-  options:
-    - label: "Status → Done + Comment", description: "Đóng task + thêm comment tóm tắt fix — recommended"
-    - label: "Status → In Review", description: "Chuyển sang review, chưa đóng"
-    - label: "Comment only", description: "Thêm comment nhưng không đổi status"
-    - label: "Skip", description: "Không sync lần này"
-  multiSelect: false
-
-3. Execute sync via MCP based on user's choice
-4. Report result with link back to task
-
----
-
-## Self-verification checklist
-
-Before reporting completion, emit the `common.md` self-verification table with rows:
-
-```
-| 0. Setup (lang + hoangsa-memory + task link) | ... |
-| 1. Analyze bug | ... |
-| 2. Cross-layer trace | ... |
-| 3. Confirm fix plan | ... |
-| 4. Implement fixes | ... |
-| 5. Chain to taste | ... |
-| 6. Report + sync | ... |
-```
-
----
-
-## Rules
-
-Universal rules live in `common.md §Universal rules`. Fix-specific additions:
-
-| Rule | Detail |
-|------|--------|
-| **Minimal fix only** | Do not refactor or expand scope |
-| **1–3 tasks max** | Keep it tight — hotfix, not a feature |
-| **Confirm before implementing** | Show plan, ask yes/no |
-| **Always chain to taste** | Verify no regressions after fix |
-| **Cross-layer tracing is default** | Always trace if multi-layer project and root cause unclear |
-| **Sync-back if task linked** | Auto-ask user what to update on task manager after fix |
-| **Root cause over symptoms** | Recommend fixing the origin layer, not just patching symptoms |
+- 1 task is a fine plan; 3 is the ceiling. If the fix wants a 4th task, it's a feature — send it to `/hoangsa:menu`.
+- "Fix cả hai" plans still order root cause first; the temporary symptom patch is labeled as such in the commit message.
+- If analysis can't find a root cause at all, say so and present hypotheses with evidence — don't invent certainty.

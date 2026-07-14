@@ -144,23 +144,26 @@ impl Retriever {
 
         // 1. symbol lookup
         let sym_hits = filter_scope(self.symbol_stage(&search_text).await?, scope);
-        for (rank, cand) in sym_hits.iter().enumerate() {
-            fuse(&mut fused, cand, rank);
-        }
 
         // 2. BM25
         let fts_hits = filter_scope(self.bm25_stage(&search_text, k * 3).await?, scope);
-        for (rank, cand) in fts_hits.iter().enumerate() {
-            fuse(&mut fused, cand, rank);
-        }
 
-        // 3. graph fan-out (depth 1) from the first handful of symbol seeds
+        // 3. graph fan-out (depth 1) from the first handful of symbol seeds.
+        //    Seeds are computed before fusion so the fuse loops below can
+        //    consume the hit vectors by value instead of cloning candidates.
         let seeds: Vec<String> = sym_hits
             .iter()
             .chain(fts_hits.iter())
             .filter_map(|c| c.symbol.clone())
             .take(8)
             .collect();
+
+        for (rank, cand) in sym_hits.into_iter().enumerate() {
+            fuse(&mut fused, cand, rank);
+        }
+        for (rank, cand) in fts_hits.into_iter().enumerate() {
+            fuse(&mut fused, cand, rank);
+        }
 
         // Stages 3 (graph), 4 (markdown), 4b (lessons), 4c (preferences)
         // are independent once `seeds` are known — run them concurrently.
@@ -179,12 +182,12 @@ impl Retriever {
         let lesson_hits = lesson_hits?;
         let pref_hits = pref_hits?;
 
-        for (rank, cand) in graph_hits.iter().enumerate() {
+        for (rank, cand) in graph_hits.into_iter().enumerate() {
             fuse(&mut fused, cand, rank);
         }
 
         // 4. markdown grep (scope doesn't apply — MEMORY.md is global)
-        for (rank, cand) in md_hits.iter().enumerate() {
+        for (rank, cand) in md_hits.into_iter().enumerate() {
             fuse(&mut fused, cand, rank);
         }
 
@@ -193,14 +196,14 @@ impl Retriever {
         //     today they share `RetrievalSource::Markdown` and only differ by
         //     path (`LESSONS.md` vs `MEMORY.md`), which is enough for callers
         //     to tell them apart in renders.
-        for (rank, cand) in lesson_hits.iter().enumerate() {
+        for (rank, cand) in lesson_hits.into_iter().enumerate() {
             fuse(&mut fused, cand, rank);
         }
 
         // 4c. user preferences from USER.md — first-person workflow choices.
         //     Fused alongside facts/lessons so recall surfaces them even
         //     without tag filters.
-        for (rank, cand) in pref_hits.iter().enumerate() {
+        for (rank, cand) in pref_hits.into_iter().enumerate() {
             fuse(&mut fused, cand, rank);
         }
 
@@ -209,7 +212,7 @@ impl Retriever {
         //    Mode::Full without a key still degrades to Mode::Zero recall.
         if with_vector && let Some(hits) = self.vector_stage(&search_text, k * 3).await? {
             let scoped = filter_scope(hits, scope);
-            for (rank, cand) in scoped.iter().enumerate() {
+            for (rank, cand) in scoped.into_iter().enumerate() {
                 fuse(&mut fused, cand, rank);
             }
         }
@@ -301,7 +304,7 @@ impl Retriever {
         let kv: &KvStore = &self.store.kv;
         let mut out = Vec::new();
         for tok in tokens(text) {
-            let rows: Vec<SymbolRow> = kv.symbols_with_prefix(tok.clone()).await?;
+            let rows: Vec<SymbolRow> = kv.symbols_with_prefix(tok).await?;
             for r in rows {
                 out.push(Candidate::from_symbol(r));
             }
@@ -576,12 +579,12 @@ struct FusedRow {
     score: f32,
 }
 
-fn fuse(map: &mut HashMap<String, FusedRow>, c: &Candidate, rank: usize) {
+fn fuse(map: &mut HashMap<String, FusedRow>, c: Candidate, rank: usize) {
     let delta = 1.0 / (RRF_K + rank as f32 + 1.0);
     map.entry(c.id.clone())
         .and_modify(|row| row.score += delta)
         .or_insert_with(|| FusedRow {
-            cand: c.clone(),
+            cand: c,
             score: delta,
         });
 }

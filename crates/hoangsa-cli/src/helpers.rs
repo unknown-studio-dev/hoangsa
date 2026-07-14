@@ -28,6 +28,17 @@ pub fn out(obj: &Value) {
     println!("{}", serde_json::to_string_pretty(obj).unwrap());
 }
 
+pub const ERR_READ_CONFIG: &str = "Cannot read config.json";
+
+/// Unwrap a required CLI argument; on None, emit the standard error JSON.
+/// Call sites: `let Some(dir) = require_arg(project_dir, "projectDir") else { return };`
+pub fn require_arg<'a>(val: Option<&'a str>, name: &str) -> Option<&'a str> {
+    if val.is_none() {
+        out(&serde_json::json!({ "error": format!("{name} is required") }));
+    }
+    val
+}
+
 /// Parse YAML frontmatter from markdown content.
 /// Returns a map of key-value pairs, or None if no frontmatter found.
 ///

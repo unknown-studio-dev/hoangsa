@@ -20,13 +20,16 @@ pub struct DaemonStatus {
 pub use hoangsa_memory_core::project_slug;
 
 pub fn socket_for(project_dir: &Path, global_dir: &Path) -> PathBuf {
-    let slug = project_slug(project_dir);
+    socket_for_slug(&project_slug(project_dir), global_dir)
+}
+
+fn socket_for_slug(slug: &str, global_dir: &Path) -> PathBuf {
     global_dir.join(format!("memory/projects/{slug}/mcp.sock"))
 }
 
 pub fn status(project_dir: &Path, global_dir: &Path) -> DaemonStatus {
     let slug = project_slug(project_dir);
-    let sock = socket_for(project_dir, global_dir);
+    let sock = socket_for_slug(&slug, global_dir);
     let exists = sock.exists();
     let connectable = if exists {
         UnixStream::connect_timeout_compat(&sock, Duration::from_millis(200)).is_ok()

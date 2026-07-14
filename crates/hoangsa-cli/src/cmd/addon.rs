@@ -1,4 +1,4 @@
-use crate::helpers::{out, parse_frontmatter, read_json};
+use crate::helpers::{out, parse_frontmatter, read_json, require_arg};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
@@ -235,13 +235,7 @@ fn sync_worker_rules(project_dir: &str, active_addons: &[Value]) -> bool {
 
 /// `addon list <projectDir>` — show all available addons with active status.
 pub fn cmd_list(project_dir: Option<&str>) {
-    let project_dir = match project_dir {
-        Some(d) => d,
-        None => {
-            out(&json!({ "error": "projectDir is required" }));
-            return;
-        }
-    };
+    let Some(project_dir) = require_arg(project_dir, "projectDir") else { return };
 
     let hoangsa_root = match resolve_hoangsa_root(project_dir) {
         Some(r) => r,
@@ -274,13 +268,7 @@ pub fn cmd_list(project_dir: Option<&str>) {
 
 /// `addon add <projectDir> <json_array>` — enable addons by name.
 pub fn cmd_add(project_dir: Option<&str>, addons_json: Option<&str>) {
-    let project_dir = match project_dir {
-        Some(d) => d,
-        None => {
-            out(&json!({ "error": "projectDir is required" }));
-            return;
-        }
-    };
+    let Some(project_dir) = require_arg(project_dir, "projectDir") else { return };
     let addons_json = match addons_json {
         Some(j) => j,
         None => {
@@ -358,13 +346,7 @@ pub fn cmd_add(project_dir: Option<&str>, addons_json: Option<&str>) {
 
 /// `addon remove <projectDir> <json_array>` — disable addons by name.
 pub fn cmd_remove(project_dir: Option<&str>, addons_json: Option<&str>) {
-    let project_dir = match project_dir {
-        Some(d) => d,
-        None => {
-            out(&json!({ "error": "projectDir is required" }));
-            return;
-        }
-    };
+    let Some(project_dir) = require_arg(project_dir, "projectDir") else { return };
     let addons_json = match addons_json {
         Some(j) => j,
         None => {

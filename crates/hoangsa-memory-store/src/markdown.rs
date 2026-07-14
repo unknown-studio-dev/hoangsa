@@ -195,11 +195,10 @@ impl MarkdownStore {
             .into_iter()
             .filter(|f| {
                 let text_lc = f.text.to_lowercase();
+                let tags_lc: Vec<String> = f.tags.iter().map(|t| t.to_lowercase()).collect();
                 lowered.iter().any(|needle| {
                     text_lc.contains(needle.as_str())
-                        || f.tags
-                            .iter()
-                            .any(|t| t.to_lowercase().contains(needle.as_str()))
+                        || tags_lc.iter().any(|t| t.contains(needle.as_str()))
                 })
             })
             .collect())
@@ -340,11 +339,10 @@ impl MarkdownStore {
             .into_iter()
             .filter(|p| {
                 let text_lc = p.text.to_lowercase();
+                let tags_lc: Vec<String> = p.tags.iter().map(|t| t.to_lowercase()).collect();
                 lowered.iter().any(|needle| {
                     text_lc.contains(needle.as_str())
-                        || p.tags
-                            .iter()
-                            .any(|t| t.to_lowercase().contains(needle.as_str()))
+                        || tags_lc.iter().any(|t| t.contains(needle.as_str()))
                 })
             })
             .collect())
@@ -1312,6 +1310,25 @@ mod single_pass_grep_tests {
         );
     }
 
+    /// Locks case-insensitive matching on both text and tags (the behavior
+    /// the per-entry lowercasing must preserve).
+    #[tokio::test]
+    async fn grep_facts_multi_is_case_insensitive_on_text_and_tags() {
+        let (_dir, store) = open_store().await;
+        store
+            .append_fact(&make_fact("db uses Postgres", &["Auth-JWT"]))
+            .await
+            .unwrap();
+
+        // Mixed-case needle vs mixed-case text.
+        let results = store.grep_facts_multi(&["POSTGRES"]).await.unwrap();
+        assert_eq!(results.len(), 1, "text match must be case-insensitive");
+
+        // Lowercase needle vs mixed-case tag.
+        let results = store.grep_facts_multi(&["auth-jwt"]).await.unwrap();
+        assert_eq!(results.len(), 1, "tag match must be case-insensitive");
+    }
+
     /// REQ-05: no duplicate entries when multiple tokens match the same fact.
     #[tokio::test]
     async fn grep_facts_multi_no_duplicates_when_multiple_tokens_match() {
@@ -1495,6 +1512,27 @@ tags: git
         let empty: &[&str] = &[];
         let hits = store.grep_preferences_multi(empty).await.unwrap();
         assert!(hits.is_empty());
+    }
+
+    /// Locks case-insensitive matching on both text and tags (the behavior
+    /// the per-entry lowercasing must preserve).
+    #[tokio::test]
+    async fn grep_preferences_multi_is_case_insensitive_on_text_and_tags() {
+        let (dir, store) = open_store().await;
+        tokio::fs::write(
+            dir.path().join("USER.md"),
+            "# USER.md\n### use pnpm for Installs\ntags: Node-JS\n",
+        )
+        .await
+        .unwrap();
+
+        // Mixed-case needle vs mixed-case text.
+        let hits = store.grep_preferences_multi(&["INSTALLS"]).await.unwrap();
+        assert_eq!(hits.len(), 1, "text match must be case-insensitive");
+
+        // Lowercase needle vs mixed-case tag.
+        let hits = store.grep_preferences_multi(&["node-js"]).await.unwrap();
+        assert_eq!(hits.len(), 1, "tag match must be case-insensitive");
     }
 }
 

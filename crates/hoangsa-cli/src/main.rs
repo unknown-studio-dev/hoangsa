@@ -66,9 +66,44 @@ fn main() {
             let dir = rest.first().copied().unwrap_or(&cwd);
             cmd::addon::cmd_remove(Some(dir), rest.get(1).copied());
         }
+        ("rules", "compose") => {
+            let flag = |name: &str| {
+                rest.iter()
+                    .position(|a| *a == name)
+                    .and_then(|i| rest.get(i + 1))
+                    .copied()
+            };
+            cmd::envelope::cmd_compose(
+                rest.first().unwrap_or(&cwd.as_str()),
+                flag("--task-type").unwrap_or("impl"),
+                flag("--role").unwrap_or("impl"),
+            )
+        }
+        ("envelope", _) => {
+            // envelope <sessionDir> <taskId> [--kind cook|fix] [--memory-status s]
+            let flag = |name: &str| {
+                rest.iter()
+                    .position(|a| *a == name)
+                    .and_then(|i| rest.get(i + 1))
+                    .copied()
+            };
+            cmd::envelope::cmd_envelope(
+                sub,
+                rest.first().unwrap_or(&""),
+                flag("--kind").unwrap_or("cook"),
+                flag("--memory-status").unwrap_or("MEMORY_AVAILABLE"),
+            )
+        }
         ("plan", "task-ids") => cmd::validate::cmd_task_ids(rest.first().unwrap_or(&"")),
         ("plan", "resolve") => cmd::validate::cmd_resolve(rest.first().unwrap_or(&"")),
-        ("validate", "plan") => cmd::validate::cmd_plan(rest.first().unwrap_or(&"")),
+        ("validate", "plan") => {
+            let tests = rest
+                .iter()
+                .position(|a| *a == "--tests")
+                .and_then(|i| rest.get(i + 1))
+                .copied();
+            cmd::validate::cmd_plan(rest.first().unwrap_or(&""), tests)
+        }
         ("validate", "spec") => cmd::validate::cmd_spec(rest.first().unwrap_or(&"")),
         ("validate", "tests") => cmd::validate::cmd_tests(rest.first().unwrap_or(&"")),
         ("dag", "check") => cmd::dag::cmd_check(rest.first().unwrap_or(&"")),
@@ -252,6 +287,13 @@ fn main() {
         ("stats", "summary") => {
             cmd::stats::cmd_summary(&rest);
         }
+        ("stats", "phase") => cmd::stats::cmd_phase(
+            rest.first().unwrap_or(&""),
+            rest.get(1).unwrap_or(&""),
+            rest.get(2).unwrap_or(&"0"),
+            rest.get(3).copied(),
+        ),
+        ("stats", "report") => cmd::stats::cmd_report(rest.first().unwrap_or(&"")),
         ("stats", "cache") => {
             cmd::cache::cmd_cache(&rest, &cwd);
         }
