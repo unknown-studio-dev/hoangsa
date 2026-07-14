@@ -477,10 +477,12 @@ pub(super) fn tools_catalog() -> Vec<Tool> {
         // ---- graph traversal / analytics tools ----
         Tool {
             name: "memory_graph_query".to_string(),
-            description: "BFS traversal of the code graph from one or more starting FQNs. \
-                          Returns a subgraph of reachable nodes and edges in JSON (default) \
-                          or Graphviz DOT format. Unknown FQNs are listed in `unresolved` \
-                          rather than causing an error."
+            description: "Trace how code connects: traverse from seed symbol(s) to their \
+                          callers/callees/refs/imports, any depth, filtered by edge kind. \
+                          Reach for this INSTEAD of repeated Grep/Read when answering 'who \
+                          calls X', 'what does X reach', or mapping a dependency fan-out — \
+                          one call replaces many searches. Returns a JSON (default) or \
+                          Graphviz DOT subgraph; unknown FQNs land in `unresolved`, never errors."
                 .to_string(),
             input_schema: json!({
                 "type": "object",
@@ -525,9 +527,10 @@ pub(super) fn tools_catalog() -> Vec<Tool> {
         },
         Tool {
             name: "memory_graph_paths".to_string(),
-            description: "Find the shortest path between two FQNs in the code graph. \
-                          Returns `found: false` when no path exists (unknown FQNs or \
-                          unreachable within max_depth). Does not error on unknown FQNs."
+            description: "Answer 'how does A reach B?': the shortest dependency/call path \
+                          between two symbols. Use INSTEAD of hand-tracing call chains through \
+                          Grep. Returns `found: false` when unreachable within max_depth; never \
+                          errors on unknown FQNs."
                 .to_string(),
             input_schema: json!({
                 "type": "object",
@@ -556,9 +559,10 @@ pub(super) fn tools_catalog() -> Vec<Tool> {
         },
         Tool {
             name: "memory_graph_communities".to_string(),
-            description: "Detect communities of closely-related symbols via label propagation \
-                          over Calls, Imports, and Extends edges. Returns communities sorted \
-                          by size (largest first). Empty graph returns an empty list."
+            description: "Architecture map: cluster tightly-coupled symbols via label \
+                          propagation over Calls/Imports/Extends. Use to answer 'what are the \
+                          main components/modules?' without reading the whole tree. Communities \
+                          sorted largest-first; empty graph returns an empty list."
                 .to_string(),
             input_schema: json!({
                 "type": "object",
@@ -574,9 +578,10 @@ pub(super) fn tools_catalog() -> Vec<Tool> {
         },
         Tool {
             name: "memory_graph_processes".to_string(),
-            description: "Trace process flows from entry-point symbols (those ending in `::main` \
-                          or matching `entry_globs`). Follows Calls edges depth-first up to \
-                          max_depth, cycle-safe. Returns one flow per entry point."
+            description: "Walk execution flows from entry points (`::main` or `entry_globs`) \
+                          down Calls edges. Use to answer 'walk me through what happens from \
+                          startup' or 'trace the main flow' without reading files. One \
+                          cycle-safe flow per entry point, up to max_depth."
                 .to_string(),
             input_schema: json!({
                 "type": "object",
@@ -597,12 +602,12 @@ pub(super) fn tools_catalog() -> Vec<Tool> {
         },
         Tool {
             name: "memory_taint_paths".to_string(),
-            description: "Find source→sink taint paths over DataDep and Calls edges. \
-                          BFS from nodes whose FQN or text payload matches any source pattern \
-                          to nodes matching any sink pattern. Returns a TaintReport with \
-                          findings (source, sink, path edges), truncated flag, source_matches, \
-                          and sink_matches. When sources/sinks are omitted or empty, built-in \
-                          default patterns are used (env vars, stdin, args → subprocess, eval, \
+            description: "Security dataflow: can untrusted input reach a dangerous sink? \
+                          Traces source→sink taint over DataDep and Calls edges (never plain \
+                          control-flow). Requires an index built with `--pdg`. Use to audit \
+                          injection/exec risks. Returns findings (source, sink, path edges) \
+                          plus truncated/source_matches/sink_matches; omitting sources/sinks \
+                          uses built-in defaults (env vars, stdin, args → subprocess, eval, \
                           fs::write, query)."
                 .to_string(),
             input_schema: json!({

@@ -2,7 +2,10 @@ use crate::helpers::out;
 use serde_json::json;
 use std::fs;
 
-use super::{chrono_now, enforcement_events_path, flag_value, reflect_sentinel_path};
+use super::{
+    chrono_now, enforcement_events_path, flag_value, graph_affordance_sentinel_path,
+    reflect_sentinel_path,
+};
 
 /// `hook state-record`
 ///
@@ -111,6 +114,7 @@ pub fn cmd_state_clear(cwd: &str) {
     let events_path = enforcement_events_path(cwd);
     let _ = fs::remove_file(&events_path);
     let _ = fs::remove_file(reflect_sentinel_path(cwd));
+    let _ = fs::remove_file(graph_affordance_sentinel_path(cwd));
 
     // Best-effort: read SessionStart payload (if any) and handle /clear.
     let mut raw = String::new();

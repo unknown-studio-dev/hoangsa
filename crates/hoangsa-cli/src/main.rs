@@ -203,6 +203,9 @@ fn main() {
         ("hook", "lesson-guard") => {
             cmd::hook::cmd_lesson_guard(&cwd);
         }
+        ("hook", "graph-affordance") => {
+            cmd::hook::cmd_graph_affordance(&cwd);
+        }
         ("hook", "rule-gate") => {
             let _ = cmd::rule::cmd_rule_gate();
         }

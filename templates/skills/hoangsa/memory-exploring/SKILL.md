@@ -13,7 +13,16 @@ metadata:
 
 Understand unfamiliar code without reading every file. The hybrid
 retriever (`memory_recall`) finds entry points by intent; the graph
-(`memory_symbol_context`) walks relationships.
+(`memory_symbol_context`) walks relationships. For whole-shape questions
+the graph answers directly — reach for these INSTEAD of grepping:
+
+- **"What are the main components?"** → `memory_graph_communities()` — clusters of tightly-coupled symbols (the architecture map).
+- **"Walk me through the main flow" / "trace execution"** → `memory_graph_processes()` — flows from entry points (`::main`) down the call graph.
+- **"How does A reach B?"** → `memory_graph_paths({from, to})` — shortest dependency path.
+- **"Everything connected to X"** → `memory_graph_query({start})` — traverse callers/callees/refs/imports to any depth.
+- **"Can untrusted input reach a dangerous call?"** → `memory_taint_paths({sources, sinks})` — source→sink dataflow (index with `--pdg`).
+
+A single one of these usually replaces a dozen `Grep`s.
 
 ## When to Use
 
@@ -29,7 +38,9 @@ retriever (`memory_recall`) finds entry points by intent; the graph
 1. resources/read hoangsa-memory://memory/MEMORY.md           → durable facts first
 2. memory_recall({query: "<concept>"})                 → candidate chunks
 3. memory_symbol_context({fqn})                        → 360° around each
+   (architecture-wide? → memory_graph_communities / _processes instead of step 2)
 4. Walk callers to find entry points                  → root of flow
+   (or memory_graph_query/_paths — one call vs many manual hops)
 5. Cite chunk ids in the explanation
 ```
 

@@ -11,8 +11,8 @@ pub use enforce::cmd_enforce;
 pub use enforce::{intent_guard_bash_commit, intent_guard_edit, IntentOutcome};
 pub use events::{cmd_enforce_override, cmd_enforce_report, cmd_post_enforce};
 pub use session::{
-    cmd_lesson_guard, cmd_prompt_guard, cmd_session_archive, cmd_session_start, cmd_session_usage,
-    cmd_stop_check,
+    cmd_graph_affordance, cmd_lesson_guard, cmd_prompt_guard, cmd_session_archive,
+    cmd_session_start, cmd_session_usage, cmd_stop_check,
 };
 pub use state::{cmd_state_check, cmd_state_clear, cmd_state_record};
 
@@ -23,6 +23,13 @@ fn reflect_sentinel_path(cwd: &str) -> std::path::PathBuf {
         .join(".hoangsa")
         .join("state")
         .join("reflected.sentinel")
+}
+
+fn graph_affordance_sentinel_path(cwd: &str) -> std::path::PathBuf {
+    Path::new(cwd)
+        .join(".hoangsa")
+        .join("state")
+        .join("graph-affordance.sentinel")
 }
 
 /// Find a binary by searching PATH (cross-platform).

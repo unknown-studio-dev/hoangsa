@@ -114,6 +114,7 @@ pub fn build_hoangsa_hooks_inner(install_root: Option<&Path>) -> Value {
     let mut pre_tool_use = vec![
         managed_entry(format!("{cli} hook lesson-guard"), 10, Some("Edit|Write")),
         managed_entry(format!("{cli} hook enforce"), 10, Some("Edit|Write|Bash|NotebookEdit")),
+        managed_entry(format!("{cli} hook graph-affordance"), 10, Some("Grep|Glob")),
     ];
 
     // `hsp` normally ships alongside the memory bins in both release
@@ -398,14 +399,14 @@ mod tests {
         let mut settings = fresh_settings();
         let added =
             merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks_inner(Some(&root)));
-        // 2 SessionStart + 2 Stop + 1 PostToolUse + 2 PreToolUse + 1 UserPromptSubmit + 1 PreCompact + 1 SessionEnd = 10
-        assert_eq!(added, 10, "fresh merge lands every managed entry");
+        // 2 SessionStart + 2 Stop + 1 PostToolUse + 3 PreToolUse + 1 UserPromptSubmit + 1 PreCompact + 1 SessionEnd = 11
+        assert_eq!(added, 11, "fresh merge lands every managed entry");
         let hooks = settings.get("hooks").and_then(|h| h.as_object()).expect("hooks present");
         assert!(hooks.contains_key("SessionStart"));
         assert!(hooks.contains_key("Stop"));
         assert!(hooks.contains_key("PreToolUse"));
         let pre = hooks.get("PreToolUse").and_then(|v| v.as_array()).expect("PreToolUse array");
-        assert_eq!(pre.len(), 2);
+        assert_eq!(pre.len(), 3);
     }
 
     #[test]
@@ -428,8 +429,8 @@ mod tests {
         let pre = settings["hooks"]["PreToolUse"]
             .as_array()
             .expect("PreToolUse array");
-        // 1 user entry + 2 HOANGSA entries
-        assert_eq!(pre.len(), 3, "user entry preserved alongside ours");
+        // 1 user entry + 3 HOANGSA entries
+        assert_eq!(pre.len(), 4, "user entry preserved alongside ours");
         let user_present = pre.iter().any(|e| {
             e.get("hooks")
                 .and_then(|h| h.as_array())
@@ -450,17 +451,17 @@ mod tests {
         let first = merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks_inner(Some(&root)));
         let second = merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks_inner(Some(&root)));
 
-        assert_eq!(first, 10);
-        assert_eq!(second, 10, "re-merge re-adds the same set (replacing ours)");
+        assert_eq!(first, 11);
+        assert_eq!(second, 11, "re-merge re-adds the same set (replacing ours)");
 
-        // Total entries across events stays at 10 — never doubles.
+        // Total entries across events stays at 11 — never doubles.
         let hooks = settings.get("hooks").and_then(|h| h.as_object()).expect("hooks");
         let total: usize = hooks
             .values()
             .filter_map(|v| v.as_array())
             .map(|a| a.len())
             .sum();
-        assert_eq!(total, 10, "rerunning must not duplicate HOANGSA entries");
+        assert_eq!(total, 11, "rerunning must not duplicate HOANGSA entries");
     }
 
     #[test]
@@ -472,7 +473,7 @@ mod tests {
 
         let payload = build_hoangsa_hooks_inner(Some(&root));
         let pre = payload["PreToolUse"].as_array().expect("PreToolUse array");
-        assert_eq!(pre.len(), 3, "lesson-guard + enforce + hsp rewrite");
+        assert_eq!(pre.len(), 4, "lesson-guard + enforce + graph-affordance + hsp rewrite");
 
         let hsp_entry = pre.iter().find(|e| {
             e["hooks"][0]["command"]
@@ -507,9 +508,9 @@ mod tests {
         let pre = settings["hooks"]["PreToolUse"]
             .as_array()
             .expect("PreToolUse array");
-        // Only our 2 PreToolUse hooks survive — prior hsp entry was claimed
+        // Only our 3 PreToolUse hooks survive — prior hsp entry was claimed
         // as hoangsa-managed (via HSP_MARKER) and stripped.
-        assert_eq!(pre.len(), 2, "standalone hsp entry must be stripped");
+        assert_eq!(pre.len(), 3, "standalone hsp entry must be stripped");
         let leftover_hsp = pre.iter().any(|e| {
             e["hooks"][0]["command"]
                 .as_str()

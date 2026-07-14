@@ -40,6 +40,19 @@ or debugging:
 - `memory_impact({fqn})` — blast-radius analysis before editing a symbol.
   Required by the `require-memory-impact` rule on first edit to a file.
 
+Code-graph tools — reach for these INSTEAD of repeated `Grep`/`Read`
+when tracing how code connects:
+
+- `memory_graph_query({start})` — traverse callers/callees/refs/imports
+  from a symbol (any depth, edge-kind filter). "Who calls X / what X reaches."
+- `memory_graph_paths({from, to})` — shortest dependency path A→B.
+- `memory_graph_communities()` — architecture map: clusters of
+  tightly-coupled symbols. "What are the main components?"
+- `memory_graph_processes()` — execution flow from entry points
+  (`::main`). "Walk me through the main flow."
+- `memory_taint_paths({sources, sinks})` — source→sink security
+  dataflow. Requires an index built with `--pdg`.
+
 `USER.md`, `MEMORY.md`, and `LESSONS.md` are already injected at
 SessionStart — scan them for preferences and applicable lessons before
 you act.

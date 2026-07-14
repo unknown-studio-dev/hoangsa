@@ -2,9 +2,9 @@
 name: memory-cli
 description: >
   Use when the user needs to run hoangsa-memory CLI commands — setup / index /
-  query / watch / impact / context / changes / memory / skills / eval
-  / uninstall. Examples: "index this repo", "show memory", "run
-  evaluation", "uninstall hoangsa-memory".
+  query / watch / impact / context / changes / graph / memory / skills / eval
+  / uninstall. Examples: "index this repo", "show memory", "trace the
+  graph", "find taint paths", "uninstall hoangsa-memory".
 metadata:
   version: "0.0.1"
 ---
@@ -111,6 +111,55 @@ hoangsa-memory changes                       # current working-tree diff
 hoangsa-memory changes --from patch.diff     # from a file
 gh pr diff 123 | hoangsa-memory changes --from -
 hoangsa-memory changes -d 3                  # deeper upstream walk
+```
+
+## Graph
+
+Whole-shape queries over the code graph — reach for these instead of
+grepping call chains by hand. All accept `--json`.
+
+### `hoangsa-memory graph query <start...>`
+
+Traverse callers/callees/refs/imports from seed symbol(s). Filter by
+direction / edge kinds / depth; export JSON or DOT.
+
+```bash
+hoangsa-memory graph query server::dispatch_tool --direction both -d 2
+hoangsa-memory graph query auth::verify_token --edge-kinds calls --format dot
+```
+
+### `hoangsa-memory graph paths <from> <to>`
+
+Shortest dependency/call path between two symbols.
+
+```bash
+hoangsa-memory graph paths router::handle_login db::users::find_by_email
+```
+
+### `hoangsa-memory graph communities`
+
+Architecture map — clusters of tightly-coupled symbols (largest first).
+
+```bash
+hoangsa-memory graph communities --min-size 5
+```
+
+### `hoangsa-memory graph processes`
+
+Execution flows from entry points (`::main` or `--entry-globs`).
+
+```bash
+hoangsa-memory graph processes -d 8
+```
+
+### `hoangsa-memory graph taint`
+
+Source→sink security dataflow. Requires an index built with
+`hoangsa-memory index . --pdg`. Omit `--source`/`--sink` for built-in defaults.
+
+```bash
+hoangsa-memory index . --pdg
+hoangsa-memory graph taint --source env::var --sink Command::new --json
 ```
 
 ## Memory
