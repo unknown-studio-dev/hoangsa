@@ -18,6 +18,10 @@ pub struct TaskUsageRecord {
     pub content_tokens_received: u64,
     pub cache_scenario: String,
     pub timestamp: String,
+    /// Model the worker actually ran on — surfaces config-vs-reality routing
+    /// drift in `stats summary`. Optional for pre-existing records.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -439,6 +443,13 @@ pub fn cmd_summary(args: &[&str]) {
         }
     }
 
+    // Model distribution — makes config-vs-reality routing drift visible
+    let mut by_model: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    for r in &all_records {
+        let key = r.model.clone().unwrap_or_else(|| "unrecorded".to_string());
+        *by_model.entry(key).or_insert(0) += 1;
+    }
+
     let output = json!({
         "total_records": total_records,
         "filtered_records": filtered_count,
@@ -447,6 +458,7 @@ pub fn cmd_summary(args: &[&str]) {
         "avg_ratio": avg_ratio,
         "calibration": calibration,
         "by_complexity": Value::Object(by_complexity),
+        "by_model": by_model,
     });
 
     out(&output);
@@ -527,6 +539,7 @@ mod tests {
             content_tokens_received: 4000,
             cache_scenario: "warm".to_string(),
             timestamp: "2026-04-20T05:00:00Z".to_string(),
+            model: None,
         }
     }
 

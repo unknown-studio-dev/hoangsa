@@ -106,6 +106,33 @@ fn resolve_from_profile(profile: &str, role: &str) -> &'static str {
     "sonnet"
 }
 
+/// Core resolution (override > profile > balanced fallback), reusable without
+/// printing — `envelope` stamps every worker prompt with this so orchestrators
+/// can't forget to honor config routing.
+pub(crate) fn resolve_model_parts(role: &str, cwd: &str) -> (String, String, &'static str) {
+    let mut profile = "balanced".to_string();
+    let mut model_overrides: Option<Value> = None;
+
+    let config_path = Path::new(cwd).join(".hoangsa").join("config.json");
+    if let Some(content) = read_file(config_path.to_str().unwrap_or(""))
+        && let Ok(cfg) = serde_json::from_str::<Value>(&content) {
+            if let Some(p) = cfg.get("profile").and_then(|v| v.as_str()) {
+                profile = p.to_string();
+            }
+            model_overrides = cfg.get("model_overrides").cloned();
+        }
+
+    let (model, source) = match model_overrides
+        .as_ref()
+        .and_then(|o| o.get(role))
+        .and_then(|v| v.as_str())
+    {
+        Some(m) => (m.to_string(), "override"),
+        None => (resolve_from_profile(&profile, role).to_string(), "profile"),
+    };
+    (model, profile, source)
+}
+
 /// `resolve-model <role>` — resolve which model to use for a given role.
 ///
 /// Resolution order:
@@ -122,34 +149,7 @@ pub fn resolve_model(role: &str, cwd: &str) {
         return;
     }
 
-    let mut profile = "balanced".to_string();
-    let mut model_overrides: Option<Value> = None;
-
-    let config_path = Path::new(cwd).join(".hoangsa").join("config.json");
-    if let Some(content) = read_file(config_path.to_str().unwrap_or(""))
-        && let Ok(cfg) = serde_json::from_str::<Value>(&content) {
-            if let Some(p) = cfg.get("profile").and_then(|v| v.as_str()) {
-                profile = p.to_string();
-            }
-            model_overrides = cfg.get("model_overrides").cloned();
-        }
-
-    // Check per-role override first
-    let model = if let Some(overrides) = &model_overrides {
-        if let Some(m) = overrides.get(role).and_then(|v| v.as_str()) {
-            m.to_string()
-        } else {
-            resolve_from_profile(&profile, role).to_string()
-        }
-    } else {
-        resolve_from_profile(&profile, role).to_string()
-    };
-
-    let source = if model_overrides.as_ref().and_then(|o| o.get(role)).is_some() {
-        "override"
-    } else {
-        "profile"
-    };
+    let (model, profile, source) = resolve_model_parts(role, cwd);
 
     out(&json!({
         "role": role,
@@ -157,6 +157,34 @@ pub fn resolve_model(role: &str, cwd: &str) {
         "profile": profile,
         "source": source,
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_parts_defaults_to_balanced_profile() {
+        let dir = std::env::temp_dir().join("hoangsa-model-test-empty");
+        let _ = std::fs::create_dir_all(&dir);
+        let (model, profile, source) = resolve_model_parts("worker", dir.to_str().unwrap());
+        assert_eq!((model.as_str(), profile.as_str(), source), ("sonnet", "balanced", "profile"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_parts_override_beats_profile() {
+        let dir = std::env::temp_dir().join("hoangsa-model-test-ovr");
+        let _ = std::fs::create_dir_all(dir.join(".hoangsa"));
+        std::fs::write(
+            dir.join(".hoangsa/config.json"),
+            r#"{"profile":"quality","model_overrides":{"worker":"haiku"}}"#,
+        )
+        .unwrap();
+        let (model, profile, source) = resolve_model_parts("worker", dir.to_str().unwrap());
+        assert_eq!((model.as_str(), profile.as_str(), source), ("haiku", "quality", "override"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 /// `resolve-model --all` — show all role→model mappings for current config.

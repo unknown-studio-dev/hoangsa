@@ -377,6 +377,15 @@ fn skill_registry(root: &str) -> String {
     if block.is_empty() { fallback.to_string() } else { block.to_string() }
 }
 
+/// Map a plan task type onto a model-routing role (`resolve-model` roles).
+/// Research-flavored tasks read + summarize; everything else writes code.
+fn model_role_for(task_type: &str) -> &'static str {
+    match task_type {
+        "research" | "analysis" => "researcher",
+        _ => "worker",
+    }
+}
+
 fn list_section(title: &str, items: Option<&Vec<Value>>, render: impl Fn(&Value) -> String) -> String {
     let Some(items) = items.filter(|a| !a.is_empty()) else {
         return String::new();
@@ -418,6 +427,8 @@ pub fn cmd_envelope(session_dir: &str, task_id: &str, kind: &str, memory_status:
         "research" | "analysis" => "readonly",
         _ => "impl",
     };
+    let (model, _profile, model_source) =
+        crate::cmd::model::resolve_model_parts(model_role_for(task_type), workspace);
 
     let composed = match compose_rules(workspace, task_type, role) {
         Ok(c) => c,
@@ -532,7 +543,8 @@ pub fn cmd_envelope(session_dir: &str, task_id: &str, kind: &str, memory_status:
     };
 
     let prompt = format!(
-        "You are a HOANGSA worker. Execute this task precisely.\n\n\
+        "MODEL: {model}   (config routing, source: {model_source} — spawn this worker with exactly this model)\n\n\
+You are a HOANGSA worker. Execute this task precisely.\n\n\
 ## Worker Rules\n\n{rules}\n{tool_restrictions}\n---\n\n\
 ## Task Envelope\n\n\
 Task: {name}\nID: {task_id}\nWorkspace: {workspace}\nhoangsa-memory: {memory_status}\n\
@@ -716,6 +728,15 @@ mod tests {
     fn strip_frontmatter_handles_both_shapes() {
         assert_eq!(strip_frontmatter("---\na: b\n---\n\nBody"), "Body");
         assert_eq!(strip_frontmatter("No FM"), "No FM");
+    }
+
+    #[test]
+    fn model_role_maps_research_to_researcher_else_worker() {
+        assert_eq!(model_role_for("research"), "researcher");
+        assert_eq!(model_role_for("analysis"), "researcher");
+        for t in ["impl", "fix", "test", "e2e"] {
+            assert_eq!(model_role_for(t), "worker");
+        }
     }
 
     #[test]
