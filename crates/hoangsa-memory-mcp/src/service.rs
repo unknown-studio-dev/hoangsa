@@ -564,6 +564,21 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    /// Pin `HOANGSA_INSTALL_DIR` once for the whole test process to a stable,
+    /// marker-free dir so vector-store enablement is deterministic — a dev
+    /// machine's global `~/.hoangsa/no-embed` marker must not flip test
+    /// behaviour (same concern as hoangsa-memory-store/tests/no_embed_marker.rs).
+    /// OnceLock keeps the env write idempotent; the dir outlives every test,
+    /// so no later reader ever sees a dangling path.
+    fn pin_test_install_root() {
+        static PIN: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        PIN.get_or_init(|| {
+            let dir = std::env::temp_dir().join("hoangsa-mcp-test-install");
+            let _ = std::fs::create_dir_all(&dir);
+            unsafe { std::env::set_var("HOANGSA_INSTALL_DIR", &dir) };
+        });
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn get_or_open_caches_server() {
         let home = tempdir().unwrap();
@@ -699,10 +714,13 @@ mod tests {
         state.register("alpha".into(), mem_root, None);
 
         let server = state.get_or_open("alpha").await.unwrap();
-        // Capture identity but drop the Arc immediately — redb's file lock
-        // releases only when *every* clone goes away, including ours, so a
-        // long-lived borrow would deadlock the rebuild.
-        let b1_id = Arc::as_ptr(&server.resources().await.unwrap());
+        // Hold a Weak, not an Arc: redb's file lock releases only when every
+        // strong clone goes away, so a strong borrow would deadlock the
+        // rebuild — but a raw pointer to the freed bundle is ABA-prone (the
+        // fresh allocation can land on the recycled address and spuriously
+        // compare equal). Weak drops the data (lock released) while keeping
+        // the allocation reserved, so pointer identity stays meaningful.
+        let b1 = Arc::downgrade(&server.resources().await.unwrap());
         assert!(server.evict_resources().await, "first evict drops bundle");
         assert!(
             !server.evict_resources().await,
@@ -710,7 +728,7 @@ mod tests {
         );
         let b2 = server.resources().await.unwrap();
         assert!(
-            !std::ptr::eq(b1_id, Arc::as_ptr(&b2)),
+            !std::ptr::eq(b1.as_ptr(), Arc::as_ptr(&b2)),
             "post-evict resources() must return a freshly opened bundle",
         );
     }
@@ -776,12 +794,7 @@ mod tests {
         // handle stays resident for the lifetime of the daemon even
         // after the rest of the project is dropped.
         let home = tempdir().unwrap();
-        // install_root() honours HOANGSA_INSTALL_DIR; pin it to the test's
-        // tempdir so a dev machine's global `no-embed` marker can't disable
-        // the vector store this test asserts on (same pattern as
-        // hoangsa-memory-store/tests/no_embed_marker.rs). Must be set before
-        // get_or_open — enablement is computed at server construction.
-        unsafe { std::env::set_var("HOANGSA_INSTALL_DIR", home.path()) };
+        pin_test_install_root();
         let mem_root = project_memory_root(home.path(), "alpha");
         std::fs::create_dir_all(&mem_root).unwrap();
 

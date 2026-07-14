@@ -63,7 +63,7 @@ impl Prefs {
         if let Some(g) = global_config_path_with_override(global_override) {
             prefs.overlay_file(&g);
         }
-        prefs.overlay_file(&project_cwd.join(".hoangsa/proxy/config.toml"));
+        prefs.overlay_file(&project_config_path(project_cwd));
         prefs
     }
 
@@ -117,7 +117,7 @@ fn global_config_path_with_override(override_path: Option<&Path>) -> Option<Path
     if let Some(p) = override_path {
         return Some(p.to_path_buf());
     }
-    dirs::home_dir().map(|d| d.join(".hoangsa").join("proxy").join("config.toml"))
+    crate::config::global_dir().map(|d| d.join("config.toml"))
 }
 
 /// Path where `hsp doctor` and `hsp init` resolve the project config. Kept

@@ -26,7 +26,7 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 regex = "1"
 rhai = { version = "1.19", features = ["sync"] }
 is-terminal = "0.4"
-dirs = "5"
+dirs = "6"
 libc = "0.2"
 anyhow = { workspace = true }
 thiserror = { workspace = true }

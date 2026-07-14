@@ -35,15 +35,19 @@ pub async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
 pub async fn config_effective(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let current = state.current();
     let global_path = state.global_dir.join("config.json");
-    let project_path = current.project_dir.join(".hoangsa/config.json");
+    let project_path = project_config_path(&current.project_dir);
 
-    let global = match config::read_layer(&global_path) {
-        Ok(v) => v,
-        Err(e) => return read_error(&format!("global: {e}")),
-    };
-    let project = match config::read_layer(&project_path) {
-        Ok(v) => v,
-        Err(e) => return read_error(&format!("project: {e}")),
+    // read_layer hits the filesystem — keep it off the async worker threads
+    let (gp, pp) = (global_path.clone(), project_path.clone());
+    let layers = tokio::task::spawn_blocking(move || {
+        (config::read_layer(&gp), config::read_layer(&pp))
+    })
+    .await;
+    let (global, project) = match layers {
+        Ok((Ok(g), Ok(p))) => (g, p),
+        Ok((Err(e), _)) => return read_error(&format!("global: {e}")),
+        Ok((_, Err(e))) => return read_error(&format!("project: {e}")),
+        Err(e) => return read_error(&format!("join: {e}")),
     };
 
     let layered = config::build_layered(global, project);
@@ -75,15 +79,21 @@ pub struct LayerPatchBody {
     pub expected_mtime_ms: Option<i128>,
 }
 
-fn resolve_config_path(state: &AppState, layer: &str) -> Result<PathBuf, axum::response::Response> {
+fn project_config_path(project_dir: &std::path::Path) -> PathBuf {
+    project_dir.join(".hoangsa/config.json")
+}
+
+fn resolve_config_path(state: &AppState, layer: &str) -> Result<PathBuf, Box<axum::response::Response>> {
     match layer {
         "global" => Ok(state.global_dir.join("config.json")),
-        "project" => Ok(state.current().project_dir.join(".hoangsa/config.json")),
-        other => Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": format!("unknown layer: {other}") })),
-        )
-            .into_response()),
+        "project" => Ok(project_config_path(&state.current().project_dir)),
+        other => Err(Box::new(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": format!("unknown layer: {other}") })),
+            )
+                .into_response(),
+        )),
     }
 }
 
@@ -93,7 +103,7 @@ pub async fn config_diff(
 ) -> impl IntoResponse {
     let path = match resolve_config_path(&state, &body.layer) {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let req = PatchRequest {
         patch: body.patch,
@@ -117,7 +127,7 @@ pub async fn config_apply(
 ) -> impl IntoResponse {
     let path = match resolve_config_path(&state, &body.layer) {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let req = PatchRequest {
         patch: body.patch,
@@ -196,29 +206,38 @@ pub async fn memory_restart() -> impl IntoResponse {
 
 pub async fn addons_list(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let current = state.current();
-    let dir = current.project_dir.to_string_lossy();
-    let root = match hoangsa_cli::cmd::addon::resolve_hoangsa_root(&dir) {
-        Some(r) => r,
-        None => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({
-                    "error": "HOANGSA_ROOT not found — run scripts/install.sh or set HOANGSA_ROOT",
-                    "available": [],
-                    "active": [],
-                })),
-            )
-                .into_response();
-        }
-    };
-    let available = hoangsa_cli::cmd::addon::scan_available_addons(&root);
-    let active = hoangsa_cli::cmd::addon::get_active_addons(&dir);
-    Json(json!({
-        "available": available,
-        "active": active,
-        "hoangsa_root": root,
-    }))
-    .into_response()
+    let dir = current.project_dir.to_string_lossy().to_string();
+    // resolve + scan walk the filesystem — keep them off the async workers
+    let scanned = tokio::task::spawn_blocking(move || {
+        hoangsa_cli::cmd::addon::resolve_hoangsa_root(&dir).map(|root| {
+            let available = hoangsa_cli::cmd::addon::scan_available_addons(&root);
+            let active = hoangsa_cli::cmd::addon::get_active_addons(&dir);
+            (root, available, active)
+        })
+    })
+    .await;
+    match scanned {
+        Ok(Some((root, available, active))) => Json(json!({
+            "available": available,
+            "active": active,
+            "hoangsa_root": root,
+        }))
+        .into_response(),
+        Ok(None) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "error": "HOANGSA_ROOT not found — run scripts/install.sh or set HOANGSA_ROOT",
+                "available": [],
+                "active": [],
+            })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("join: {e}"), "available": [], "active": [] })),
+        )
+            .into_response(),
+    }
 }
 
 pub async fn rules_list(State(state): State<Arc<AppState>>) -> impl IntoResponse {

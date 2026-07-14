@@ -361,13 +361,11 @@ impl Language {
     ///   indexer resolves via `SymbolTable::string_consts`
     /// - **template / concat / function call / anything else** →
     ///   skipped entirely (returns `None`)
-    ///
-    /// Tuple layout: `(role, topic, topic_expr, bus_symbol, handler)`.
     pub(crate) fn extract_events(
         self,
         node: tree_sitter::Node<'_>,
         source: &[u8],
-    ) -> Option<(EventRole, String, Option<String>, Option<String>, Option<String>)> {
+    ) -> Option<EventExtraction> {
         match self.inner {
             #[cfg(any(feature = "lang-javascript", feature = "lang-typescript"))]
             LanguageKind::JavaScript | LanguageKind::TypeScript => js_ts_event(node, source),
@@ -927,6 +925,24 @@ fn last_name_segment(raw: &str) -> String {
 
 // ------------------------------------------------------ event extractors
 
+/// One extracted event-bus occurrence — `EventEdge` minus `owner`,
+/// which the walker supplies from its scope stack.
+pub(crate) struct EventExtraction {
+    /// Publisher or subscriber.
+    pub(crate) role: EventRole,
+    /// Static topic string. Empty when the call site used a
+    /// non-literal expression — then `topic_expr` is set instead.
+    pub(crate) topic: String,
+    /// Unresolved identifier / member-access path that named the
+    /// topic; the indexer resolves it through `string_consts`.
+    pub(crate) topic_expr: Option<String>,
+    /// Receiver identifier that owns the call (e.g. `bus`, `socket`).
+    /// `None` when the call is bare (`emit("x")`).
+    pub(crate) bus_symbol: Option<String>,
+    /// Handler identifier when the second argument is a bare name.
+    pub(crate) handler: Option<String>,
+}
+
 /// Classify a method name into a pub/sub role. None for non-bus methods.
 ///
 /// Whitelist is intentionally tight — adding a verb here surfaces
@@ -1021,20 +1037,39 @@ fn bare_identifier(node: tree_sitter::Node<'_>, source: &[u8]) -> Option<String>
     None
 }
 
-#[cfg(any(feature = "lang-javascript", feature = "lang-typescript"))]
-fn js_ts_event(
+/// Per-language grammar vocabulary for an event-bus call site. The
+/// extraction pipeline is identical across languages; only these node
+/// kinds / field names differ.
+struct CallShape {
+    /// Node kind of the call itself (`call_expression`, `call`).
+    call_kind: &'static str,
+    /// Node kind of a `receiver.method` callee (`member_expression`,
+    /// `attribute`, `field_expression`).
+    member_kind: &'static str,
+    /// Field name holding the method on a `member_kind` node.
+    method_field: &'static str,
+    /// Field name holding the receiver on a `member_kind` node.
+    receiver_field: &'static str,
+}
+
+/// Shared spine of the per-language event extractors: check the call
+/// node kind, resolve `(bus_symbol, method)` from the callee, gate the
+/// method through `event_role_for`, then decode the arguments.
+fn extract_call_event(
     node: tree_sitter::Node<'_>,
     source: &[u8],
-) -> Option<(EventRole, String, Option<String>, Option<String>, Option<String>)> {
-    if node.kind() != "call_expression" {
+    shape: CallShape,
+) -> Option<EventExtraction> {
+    if node.kind() != shape.call_kind {
         return None;
     }
     let func = node.child_by_field_name("function")?;
-    let (bus_symbol, method) = if func.kind() == "member_expression" {
-        let prop = func.child_by_field_name("property")?;
-        let method = prop.utf8_text(source).ok()?.to_string();
-        let obj = func.child_by_field_name("object");
-        let bus = obj.and_then(|o| bare_identifier(o, source));
+    let (bus_symbol, method) = if func.kind() == shape.member_kind {
+        let m = func.child_by_field_name(shape.method_field)?;
+        let method = m.utf8_text(source).ok()?.to_string();
+        let bus = func
+            .child_by_field_name(shape.receiver_field)
+            .and_then(|r| bare_identifier(r, source));
         (bus, method)
     } else if func.kind() == "identifier" {
         // Bare `emit("x")`. Rare but legal (re-exported `emit` from a
@@ -1047,65 +1082,41 @@ fn js_ts_event(
     let role = event_role_for(&method)?;
     let args = node.child_by_field_name("arguments")?;
     let (topic, topic_expr, handler) = extract_topic_and_handler(args, source)?;
-    Some((role, topic, topic_expr, bus_symbol, handler))
+    Some(EventExtraction { role, topic, topic_expr, bus_symbol, handler })
+}
+
+#[cfg(any(feature = "lang-javascript", feature = "lang-typescript"))]
+fn js_ts_event(node: tree_sitter::Node<'_>, source: &[u8]) -> Option<EventExtraction> {
+    extract_call_event(node, source, CallShape {
+        call_kind: "call_expression",
+        member_kind: "member_expression",
+        method_field: "property",
+        receiver_field: "object",
+    })
 }
 
 #[cfg(feature = "lang-python")]
-fn python_event(
-    node: tree_sitter::Node<'_>,
-    source: &[u8],
-) -> Option<(EventRole, String, Option<String>, Option<String>, Option<String>)> {
-    if node.kind() != "call" {
-        return None;
-    }
-    let func = node.child_by_field_name("function")?;
-    let (bus_symbol, method) = if func.kind() == "attribute" {
-        let attr = func.child_by_field_name("attribute")?;
-        let method = attr.utf8_text(source).ok()?.to_string();
-        let obj = func.child_by_field_name("object");
-        let bus = obj.and_then(|o| bare_identifier(o, source));
-        (bus, method)
-    } else if func.kind() == "identifier" {
-        let m = func.utf8_text(source).ok()?.to_string();
-        (None, m)
-    } else {
-        return None;
-    };
-    let role = event_role_for(&method)?;
-    let args = node.child_by_field_name("arguments")?;
-    let (topic, topic_expr, handler) = extract_topic_and_handler(args, source)?;
-    Some((role, topic, topic_expr, bus_symbol, handler))
+fn python_event(node: tree_sitter::Node<'_>, source: &[u8]) -> Option<EventExtraction> {
+    extract_call_event(node, source, CallShape {
+        call_kind: "call",
+        member_kind: "attribute",
+        method_field: "attribute",
+        receiver_field: "object",
+    })
 }
 
 #[cfg(feature = "lang-rust")]
-fn rust_event(
-    node: tree_sitter::Node<'_>,
-    source: &[u8],
-) -> Option<(EventRole, String, Option<String>, Option<String>, Option<String>)> {
+fn rust_event(node: tree_sitter::Node<'_>, source: &[u8]) -> Option<EventExtraction> {
     // tree-sitter-rust shapes `tx.send("x", h)` as
     //   call_expression(function: field_expression(value=tx, field=send),
     //                   arguments: (string_literal, identifier))
     // and `emit("x")` as call_expression(function: identifier).
-    if node.kind() != "call_expression" {
-        return None;
-    }
-    let func = node.child_by_field_name("function")?;
-    let (bus_symbol, method) = match func.kind() {
-        "field_expression" => {
-            let field = func.child_by_field_name("field")?;
-            let method = field.utf8_text(source).ok()?.to_string();
-            let bus = func
-                .child_by_field_name("value")
-                .and_then(|v| bare_identifier(v, source));
-            (bus, method)
-        }
-        "identifier" => (None, func.utf8_text(source).ok()?.to_string()),
-        _ => return None,
-    };
-    let role = event_role_for(&method)?;
-    let args = node.child_by_field_name("arguments")?;
-    let (topic, topic_expr, handler) = extract_topic_and_handler(args, source)?;
-    Some((role, topic, topic_expr, bus_symbol, handler))
+    extract_call_event(node, source, CallShape {
+        call_kind: "call_expression",
+        member_kind: "field_expression",
+        method_field: "field",
+        receiver_field: "value",
+    })
 }
 
 /// Walk an arguments-list node and decode the first two positional
@@ -1161,7 +1172,7 @@ fn topic_path_expr(node: tree_sitter::Node<'_>, source: &[u8]) -> Option<String>
             // only if the receiver itself is a bare identifier; else bail.
             let text = node.utf8_text(source).ok()?;
             // Conservative: accept only `ident(::|\.)ident` chains.
-            let parts: Vec<&str> = text.split(|c| c == '.' || c == ':').filter(|s| !s.is_empty()).collect();
+            let parts: Vec<&str> = text.split(['.', ':']).filter(|s| !s.is_empty()).collect();
             if parts.is_empty() {
                 return None;
             }
