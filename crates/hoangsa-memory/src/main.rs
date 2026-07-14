@@ -234,6 +234,14 @@ async fn main() -> anyhow::Result<()> {
             memory_cmd::MemoryCmd::Lesson { when, advice } => {
                 memory_cmd::run_lesson(&root, when, advice.join(" ")).await?
             }
+            memory_cmd::MemoryCmd::LessonFeedback { cmd } => match cmd {
+                memory_cmd::LessonFeedbackCmd::Success { triggers } => {
+                    memory_cmd::run_lesson_feedback(&root, triggers, true, cli.json).await?
+                }
+                memory_cmd::LessonFeedbackCmd::Failure { triggers } => {
+                    memory_cmd::run_lesson_feedback(&root, triggers, false, cli.json).await?
+                }
+            },
         },
         Cmd::Impact {
             fqn,

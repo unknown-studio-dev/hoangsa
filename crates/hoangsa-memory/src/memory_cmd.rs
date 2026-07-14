@@ -26,6 +26,27 @@ pub enum MemoryCmd {
         #[arg(required = true)]
         advice: Vec<String>,
     },
+    /// Record a success or failure outcome for existing lesson(s).
+    LessonFeedback {
+        #[command(subcommand)]
+        cmd: LessonFeedbackCmd,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+pub enum LessonFeedbackCmd {
+    /// Increment the success counter for matching lesson(s).
+    Success {
+        /// Trigger(s) to match (case-insensitive).
+        #[arg(required = true)]
+        triggers: Vec<String>,
+    },
+    /// Increment the failure counter for matching lesson(s).
+    Failure {
+        /// Trigger(s) to match (case-insensitive).
+        #[arg(required = true)]
+        triggers: Vec<String>,
+    },
 }
 
 use anyhow::Result;
@@ -166,5 +187,26 @@ pub async fn run_lesson(root: &Path, when: String, advice: String) -> Result<()>
         "lesson appended to {}",
         store.path.join("LESSONS.md").display()
     );
+    Ok(())
+}
+
+pub async fn run_lesson_feedback(
+    root: &Path,
+    triggers: Vec<String>,
+    success: bool,
+    json: bool,
+) -> Result<()> {
+    let store = StoreRoot::open(root).await?;
+    let bumped = if success {
+        store.markdown.bump_lesson_success(&triggers).await?
+    } else {
+        store.markdown.bump_lesson_failure(&triggers).await?
+    };
+    let kind = if success { "success" } else { "failure" };
+    if json {
+        println!("{}", serde_json::json!({ "bumped": bumped, "kind": kind }));
+    } else {
+        println!("{}", serde_json::json!({ "bumped": bumped, "kind": kind }));
+    }
     Ok(())
 }
