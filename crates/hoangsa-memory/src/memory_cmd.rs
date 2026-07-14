@@ -203,11 +203,9 @@ pub async fn run_lesson_feedback(
         store.markdown.bump_lesson_failure(&triggers).await?
     };
     let kind = if success { "success" } else { "failure" };
-    if json {
-        println!("{}", serde_json::json!({ "bumped": bumped, "kind": kind }));
-    } else {
-        println!("{}", serde_json::json!({ "bumped": bumped, "kind": kind }));
-    }
+    // Output is JSON either way — machine consumers (stop-check) parse it
+    let _ = json;
+    println!("{}", serde_json::json!({ "bumped": bumped, "kind": kind }));
     Ok(())
 }
 
