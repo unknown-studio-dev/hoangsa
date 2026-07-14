@@ -854,6 +854,25 @@ impl KvStore {
         .map_err(|e| Error::Store(format!("join: {e}")))?
     }
 
+    /// All node FQNs in the graph (full table scan). Powers graph-wide
+    /// analytics (community detection, process tracing) which need the
+    /// complete vertex set rather than a per-symbol lookup.
+    pub async fn all_node_ids(&self) -> Result<Vec<String>> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
+            let rtxn = db.begin_read().map_err(store)?;
+            let t = rtxn.open_table(NODES).map_err(store)?;
+            let mut out = Vec::new();
+            for entry in t.iter().map_err(store)? {
+                let (k, _v) = entry.map_err(store)?;
+                out.push(k.value().to_string());
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(|e| Error::Store(format!("join: {e}")))?
+    }
+
     /// Like [`Self::nodes_for_path`] but tolerant of absolute /
     /// cwd-relative / `./`-prefixed variants — symmetric with
     /// [`Self::symbols_for_path_like`].
