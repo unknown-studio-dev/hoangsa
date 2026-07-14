@@ -23,6 +23,10 @@
 pub mod analytics;
 pub use analytics::{Community, ProcessFlow};
 
+/// Taint propagation engine.
+pub mod taint;
+pub use taint::{TaintFinding, TaintReport, TaintSpec};
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
@@ -66,6 +70,13 @@ pub enum EdgeKind {
     /// FQN convention as `Emits`; the direction is event → handler so
     /// that `subscribers_of(event_fqn)` is a plain incoming-edge scan.
     Subscribes,
+    /// Control-flow edge: `A` dominates / is a predecessor block of `B`.
+    /// Used in PDG construction; never followed by the taint engine to
+    /// avoid false positives through pure control flow.
+    Cfg,
+    /// Data-dependence edge: the value produced by `A` flows into `B`.
+    /// The primary edge kind followed by [`crate::taint::TaintSpec`] BFS.
+    DataDep,
 }
 
 impl EdgeKind {
@@ -79,6 +90,8 @@ impl EdgeKind {
             EdgeKind::DeclaredIn => "declared_in",
             EdgeKind::Emits => "emits",
             EdgeKind::Subscribes => "subscribes",
+            EdgeKind::Cfg => "cfg",
+            EdgeKind::DataDep => "data_dep",
         }
     }
 
@@ -92,6 +105,8 @@ impl EdgeKind {
             "declared_in" => EdgeKind::DeclaredIn,
             "emits" => EdgeKind::Emits,
             "subscribes" => EdgeKind::Subscribes,
+            "cfg" => EdgeKind::Cfg,
+            "data_dep" => EdgeKind::DataDep,
             _ => return None,
         })
     }
@@ -956,7 +971,7 @@ fn kind_matches(kind: &EdgeKind, filter: Option<&[EdgeKind]>) -> bool {
     filter.is_none_or(|ks| ks.contains(kind))
 }
 
-fn row_to_node(row: NodeRow) -> Node {
+pub(crate) fn row_to_node(row: NodeRow) -> Node {
     let path = row
         .payload
         .get("path")
