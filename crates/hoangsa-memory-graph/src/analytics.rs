@@ -422,4 +422,82 @@ mod tests {
         let result = g.processes(10, &[]).await.expect("processes");
         assert!(result.is_empty(), "empty graph => empty vec");
     }
+
+    // ---- spec-named tests (T-04) -------------------------------------------
+
+    /// Spec test 5: communities cluster related symbols.
+    ///
+    /// Two dense clusters a::* and b::* separated only by a References bridge
+    /// (excluded from community detection) → 2 communities whose names start with
+    /// "a" and "b" respectively. Empty graph → [].
+    #[tokio::test]
+    async fn communities_cluster_related_symbols() {
+        // Two clusters, bridge via References (ignored by LPA).
+        {
+            let (g, _dir) = make_graph().await;
+            for fqn in &["a::f1", "a::f2", "a::f3"] {
+                g.upsert_node(node(fqn)).await.expect("upsert a node");
+            }
+            g.upsert_edge(calls("a::f1", "a::f2")).await.expect("edge");
+            g.upsert_edge(calls("a::f2", "a::f3")).await.expect("edge");
+            g.upsert_edge(calls("a::f3", "a::f1")).await.expect("edge");
+
+            for fqn in &["b::g1", "b::g2", "b::g3"] {
+                g.upsert_node(node(fqn)).await.expect("upsert b node");
+            }
+            g.upsert_edge(calls("b::g1", "b::g2")).await.expect("edge");
+            g.upsert_edge(calls("b::g2", "b::g3")).await.expect("edge");
+            g.upsert_edge(calls("b::g3", "b::g1")).await.expect("edge");
+
+            // Bridge via References — must be excluded from LPA.
+            g.upsert_edge(edge_of("a::f3", "b::g1", crate::EdgeKind::References))
+                .await
+                .expect("bridge");
+
+            let communities = g.communities(2).await.expect("communities");
+            assert_eq!(communities.len(), 2, "expected exactly 2 communities");
+
+            let names: Vec<&str> = communities.iter().map(|c| c.name.as_str()).collect();
+            assert!(
+                names.iter().any(|n| n.starts_with('a')),
+                "one community should have an 'a' prefix name; got {names:?}"
+            );
+            assert!(
+                names.iter().any(|n| n.starts_with('b')),
+                "one community should have a 'b' prefix name; got {names:?}"
+            );
+        }
+
+        // Empty graph → [].
+        {
+            let (g, _dir) = make_graph().await;
+            let result = g.communities(1).await.expect("communities on empty graph");
+            assert!(result.is_empty(), "empty graph must return []");
+        }
+    }
+
+    /// Spec test 6: process tracing walks from entry point.
+    ///
+    /// crate::main -> run -> helper → one flow, ordered 2-edge chain.
+    #[tokio::test]
+    async fn process_tracing_walks_from_entry() {
+        let (g, _dir) = make_graph().await;
+
+        g.upsert_node(node("crate::main")).await.expect("upsert main");
+        g.upsert_node(node("crate::run")).await.expect("upsert run");
+        g.upsert_node(node("crate::helper")).await.expect("upsert helper");
+        g.upsert_edge(calls("crate::main", "crate::run")).await.expect("main->run");
+        g.upsert_edge(calls("crate::run", "crate::helper")).await.expect("run->helper");
+
+        let flows = g.processes(10, &[]).await.expect("processes");
+        assert_eq!(flows.len(), 1, "exactly one flow from crate::main");
+        assert_eq!(flows[0].entry, "crate::main");
+        assert_eq!(flows[0].chain.len(), 2, "ordered 2-edge chain");
+        // Edge 0: main -> run
+        assert_eq!(flows[0].chain[0].from, "crate::main");
+        assert_eq!(flows[0].chain[0].to, "crate::run");
+        // Edge 1: run -> helper
+        assert_eq!(flows[0].chain[1].from, "crate::run");
+        assert_eq!(flows[0].chain[1].to, "crate::helper");
+    }
 }

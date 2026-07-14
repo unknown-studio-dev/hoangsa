@@ -1229,4 +1229,168 @@ mod tests {
         assert!(dot.contains("\"b\""), "node b in dot");
         assert!(dot.contains("calls"), "edge label calls");
     }
+
+    // ---- spec-named tests (T-04) -------------------------------------------
+
+    /// Spec test 1: traverse filters edge kinds and depth.
+    ///
+    /// Graph: A -calls-> B -imports-> C, A -extends-> D.
+    /// kinds=[calls, imports] depth=2 → {A, B, C} in output, D excluded.
+    /// Output nodes are sorted by (depth, fqn).
+    #[tokio::test]
+    async fn traverse_filters_edge_kinds_and_depth() {
+        let (g, _dir) = make_graph().await;
+        // Nodes
+        g.upsert_node(node("A")).await.expect("upsert A");
+        g.upsert_node(node("B")).await.expect("upsert B");
+        g.upsert_node(node("C")).await.expect("upsert C");
+        g.upsert_node(node("D")).await.expect("upsert D");
+        // Edges
+        g.upsert_edge(edge("A", "B", EdgeKind::Calls)).await.expect("A->B calls");
+        g.upsert_edge(edge("B", "C", EdgeKind::Imports)).await.expect("B->C imports");
+        g.upsert_edge(edge("A", "D", EdgeKind::Extends)).await.expect("A->D extends");
+
+        let spec = TraverseSpec {
+            start: vec!["A".to_string()],
+            direction: Direction::Out,
+            edge_kinds: Some(vec![EdgeKind::Calls, EdgeKind::Imports]),
+            max_depth: 2,
+            max_nodes: 100,
+        };
+        let sg = g.traverse(&spec).await.expect("traverse");
+
+        let fqns: Vec<&str> = sg.nodes.iter().map(|n| n.fqn.as_str()).collect();
+        assert!(fqns.contains(&"A"), "A must be in subgraph");
+        assert!(fqns.contains(&"B"), "B must be reachable via Calls");
+        assert!(fqns.contains(&"C"), "C must be reachable via Calls+Imports at depth 2");
+        assert!(!fqns.contains(&"D"), "D must be excluded (Extends filtered out)");
+
+        // Deterministic order: sorted by (depth, fqn) — A at depth 0, B at depth 1, C at depth 2.
+        assert_eq!(sg.nodes[0].fqn, "A", "A first (depth 0)");
+        assert_eq!(sg.nodes[1].fqn, "B", "B second (depth 1)");
+        assert_eq!(sg.nodes[2].fqn, "C", "C third (depth 2)");
+    }
+
+    /// Spec test 2: traverse terminates on cycles and caps nodes.
+    ///
+    /// Part A: cycle A->B->A terminates (no infinite loop).
+    /// Part B: 10-node chain with max_nodes=3 → truncated=true, exactly 3 nodes.
+    #[tokio::test]
+    async fn traverse_terminates_on_cycles_and_caps_nodes() {
+        // Part A: cycle terminates
+        {
+            let (g, _dir) = make_graph().await;
+            g.upsert_node(node("cyc_a")).await.expect("upsert cyc_a");
+            g.upsert_node(node("cyc_b")).await.expect("upsert cyc_b");
+            g.upsert_edge(edge("cyc_a", "cyc_b", EdgeKind::Calls)).await.expect("cyc_a->cyc_b");
+            g.upsert_edge(edge("cyc_b", "cyc_a", EdgeKind::Calls)).await.expect("cyc_b->cyc_a");
+
+            let spec = TraverseSpec {
+                start: vec!["cyc_a".to_string()],
+                direction: Direction::Out,
+                edge_kinds: None,
+                max_depth: 50,
+                max_nodes: 1000,
+            };
+            let sg = g.traverse(&spec).await.expect("traverse cycle");
+            let fqns: Vec<&str> = sg.nodes.iter().map(|n| n.fqn.as_str()).collect();
+            assert!(fqns.contains(&"cyc_a"), "cyc_a in subgraph");
+            assert!(fqns.contains(&"cyc_b"), "cyc_b in subgraph");
+            assert_eq!(fqns.len(), 2, "cycle terminates at 2 nodes, no infinite loop");
+            assert!(!sg.truncated, "not truncated — all reachable nodes fit");
+        }
+
+        // Part B: 10-node chain truncated to 3
+        {
+            let (g, _dir) = make_graph().await;
+            let names = ["n0", "n1", "n2", "n3", "n4", "n5", "n6", "n7", "n8", "n9"];
+            for name in &names {
+                g.upsert_node(node(name)).await.expect("upsert");
+            }
+            for i in 0..names.len() - 1 {
+                g.upsert_edge(edge(names[i], names[i + 1], EdgeKind::Calls))
+                    .await
+                    .expect("chain edge");
+            }
+
+            let spec = TraverseSpec {
+                start: vec!["n0".to_string()],
+                direction: Direction::Out,
+                edge_kinds: None,
+                max_depth: 20,
+                max_nodes: 3,
+            };
+            let sg = g.traverse(&spec).await.expect("traverse cap");
+            assert!(sg.truncated, "truncated must be true when cap hit");
+            assert_eq!(sg.nodes.len(), 3, "exactly 3 nodes (the cap)");
+        }
+    }
+
+    /// Spec test 3: shortest_path finds a 2-hop path and returns None for unreachable.
+    ///
+    /// Graph: A->B->C. A→C = 2 edges. Unrelated X: A→X = None.
+    #[tokio::test]
+    async fn shortest_path_finds_and_misses() {
+        let (g, _dir) = make_graph().await;
+        g.upsert_node(node("A")).await.expect("upsert A");
+        g.upsert_node(node("B")).await.expect("upsert B");
+        g.upsert_node(node("C")).await.expect("upsert C");
+        g.upsert_node(node("X")).await.expect("upsert X");
+        g.upsert_edge(edge("A", "B", EdgeKind::Calls)).await.expect("A->B");
+        g.upsert_edge(edge("B", "C", EdgeKind::Calls)).await.expect("B->C");
+        // X has no connection to A
+
+        let found = g
+            .shortest_path("A", "C", None, Direction::Out, 10)
+            .await
+            .expect("shortest_path call")
+            .expect("path A→C must exist");
+        assert_eq!(found.len(), 2, "A→C is exactly 2 edges");
+        assert_eq!(found[0].from, "A");
+        assert_eq!(found[0].to, "B");
+        assert_eq!(found[1].from, "B");
+        assert_eq!(found[1].to, "C");
+
+        let not_found = g
+            .shortest_path("A", "X", None, Direction::Out, 10)
+            .await
+            .expect("shortest_path call");
+        assert!(not_found.is_none(), "A→X must be None (no path)");
+    }
+
+    /// Spec test 4: subgraph exports valid JSON (nodes/edges/truncated keys) and DOT.
+    ///
+    /// JSON must contain nodes, edges, truncated keys. DOT must contain "digraph" and edge lines.
+    #[tokio::test]
+    async fn subgraph_exports_json_and_dot() {
+        let (g, _dir) = make_graph().await;
+        seed_chain(&g).await;
+
+        let spec = TraverseSpec {
+            start: vec!["a".to_string()],
+            direction: Direction::Out,
+            edge_kinds: None,
+            max_depth: 5,
+            max_nodes: 100,
+        };
+        let sg = g.traverse(&spec).await.expect("traverse");
+
+        // JSON shape
+        let json = sg.to_json();
+        assert!(json.get("nodes").is_some(), "JSON must have 'nodes' key");
+        assert!(json.get("edges").is_some(), "JSON must have 'edges' key");
+        assert!(json.get("truncated").is_some(), "JSON must have 'truncated' key");
+        let nodes_arr = json["nodes"].as_array().expect("nodes is array");
+        assert!(!nodes_arr.is_empty(), "nodes array must be non-empty");
+        let edges_arr = json["edges"].as_array().expect("edges is array");
+        assert!(!edges_arr.is_empty(), "edges array must be non-empty");
+
+        // DOT shape
+        let dot = sg.to_dot();
+        assert!(dot.contains("digraph"), "DOT output must contain 'digraph'");
+        // Edge lines: "from" -> "to"
+        assert!(dot.contains("->"), "DOT output must contain edge arrows");
+        assert!(dot.contains("\"a\""), "DOT must include node a");
+        assert!(dot.contains("\"b\""), "DOT must include node b");
+    }
 }

@@ -992,6 +992,157 @@ impl Server {
     }
 }
 
+// ---- spec-named tests (T-04) -----------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use crate::Server;
+    use crate::proto::RpcIncoming;
+
+    async fn open_server() -> (Server, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let srv = Server::open(tmp.path()).await.expect("Server::open");
+        (srv, tmp)
+    }
+
+    fn rpc_call(id: i64, tool: &str, args: serde_json::Value) -> RpcIncoming {
+        serde_json::from_value(json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "hoangsa-memory.call",
+            "params": {
+                "name": tool,
+                "arguments": args,
+            }
+        }))
+        .expect("valid RpcIncoming")
+    }
+
+    /// Seed the server's graph with a tiny fixture:
+    ///   crate::main -calls-> crate::run -calls-> crate::helper
+    /// plus two dense clusters a::* and b::* for communities.
+    async fn seed_graph(srv: &Server) {
+        let res = srv.resources().await.expect("resources");
+        let g = &res.graph;
+
+        use hoangsa_memory_graph::{Edge, EdgeKind, Node};
+        use std::path::PathBuf;
+
+        let node = |fqn: &str| Node {
+            fqn: fqn.to_string(),
+            kind: "function".to_string(),
+            path: PathBuf::from("src/lib.rs"),
+            line: 1,
+        };
+        let edge = |from: &str, to: &str, kind: EdgeKind| Edge {
+            from: from.to_string(),
+            to: to.to_string(),
+            kind,
+        };
+
+        g.upsert_nodes_batch(vec![
+            node("crate::main"),
+            node("crate::run"),
+            node("crate::helper"),
+            node("a::f1"),
+            node("a::f2"),
+            node("a::f3"),
+            node("b::g1"),
+            node("b::g2"),
+            node("b::g3"),
+        ])
+        .await
+        .expect("upsert_nodes_batch");
+
+        g.upsert_edges_batch(vec![
+            edge("crate::main", "crate::run", EdgeKind::Calls),
+            edge("crate::run", "crate::helper", EdgeKind::Calls),
+            edge("a::f1", "a::f2", EdgeKind::Calls),
+            edge("a::f2", "a::f3", EdgeKind::Calls),
+            edge("a::f3", "a::f1", EdgeKind::Calls),
+            edge("b::g1", "b::g2", EdgeKind::Calls),
+            edge("b::g2", "b::g3", EdgeKind::Calls),
+            edge("b::g3", "b::g1", EdgeKind::Calls),
+        ])
+        .await
+        .expect("upsert_edges_batch");
+    }
+
+    /// Spec test 7: all four graph tools dispatch and return JSON results without RPC error.
+    #[tokio::test]
+    async fn graph_tools_dispatch_all_four() {
+        let (srv, _tmp) = open_server().await;
+        seed_graph(&srv).await;
+
+        // 1. memory_graph_query
+        let resp = srv
+            .handle(rpc_call(
+                1,
+                "memory_graph_query",
+                json!({ "start": ["crate::main"], "direction": "out", "max_depth": 2 }),
+            ))
+            .await
+            .expect("response");
+        assert!(resp.error.is_none(), "memory_graph_query: RPC error: {:?}", resp.error);
+        let result = resp.result.expect("memory_graph_query result");
+        assert_eq!(result["isError"], false, "memory_graph_query isError: {result}");
+        // The tool returns ToolOutput with data holding nodes/edges/truncated.
+        let data = &result["data"];
+        assert!(data.get("nodes").is_some(), "graph_query data must have nodes; got {data}");
+        assert!(data.get("edges").is_some(), "graph_query data must have edges; got {data}");
+        assert!(data.get("truncated").is_some(), "graph_query data must have truncated; got {data}");
+
+        // 2. memory_graph_paths
+        let resp = srv
+            .handle(rpc_call(
+                2,
+                "memory_graph_paths",
+                json!({ "from": "crate::main", "to": "crate::helper", "direction": "out" }),
+            ))
+            .await
+            .expect("response");
+        assert!(resp.error.is_none(), "memory_graph_paths: RPC error: {:?}", resp.error);
+        let result = resp.result.expect("memory_graph_paths result");
+        assert_eq!(result["isError"], false, "memory_graph_paths isError: {result}");
+        let data = &result["data"];
+        assert!(data.get("found").is_some(), "graph_paths data must have found; got {data}");
+        assert!(data.get("path").is_some(), "graph_paths data must have path; got {data}");
+        assert_eq!(data["found"], true, "path crate::main→crate::helper must be found");
+
+        // 3. memory_graph_communities
+        let resp = srv
+            .handle(rpc_call(
+                3,
+                "memory_graph_communities",
+                json!({ "min_size": 2 }),
+            ))
+            .await
+            .expect("response");
+        assert!(resp.error.is_none(), "memory_graph_communities: RPC error: {:?}", resp.error);
+        let result = resp.result.expect("memory_graph_communities result");
+        assert_eq!(result["isError"], false, "memory_graph_communities isError: {result}");
+        let data = &result["data"];
+        assert!(data.get("communities").is_some(), "graph_communities data must have communities; got {data}");
+
+        // 4. memory_graph_processes
+        let resp = srv
+            .handle(rpc_call(
+                4,
+                "memory_graph_processes",
+                json!({ "max_depth": 5 }),
+            ))
+            .await
+            .expect("response");
+        assert!(resp.error.is_none(), "memory_graph_processes: RPC error: {:?}", resp.error);
+        let result = resp.result.expect("memory_graph_processes result");
+        assert_eq!(result["isError"], false, "memory_graph_processes isError: {result}");
+        let data = &result["data"];
+        assert!(data.get("processes").is_some(), "graph_processes data must have processes; got {data}");
+    }
+}
+
 fn parse_direction(s: &str) -> anyhow::Result<Direction> {
     match s {
         "out" => Ok(Direction::Out),
