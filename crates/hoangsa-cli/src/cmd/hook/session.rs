@@ -1169,3 +1169,135 @@ fn now_iso_for_usage() -> String {
         ))
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+
+    // ── Test 1: prompt_guard_detects_vi_and_en_frustration ───────────────────
+
+    #[test]
+    fn prompt_guard_detects_vi_and_en_frustration() {
+        // Vietnamese multi-word: "đã bảo bao nhiêu lần rồi" contains "đã bảo"
+        let result = detect_frustration("đã bảo bao nhiêu lần rồi", &[]);
+        assert!(result.is_some(), "đã bảo bao nhiêu lần rồi must detect frustration");
+
+        // English: "wtf again" matches "wtf" in lexicon
+        let result = detect_frustration("wtf again", &[]);
+        assert!(result.is_some(), "wtf again must detect frustration");
+
+        // All-caps Vietnamese: "SAO MÀY NGU THẾ" — ≥20 alpha chars with caps ratio >0.6
+        // or lexicon hit via "sao mày" / "ngu thế"
+        let result = detect_frustration("SAO MÀY NGU THẾ", &[]);
+        assert!(result.is_some(), "SAO MÀY NGU THẾ must detect frustration");
+    }
+
+    // ── Test 2: prompt_guard_ignores_normal_prompts ──────────────────────────
+
+    #[test]
+    fn prompt_guard_ignores_normal_prompts() {
+        // Ordinary technical prompt
+        let result = detect_frustration("Please fix the null pointer in auth.rs line 42", &[]);
+        assert!(result.is_none(), "ordinary technical prompt must not trigger detection");
+
+        // Sketchy word inside a code fence must be stripped
+        let fenced = "Here is the function:\n```\nfn stupid_var() { }\n```\nPlease review.";
+        let result = detect_frustration(fenced, &[]);
+        assert!(result.is_none(), "lexicon hit inside ``` fence must not trigger; got: {result:?}");
+
+        // "OK!!" — only two exclamation marks, alpha_count < 5
+        let result = detect_frustration("OK!!", &[]);
+        assert!(result.is_none(), "OK!! must not trigger (length guard)");
+    }
+
+    // ── Test 3: stop_check_blocks_frustration_without_lesson ─────────────────
+
+    #[test]
+    fn stop_check_blocks_frustration_without_lesson() {
+        use std::fs;
+
+        // ── Case A: frustration with no lesson_saved → block ─────────────────
+        {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let cwd = tmp.path();
+            // Write a non-empty events file with a frustration event but no lesson_saved
+            let events_path = cwd
+                .join(".hoangsa")
+                .join("state")
+                .join("enforcement.events");
+            fs::create_dir_all(events_path.parent().unwrap()).unwrap();
+            fs::write(
+                &events_path,
+                "{\"event\":\"impact\"}\n{\"event\":\"frustration\",\"signal\":\"wtf\"}\n",
+            )
+            .unwrap();
+
+            let outcome = evaluate_reflect_prompt(cwd.to_str().unwrap(), "{}");
+            match outcome {
+                ReflectOutcome::Prompt(reason) => {
+                    assert!(
+                        reason.contains("FRUSTRATION BLOCK") || reason.contains("lesson"),
+                        "block reason must mention frustration or lesson; got: {reason}"
+                    );
+                }
+                ReflectOutcome::Skip => panic!("expected frustration block, got Skip"),
+            }
+        }
+
+        // ── Case B: frustration followed by lesson_saved → normal reflect, not frustration-block ─
+        {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let cwd = tmp.path();
+            let events_path = cwd
+                .join(".hoangsa")
+                .join("state")
+                .join("enforcement.events");
+            fs::create_dir_all(events_path.parent().unwrap()).unwrap();
+            // frustration at line 0, lesson_saved at line 1 → lesson_saved_after=true
+            fs::write(
+                &events_path,
+                "{\"event\":\"frustration\",\"signal\":\"wtf\"}\n{\"event\":\"lesson_saved\"}\n",
+            )
+            .unwrap();
+
+            let outcome = evaluate_reflect_prompt(cwd.to_str().unwrap(), "{}");
+            // Should NOT be a frustration block; the normal memory-reflect prompt fires instead
+            match &outcome {
+                ReflectOutcome::Prompt(reason) => {
+                    assert!(
+                        !reason.contains("FRUSTRATION BLOCK"),
+                        "must not be frustration-block when lesson_saved follows frustration; got: {reason}"
+                    );
+                    assert!(
+                        reason.contains("memory-reflect"),
+                        "expected normal memory-reflect prompt; got: {reason}"
+                    );
+                }
+                ReflectOutcome::Skip => panic!("expected reflect Prompt, got Skip"),
+            }
+        }
+
+        // ── Case C: stop_hook_active=true → approve (loop guard) ────────────
+        {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let cwd = tmp.path();
+            let events_path = cwd
+                .join(".hoangsa")
+                .join("state")
+                .join("enforcement.events");
+            fs::create_dir_all(events_path.parent().unwrap()).unwrap();
+            fs::write(
+                &events_path,
+                "{\"event\":\"frustration\",\"signal\":\"wtf\"}\n",
+            )
+            .unwrap();
+
+            let outcome =
+                evaluate_reflect_prompt(cwd.to_str().unwrap(), r#"{"stop_hook_active":true}"#);
+            assert!(
+                matches!(outcome, ReflectOutcome::Skip),
+                "stop_hook_active=true must always approve (loop guard)"
+            );
+        }
+    }
+}

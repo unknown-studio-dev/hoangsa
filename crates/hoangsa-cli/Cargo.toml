@@ -39,3 +39,7 @@ path = "tests/integration_pref.rs"
 [[test]]
 name = "integration_stats"
 path = "tests/integration_stats.rs"
+
+[[test]]
+name = "integration_prompt_guard"
+path = "tests/integration_prompt_guard.rs"
