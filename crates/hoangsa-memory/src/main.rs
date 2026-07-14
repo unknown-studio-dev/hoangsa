@@ -26,6 +26,7 @@ use hoangsa_memory_store::{
 mod archive_cmd;
 mod daemon;
 mod daemon_cmd;
+mod graph_cmd;
 mod index_cmd;
 mod init_cmd;
 mod memory_cmd;
@@ -165,6 +166,12 @@ enum Cmd {
         depth: usize,
     },
 
+    /// Code graph traversal and analytics.
+    Graph {
+        #[command(subcommand)]
+        cmd: graph_cmd::GraphCmd,
+    },
+
     /// Download the default embedding model into the shared fastembed
     /// cache dir. Used by the installer so the first `index` / `query` /
     /// `archive ingest` call doesn't stall on a 118 MB HuggingFace fetch.
@@ -254,6 +261,7 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Changes { from, depth } => {
             daemon_cmd::cmd_changes(&root, from.as_deref(), depth, cli.json).await?
         }
+        Cmd::Graph { cmd } => graph_cmd::run_graph(&root, cmd, cli.json).await?,
         Cmd::Projects { cmd } => projects_cmd::run(cmd, cli.json).await?,
         Cmd::PrefetchEmbed => {
             let cache = fastembed_cache_dir();
