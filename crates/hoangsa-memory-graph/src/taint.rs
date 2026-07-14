@@ -268,6 +268,48 @@ mod tests {
         assert_eq!(report.sink_matches, 1);
     }
 
+    /// Regression: source/sink patterns must match the stmt node's payload
+    /// `text`, not just its FQN. The stmt FQN (`fn#s<line>`) never contains
+    /// the source token (`env::var`); only the statement text does. If the
+    /// indexer writes stmt nodes without carrying text into the payload
+    /// (the bug this guards), source_matches drops to 0 and taint goes dark.
+    #[tokio::test]
+    async fn taint_matches_stmt_payload_text_not_just_fqn() {
+        let (g, _dir) = make_graph().await;
+        g.upsert_stmt_nodes_batch(vec![
+            (
+                "app::handler#s3".to_string(),
+                PathBuf::from("src/app.rs"),
+                3,
+                "let cmd = std::env::var(\"CMD\").unwrap();".to_string(),
+            ),
+            (
+                "app::handler#s4".to_string(),
+                PathBuf::from("src/app.rs"),
+                4,
+                "let out = Command::new(cmd).spawn();".to_string(),
+            ),
+        ])
+        .await
+        .expect("upsert stmt nodes with text");
+        g.upsert_edge(edge("app::handler#s3", "app::handler#s4", EdgeKind::DataDep))
+            .await
+            .expect("def->use DataDep");
+
+        let spec = TaintSpec {
+            sources: vec!["env::var".to_string()],
+            sinks: vec!["Command::new".to_string()],
+            max_depth: 5,
+            max_findings: 100,
+        };
+        let report = g.taint_paths(&spec).await.expect("taint_paths");
+        assert_eq!(report.source_matches, 1, "source must match on payload text");
+        assert_eq!(report.sink_matches, 1, "sink must match on payload text");
+        assert_eq!(report.findings.len(), 1, "one text-matched source→sink flow");
+        assert_eq!(report.findings[0].source.fqn, "app::handler#s3");
+        assert_eq!(report.findings[0].sink.fqn, "app::handler#s4");
+    }
+
     /// Control-flow-only reachability must NOT produce a finding.
     #[tokio::test]
     async fn taint_ignores_cfg_only_reachability() {

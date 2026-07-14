@@ -178,6 +178,28 @@ impl Graph {
         self.kv.put_nodes_batch(rows).await
     }
 
+    /// Insert or update many statement (PDG) nodes, carrying the source
+    /// `text` in the payload alongside `path`/`line`. The plain [`Node`]
+    /// struct has no text field; taint analysis matches source/sink
+    /// patterns against this payload `text`, so stmt nodes MUST be written
+    /// through this path (not [`Self::upsert_nodes_batch`]) or the text is
+    /// lost and pattern matching silently degrades to FQN-only.
+    /// Each tuple is `(fqn, path, line, text)`.
+    pub async fn upsert_stmt_nodes_batch(
+        &self,
+        stmts: Vec<(String, PathBuf, u32, String)>,
+    ) -> Result<()> {
+        let rows = stmts
+            .into_iter()
+            .map(|(fqn, path, line, text)| NodeRow {
+                id: fqn,
+                kind: "stmt".to_string(),
+                payload: serde_json::json!({ "path": path, "line": line, "text": text }),
+            })
+            .collect();
+        self.kv.put_nodes_batch(rows).await
+    }
+
     /// Insert or update many edges in a single transaction.
     pub async fn upsert_edges_batch(&self, edges: Vec<Edge>) -> Result<()> {
         let rows = edges

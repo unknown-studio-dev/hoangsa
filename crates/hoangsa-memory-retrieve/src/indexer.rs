@@ -865,7 +865,10 @@ impl Indexer {
                 callees.dedup();
             }
 
-            let mut pdg_nodes: Vec<Node> = Vec::new();
+            // (fqn, path, line, text) — text is carried into the node
+            // payload so taint source/sink patterns can match statement
+            // content, not just the FQN.
+            let mut pdg_nodes: Vec<(String, std::path::PathBuf, u32, String)> = Vec::new();
             let mut pdg_edges: Vec<Edge> = Vec::new();
             // Collect bridge edges separately so we can dedup+sort before push.
             let mut bridge_edges: Vec<(String, String)> = Vec::new();
@@ -890,12 +893,12 @@ impl Indexer {
                     }
                 }
                 for stmt in out.nodes {
-                    pdg_nodes.push(Node {
-                        fqn: stmt.fqn,
-                        kind: "stmt".to_string(),
-                        path: std::path::PathBuf::from(&stmt.path),
-                        line: stmt.line,
-                    });
+                    pdg_nodes.push((
+                        stmt.fqn,
+                        std::path::PathBuf::from(&stmt.path),
+                        stmt.line,
+                        stmt.text,
+                    ));
                 }
                 for (from, to) in out.cfg {
                     pdg_edges.push(Edge { from, to, kind: EdgeKind::Cfg });
@@ -913,7 +916,7 @@ impl Indexer {
             }
 
             if !pdg_nodes.is_empty() {
-                self.graph.upsert_nodes_batch(pdg_nodes).await?;
+                self.graph.upsert_stmt_nodes_batch(pdg_nodes).await?;
             }
             if !pdg_edges.is_empty() {
                 self.graph.upsert_edges_batch(pdg_edges).await?;
