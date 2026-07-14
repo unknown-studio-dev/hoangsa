@@ -40,3 +40,7 @@ serde_json = { workspace = true }
 [[test]]
 name = "integration_graph"
 path = "tests/integration_graph.rs"
+
+[[test]]
+name = "integration_taint"
+path = "tests/integration_taint.rs"

@@ -23,6 +23,7 @@ use hoangsa_memory_core::Result;
 use hoangsa_memory_graph::{Edge, EdgeKind, Graph, Node};
 use hoangsa_memory_parse::{
     EventRole, LanguageRegistry, SourceChunk, SymbolKind, crate_qualified_module_path,
+    extract_pdg,
     walk::{WalkOptions, walk_sources, walk_text_sources},
 };
 use hoangsa_memory_store::{ChunkDoc, StoreRoot, SymbolRow, VectorCol};
@@ -109,6 +110,9 @@ pub struct Indexer {
     /// symlink handling. Typically sourced from `config.toml`'s
     /// `[index]` table via [`Indexer::with_config`].
     walk_opts: WalkOptions,
+    /// When true, extract statement-level PDG nodes/edges after normal
+    /// symbol/graph writes. Default false — zero stmt nodes written.
+    pdg: bool,
 }
 
 impl Indexer {
@@ -123,7 +127,16 @@ impl Indexer {
             on_progress: None,
             concurrency: default_concurrency(),
             walk_opts: WalkOptions::default(),
+            pdg: false,
         }
+    }
+
+    /// Enable statement-level PDG extraction. When `true`, each indexed file
+    /// additionally writes `"stmt"` nodes and `cfg`/`data_dep` edges into the
+    /// graph. Disabled by default — the default path writes zero stmt nodes.
+    pub fn with_pdg(mut self, enabled: bool) -> Self {
+        self.pdg = enabled;
+        self
     }
 
     /// Attach extra ignore patterns (gitignore syntax) that will be applied
@@ -817,6 +830,98 @@ impl Indexer {
         }
 
         self.graph.upsert_edges_batch(all_edges).await?;
+
+        // PDG: statement-level nodes + cfg/data_dep edges (opt-in).
+        if self.pdg {
+            // Build enclosing-fn → [resolved callee FQN] map for the call-arg
+            // bridge.  Uses the SAME resolution logic as the Calls-edge block
+            // above; only callees that resolve to a known in-repo FQN are kept.
+            let resolve_callee = |callee: &str| -> Option<String> {
+                if let Some(direct) = resolution.get(callee) {
+                    return Some(direct.clone());
+                }
+                if let Some((head, tail)) = callee.rsplit_once("::")
+                    && let Some(head_fqn) = local_type_heads.get(head)
+                {
+                    return Some(format!("{head_fqn}::{tail}"));
+                }
+                // Unresolved / external — skip.
+                None
+            };
+
+            // fn_fqn → sorted+deduped list of resolved in-repo callee FQNs.
+            let mut fn_callees: std::collections::HashMap<String, Vec<String>> =
+                std::collections::HashMap::new();
+            for (caller, callee) in &table.calls {
+                if let Some(resolved) = resolve_callee(callee) {
+                    fn_callees
+                        .entry(caller.clone())
+                        .or_default()
+                        .push(resolved);
+                }
+            }
+            for callees in fn_callees.values_mut() {
+                callees.sort();
+                callees.dedup();
+            }
+
+            // (fqn, path, line, text) — text is carried into the node
+            // payload so taint source/sink patterns can match statement
+            // content, not just the FQN.
+            let mut pdg_nodes: Vec<(String, std::path::PathBuf, u32, String)> = Vec::new();
+            let mut pdg_edges: Vec<Edge> = Vec::new();
+            // Collect bridge edges separately so we can dedup+sort before push.
+            let mut bridge_edges: Vec<(String, String)> = Vec::new();
+
+            for chunk in &chunks {
+                let out = extract_pdg(chunk, &table);
+                for stmt in &out.nodes {
+                    // Call-arg bridge: emit DataDep stmt → callee when the
+                    // callee's leaf name appears in the statement text.
+                    // Precision rule (LOCKED): both (a) callee called from
+                    // this stmt's enclosing fn AND (b) leaf name is a
+                    // substring of stmt.text.
+                    if let Some(fn_fqn) = stmt.fqn.split("#s").next()
+                        && let Some(callees) = fn_callees.get(fn_fqn)
+                    {
+                        for callee_fqn in callees {
+                            let leaf = callee_fqn.rsplit("::").next().unwrap_or(callee_fqn);
+                            if stmt.text.contains(leaf) {
+                                bridge_edges.push((stmt.fqn.clone(), callee_fqn.clone()));
+                            }
+                        }
+                    }
+                }
+                for stmt in out.nodes {
+                    pdg_nodes.push((
+                        stmt.fqn,
+                        std::path::PathBuf::from(&stmt.path),
+                        stmt.line,
+                        stmt.text,
+                    ));
+                }
+                for (from, to) in out.cfg {
+                    pdg_edges.push(Edge { from, to, kind: EdgeKind::Cfg });
+                }
+                for (from, to) in out.data_dep {
+                    pdg_edges.push(Edge { from, to, kind: EdgeKind::DataDep });
+                }
+            }
+
+            // Dedup + sort bridge edges before pushing (determinism).
+            bridge_edges.sort();
+            bridge_edges.dedup();
+            for (from, to) in bridge_edges {
+                pdg_edges.push(Edge { from, to, kind: EdgeKind::DataDep });
+            }
+
+            if !pdg_nodes.is_empty() {
+                self.graph.upsert_stmt_nodes_batch(pdg_nodes).await?;
+            }
+            if !pdg_edges.is_empty() {
+                self.graph.upsert_edges_batch(pdg_edges).await?;
+            }
+        }
 
         let s = IndexStats {
             files: 0, // caller increments

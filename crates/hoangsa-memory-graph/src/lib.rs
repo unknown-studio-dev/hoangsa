@@ -23,6 +23,10 @@
 pub mod analytics;
 pub use analytics::{Community, ProcessFlow};
 
+/// Taint propagation engine.
+pub mod taint;
+pub use taint::{TaintFinding, TaintReport, TaintSpec};
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
@@ -66,6 +70,13 @@ pub enum EdgeKind {
     /// FQN convention as `Emits`; the direction is event → handler so
     /// that `subscribers_of(event_fqn)` is a plain incoming-edge scan.
     Subscribes,
+    /// Control-flow edge: `A` dominates / is a predecessor block of `B`.
+    /// Used in PDG construction; never followed by the taint engine to
+    /// avoid false positives through pure control flow.
+    Cfg,
+    /// Data-dependence edge: the value produced by `A` flows into `B`.
+    /// The primary edge kind followed by [`crate::taint::TaintSpec`] BFS.
+    DataDep,
 }
 
 impl EdgeKind {
@@ -79,6 +90,8 @@ impl EdgeKind {
             EdgeKind::DeclaredIn => "declared_in",
             EdgeKind::Emits => "emits",
             EdgeKind::Subscribes => "subscribes",
+            EdgeKind::Cfg => "cfg",
+            EdgeKind::DataDep => "data_dep",
         }
     }
 
@@ -92,6 +105,8 @@ impl EdgeKind {
             "declared_in" => EdgeKind::DeclaredIn,
             "emits" => EdgeKind::Emits,
             "subscribes" => EdgeKind::Subscribes,
+            "cfg" => EdgeKind::Cfg,
+            "data_dep" => EdgeKind::DataDep,
             _ => return None,
         })
     }
@@ -158,6 +173,28 @@ impl Graph {
                     kind: n.kind,
                     payload,
                 }
+            })
+            .collect();
+        self.kv.put_nodes_batch(rows).await
+    }
+
+    /// Insert or update many statement (PDG) nodes, carrying the source
+    /// `text` in the payload alongside `path`/`line`. The plain [`Node`]
+    /// struct has no text field; taint analysis matches source/sink
+    /// patterns against this payload `text`, so stmt nodes MUST be written
+    /// through this path (not [`Self::upsert_nodes_batch`]) or the text is
+    /// lost and pattern matching silently degrades to FQN-only.
+    /// Each tuple is `(fqn, path, line, text)`.
+    pub async fn upsert_stmt_nodes_batch(
+        &self,
+        stmts: Vec<(String, PathBuf, u32, String)>,
+    ) -> Result<()> {
+        let rows = stmts
+            .into_iter()
+            .map(|(fqn, path, line, text)| NodeRow {
+                id: fqn,
+                kind: "stmt".to_string(),
+                payload: serde_json::json!({ "path": path, "line": line, "text": text }),
             })
             .collect();
         self.kv.put_nodes_batch(rows).await
@@ -956,7 +993,7 @@ fn kind_matches(kind: &EdgeKind, filter: Option<&[EdgeKind]>) -> bool {
     filter.is_none_or(|ks| ks.contains(kind))
 }
 
-fn row_to_node(row: NodeRow) -> Node {
+pub(crate) fn row_to_node(row: NodeRow) -> Node {
     let path = row
         .payload
         .get("path")

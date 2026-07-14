@@ -595,6 +595,44 @@ pub(super) fn tools_catalog() -> Vec<Tool> {
                 }
             }),
         },
+        Tool {
+            name: "memory_taint_paths".to_string(),
+            description: "Find source→sink taint paths over DataDep and Calls edges. \
+                          BFS from nodes whose FQN or text payload matches any source pattern \
+                          to nodes matching any sink pattern. Returns a TaintReport with \
+                          findings (source, sink, path edges), truncated flag, source_matches, \
+                          and sink_matches. When sources/sinks are omitted or empty, built-in \
+                          default patterns are used (env vars, stdin, args → subprocess, eval, \
+                          fs::write, query)."
+                .to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sources": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Substring patterns for source nodes (FQN or text payload). Omit or leave empty to use built-in defaults."
+                    },
+                    "sinks": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Substring patterns for sink nodes (FQN or text payload). Omit or leave empty to use built-in defaults."
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 12,
+                        "description": "Maximum BFS depth from each source node."
+                    },
+                    "max_findings": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 50,
+                        "description": "Stop after this many findings; sets truncated=true when hit."
+                    }
+                }
+            }),
+        },
     ]
 }
 
