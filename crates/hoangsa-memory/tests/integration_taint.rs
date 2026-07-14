@@ -67,7 +67,7 @@ fn e2e_taint_rust_env_to_command() {
     let data = parse_json(&stdout, "e2e_taint_rust_env_to_command");
     let findings = data["findings"].as_array().expect("findings is array");
     assert!(
-        findings.len() >= 1,
+        !findings.is_empty(),
         "expected >=1 finding for env::var->command::new; got: {data}"
     );
     let path = findings[0]["path"].as_array().expect("path is array");
@@ -107,7 +107,7 @@ fn e2e_taint_python_input_to_subprocess() {
     let data = parse_json(&stdout, "e2e_taint_python_input_to_subprocess");
     let findings = data["findings"].as_array().expect("findings is array");
     assert!(
-        findings.len() >= 1,
+        !findings.is_empty(),
         "expected >=1 finding for input()->subprocess; got: {data}"
     );
     let path = findings[0]["path"].as_array().expect("path is array");
