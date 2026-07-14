@@ -149,9 +149,10 @@ pub fn build_hoangsa_hooks_inner(install_root: Option<&Path>) -> Value {
         "PostToolUse": [managed_entry(
             format!("{cli} hook post-enforce"),
             5,
-            Some("mcp__hoangsa-memory__memory_impact|mcp__hoangsa-memory__memory_detect_changes|mcp__hoangsa-memory__memory_recall|Edit|Write|MultiEdit"),
+            Some("mcp__hoangsa-memory__memory_impact|mcp__hoangsa-memory__memory_detect_changes|mcp__hoangsa-memory__memory_recall|mcp__hoangsa-memory__memory_remember_lesson|Edit|Write|MultiEdit"),
         )],
         "PreToolUse": pre_tool_use,
+        "UserPromptSubmit": [managed_entry(format!("{cli} hook prompt-guard"), 5, None)],
         "PreCompact": [managed_entry(format!("{cli} hook session-archive"), 5, None)],
         "SessionEnd": [managed_entry(format!("{cli} hook session-archive"), 5, None)],
     })
@@ -397,8 +398,8 @@ mod tests {
         let mut settings = fresh_settings();
         let added =
             merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks_inner(Some(&root)));
-        // 2 SessionStart + 2 Stop + 1 PostToolUse + 2 PreToolUse + 1 PreCompact + 1 SessionEnd = 9
-        assert_eq!(added, 9, "fresh merge lands every managed entry");
+        // 2 SessionStart + 2 Stop + 1 PostToolUse + 2 PreToolUse + 1 UserPromptSubmit + 1 PreCompact + 1 SessionEnd = 10
+        assert_eq!(added, 10, "fresh merge lands every managed entry");
         let hooks = settings.get("hooks").and_then(|h| h.as_object()).expect("hooks present");
         assert!(hooks.contains_key("SessionStart"));
         assert!(hooks.contains_key("Stop"));
@@ -449,17 +450,17 @@ mod tests {
         let first = merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks_inner(Some(&root)));
         let second = merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks_inner(Some(&root)));
 
-        assert_eq!(first, 9);
-        assert_eq!(second, 9, "re-merge re-adds the same set (replacing ours)");
+        assert_eq!(first, 10);
+        assert_eq!(second, 10, "re-merge re-adds the same set (replacing ours)");
 
-        // Total entries across events stays at 9 — never doubles.
+        // Total entries across events stays at 10 — never doubles.
         let hooks = settings.get("hooks").and_then(|h| h.as_object()).expect("hooks");
         let total: usize = hooks
             .values()
             .filter_map(|v| v.as_array())
             .map(|a| a.len())
             .sum();
-        assert_eq!(total, 9, "rerunning must not duplicate HOANGSA entries");
+        assert_eq!(total, 10, "rerunning must not duplicate HOANGSA entries");
     }
 
     #[test]

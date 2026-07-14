@@ -194,6 +194,9 @@ fn main() {
         ("media", "check-ffmpeg") => cmd::media::cmd_check_ffmpeg(),
         #[cfg(feature = "media")]
         ("media", "install-ffmpeg") => cmd::media::cmd_install_ffmpeg(),
+        ("hook", "prompt-guard") => {
+            cmd::hook::cmd_prompt_guard(&cwd);
+        }
         ("hook", "stop-check") => {
             cmd::hook::cmd_stop_check(rest.first().copied(), &cwd);
         }

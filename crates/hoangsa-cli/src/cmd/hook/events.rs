@@ -29,6 +29,12 @@ pub fn cmd_post_enforce(cwd: &str) {
     let tool_name = parsed.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
     let tool_input = parsed.get("tool_input").cloned().unwrap_or(json!({}));
 
+    // lesson_saved: any tool whose name contains "remember_lesson" (catches
+    // the MCP tool `mcp__hoangsa-memory__memory_remember_lesson`).
+    if tool_name.contains("remember_lesson") {
+        append_event(cwd, &json!({"event": "lesson_saved"}));
+    }
+
     let event = match tool_name {
         "mcp__hoangsa-memory__memory_impact" => build_impact_event(cwd, &tool_input),
         "mcp__hoangsa-memory__memory_detect_changes" => build_detect_changes_event(&tool_input, &parsed),
