@@ -23,6 +23,7 @@ use hoangsa_memory_core::Result;
 use hoangsa_memory_graph::{Edge, EdgeKind, Graph, Node};
 use hoangsa_memory_parse::{
     EventRole, LanguageRegistry, SourceChunk, SymbolKind, crate_qualified_module_path,
+    extract_pdg,
     walk::{WalkOptions, walk_sources, walk_text_sources},
 };
 use hoangsa_memory_store::{ChunkDoc, StoreRoot, SymbolRow, VectorCol};
@@ -109,6 +110,9 @@ pub struct Indexer {
     /// symlink handling. Typically sourced from `config.toml`'s
     /// `[index]` table via [`Indexer::with_config`].
     walk_opts: WalkOptions,
+    /// When true, extract statement-level PDG nodes/edges after normal
+    /// symbol/graph writes. Default false — zero stmt nodes written.
+    pdg: bool,
 }
 
 impl Indexer {
@@ -123,7 +127,16 @@ impl Indexer {
             on_progress: None,
             concurrency: default_concurrency(),
             walk_opts: WalkOptions::default(),
+            pdg: false,
         }
+    }
+
+    /// Enable statement-level PDG extraction. When `true`, each indexed file
+    /// additionally writes `"stmt"` nodes and `cfg`/`data_dep` edges into the
+    /// graph. Disabled by default — the default path writes zero stmt nodes.
+    pub fn with_pdg(mut self, enabled: bool) -> Self {
+        self.pdg = enabled;
+        self
     }
 
     /// Attach extra ignore patterns (gitignore syntax) that will be applied
@@ -817,6 +830,35 @@ impl Indexer {
         }
 
         self.graph.upsert_edges_batch(all_edges).await?;
+
+        // PDG: statement-level nodes + cfg/data_dep edges (opt-in).
+        if self.pdg {
+            let mut pdg_nodes: Vec<Node> = Vec::new();
+            let mut pdg_edges: Vec<Edge> = Vec::new();
+            for chunk in &chunks {
+                let out = extract_pdg(chunk, &table);
+                for stmt in out.nodes {
+                    pdg_nodes.push(Node {
+                        fqn: stmt.fqn,
+                        kind: "stmt".to_string(),
+                        path: std::path::PathBuf::from(&stmt.path),
+                        line: stmt.line,
+                    });
+                }
+                for (from, to) in out.cfg {
+                    pdg_edges.push(Edge { from, to, kind: EdgeKind::Cfg });
+                }
+                for (from, to) in out.data_dep {
+                    pdg_edges.push(Edge { from, to, kind: EdgeKind::DataDep });
+                }
+            }
+            if !pdg_nodes.is_empty() {
+                self.graph.upsert_nodes_batch(pdg_nodes).await?;
+            }
+            if !pdg_edges.is_empty() {
+                self.graph.upsert_edges_batch(pdg_edges).await?;
+            }
+        }
 
         let s = IndexStats {
             files: 0, // caller increments

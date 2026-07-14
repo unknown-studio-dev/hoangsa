@@ -18,8 +18,11 @@
 #![warn(missing_docs)]
 
 pub mod language;
+pub mod pdg;
 pub mod walk;
 pub mod watch;
+
+pub use pdg::{PdgOutput, PdgStmt, extract_pdg};
 
 use std::path::{Path, PathBuf};
 
