@@ -3,7 +3,10 @@ use serde_json::json;
 use std::fs;
 use std::path::Path;
 
-use super::{enforcement_events_path, find_memory_bin, reflect_sentinel_path};
+use super::{
+    enforcement_events_path, find_memory_bin, graph_affordance_sentinel_path,
+    reflect_sentinel_path,
+};
 
 // ── Frustration Sensor ───────────────────────────────────────────────────────
 
@@ -657,6 +660,76 @@ pub fn cmd_lesson_guard(cwd: &str) {
     }
 }
 
+// ── Graph Affordance Nudge ───────────────────────────────────────────────────
+
+const GRAPH_AFFORDANCE_THRESHOLD: usize = 4;
+
+const GRAPH_AFFORDANCE_NUDGE: &str = "HOANGSA: you've run several code searches this session. \
+The indexed code graph often answers these in one call — `memory_graph_query` \
+(traverse callers/callees/refs/imports from a symbol), `memory_graph_paths` \
+(shortest path A→B), `memory_graph_communities` (architecture clusters), \
+`memory_graph_processes` (execution flow from entry points), \
+`memory_taint_paths` (source→sink dataflow). \
+Prefer them over repeated Grep when tracing how code connects.";
+
+/// Count how many `code_search` events appear in the JSONL log contents.
+/// Pure function — testable without filesystem.
+pub(super) fn count_code_search_events(log_contents: &str) -> usize {
+    log_contents
+        .lines()
+        .filter(|line| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .ok()
+                .and_then(|v| v.get("event").and_then(|e| e.as_str()).map(|s| s == "code_search"))
+                .unwrap_or(false)
+        })
+        .count()
+}
+
+/// Pure decision: show the nudge iff count >= threshold AND sentinel absent.
+pub(super) fn graph_affordance_decision(count: usize, sentinel_exists: bool) -> bool {
+    count >= GRAPH_AFFORDANCE_THRESHOLD && !sentinel_exists
+}
+
+/// `hook graph-affordance`
+///
+/// PreToolUse hook on Grep|Glob. Counts code-search invocations this session
+/// and surfaces a one-time nudge toward the code-graph MCP tools when the
+/// threshold is crossed. NEVER blocks — fail-open on every error path.
+pub fn cmd_graph_affordance(cwd: &str) {
+    use super::events::append_event;
+    use std::io::Read as _;
+
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input).ok();
+
+    // Non-fatal on parse error — we don't actually need the payload content.
+    // Record the search event regardless.
+    append_event(cwd, &serde_json::json!({"event": "code_search"}));
+
+    let sentinel = graph_affordance_sentinel_path(cwd);
+    if sentinel.exists() {
+        out(&serde_json::json!({"decision": "approve"}));
+        return;
+    }
+
+    let log_contents = fs::read_to_string(enforcement_events_path(cwd)).unwrap_or_default();
+    let count = count_code_search_events(&log_contents);
+
+    if graph_affordance_decision(count, sentinel.exists()) {
+        if let Some(parent) = sentinel.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let _ = fs::write(&sentinel, "");
+        out(&serde_json::json!({
+            "decision": "approve",
+            "reason": GRAPH_AFFORDANCE_NUDGE,
+        }));
+    } else {
+        out(&serde_json::json!({"decision": "approve"}));
+    }
+}
+
 /// Build a recall query from a file path.
 /// Keeps path structure intact so hoangsa-memory can match lessons mentioning paths.
 pub(super) fn build_recall_query(path: &str) -> String {
@@ -1208,6 +1281,46 @@ mod session_tests {
         // "OK!!" — only two exclamation marks, alpha_count < 5
         let result = detect_frustration("OK!!", &[]);
         assert!(result.is_none(), "OK!! must not trigger (length guard)");
+    }
+
+    // ── Graph affordance tests ───────────────────────────────────────────────
+
+    #[test]
+    fn count_code_search_events_empty_log() {
+        assert_eq!(count_code_search_events(""), 0);
+    }
+
+    #[test]
+    fn count_code_search_events_mixed_log() {
+        let log = concat!(
+            "{\"event\":\"code_search\"}\n",
+            "{\"event\":\"impact\"}\n",
+            "not-json-at-all\n",
+            "{\"event\":\"code_search\"}\n",
+            "{\"event\":\"recall\",\"query\":\"foo\"}\n",
+            "{\"event\":\"code_search\"}\n",
+        );
+        assert_eq!(count_code_search_events(log), 3);
+    }
+
+    #[test]
+    fn graph_affordance_decision_below_threshold() {
+        assert!(!graph_affordance_decision(GRAPH_AFFORDANCE_THRESHOLD - 1, false));
+    }
+
+    #[test]
+    fn graph_affordance_decision_at_threshold_no_sentinel() {
+        assert!(graph_affordance_decision(GRAPH_AFFORDANCE_THRESHOLD, false));
+    }
+
+    #[test]
+    fn graph_affordance_decision_at_threshold_sentinel_exists() {
+        assert!(!graph_affordance_decision(GRAPH_AFFORDANCE_THRESHOLD, true));
+    }
+
+    #[test]
+    fn graph_affordance_decision_above_threshold_sentinel_exists() {
+        assert!(!graph_affordance_decision(GRAPH_AFFORDANCE_THRESHOLD + 5, true));
     }
 
     // ── Test 3: stop_check_blocks_frustration_without_lesson ─────────────────

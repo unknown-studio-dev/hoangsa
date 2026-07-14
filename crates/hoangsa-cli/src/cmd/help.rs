@@ -226,6 +226,7 @@ Usage:
   hoangsa-cli hook stop-check       Stop — block if workflow not closed
   hoangsa-cli hook prompt-guard     UserPromptSubmit — frustration sensor
   hoangsa-cli hook lesson-guard     PreToolUse — inject lessons before edits
+  hoangsa-cli hook graph-affordance PreToolUse — nudge toward graph tools on repeated search
   hoangsa-cli hook session-start    SessionStart — auto-inject USER/MEMORY/LESSONS
   hoangsa-cli hook session-archive  PreCompact — archive curated turns
   hoangsa-cli hook session-usage    Session usage snapshot
