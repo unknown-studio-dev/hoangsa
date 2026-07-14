@@ -69,7 +69,7 @@ const VIDEO_FORMATS: &[&str] = &["mp4", "mov", "webm", "avi", "mkv"];
 const IMAGE_FORMATS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif"];
 
 #[cfg(test)]
-pub fn detect_media_type(path: &str) -> &'static str {
+fn detect_media_type(path: &str) -> &'static str {
     let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
     if VIDEO_FORMATS.contains(&ext.as_str()) {
         "video"
@@ -82,7 +82,7 @@ pub fn detect_media_type(path: &str) -> &'static str {
 
 // ── Grid layout ───────────────────────────────────────────────────────────────
 
-pub fn calculate_grid(frame_count: u32) -> (u32, u32) {
+fn calculate_grid(frame_count: u32) -> (u32, u32) {
     let cols = if frame_count <= 12 {
         4
     } else {
