@@ -935,6 +935,86 @@ impl Server {
         Ok(ToolOutput::new(json!({ "communities": communities_json }), text))
     }
 
+    /// Find taint paths from source patterns to sink patterns over DataDep + Calls edges.
+    pub(super) async fn tool_taint_paths(&self, args: Value) -> anyhow::Result<ToolOutput> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default)]
+            sources: Option<Vec<String>>,
+            #[serde(default)]
+            sinks: Option<Vec<String>>,
+            #[serde(default)]
+            max_depth: Option<usize>,
+            #[serde(default)]
+            max_findings: Option<usize>,
+        }
+        let Args {
+            sources,
+            sinks,
+            max_depth,
+            max_findings,
+        } = serde_json::from_value(args)?;
+
+        let default_sources: Vec<String> = vec![
+            "env::var".to_string(),
+            "args".to_string(),
+            "stdin".to_string(),
+            "input(".to_string(),
+            "request".to_string(),
+        ];
+        let default_sinks: Vec<String> = vec![
+            "Command::new".to_string(),
+            "subprocess".to_string(),
+            "exec".to_string(),
+            "eval".to_string(),
+            "fs::write".to_string(),
+            "query".to_string(),
+        ];
+
+        let sources = match sources {
+            Some(v) if !v.is_empty() => v,
+            _ => default_sources,
+        };
+        let sinks = match sinks {
+            Some(v) if !v.is_empty() => v,
+            _ => default_sinks,
+        };
+
+        use hoangsa_memory_graph::TaintSpec;
+        let spec = TaintSpec {
+            sources,
+            sinks,
+            max_depth: max_depth.unwrap_or(12),
+            max_findings: max_findings.unwrap_or(50),
+        };
+
+        let res = self.resources().await?;
+        let g = &res.graph;
+
+        let report = g.taint_paths(&spec).await?;
+
+        let text = if report.findings.is_empty() {
+            format!(
+                "no taint paths found (source_matches={}, sink_matches={})",
+                report.source_matches, report.sink_matches
+            )
+        } else {
+            let mut s = format!(
+                "{} finding(s) (source_matches={}, sink_matches={}){}:\n",
+                report.findings.len(),
+                report.source_matches,
+                report.sink_matches,
+                if report.truncated { ", truncated" } else { "" },
+            );
+            for f in &report.findings {
+                s.push_str(&format!("  {} → {} ({} edge(s))\n", f.source.fqn, f.sink.fqn, f.path.len()));
+            }
+            s
+        };
+
+        Ok(ToolOutput::new(serde_json::to_value(&report)?, text))
+    }
+
     /// Trace process flows from entry points.
     pub(super) async fn tool_graph_processes(&self, args: Value) -> anyhow::Result<ToolOutput> {
         #[derive(Deserialize)]
@@ -1140,6 +1220,96 @@ mod tests {
         assert_eq!(result["isError"], false, "memory_graph_processes isError: {result}");
         let data = &result["data"];
         assert!(data.get("processes").is_some(), "graph_processes data must have processes; got {data}");
+    }
+
+    /// Seed a small graph with stmt nodes + DataDep edges for taint tests.
+    async fn seed_taint_graph(srv: &Server) {
+        let res = srv.resources().await.expect("resources");
+        let g = &res.graph;
+
+        use hoangsa_memory_graph::{Edge, EdgeKind, Node};
+        use std::path::PathBuf;
+
+        let node = |fqn: &str| Node {
+            fqn: fqn.to_string(),
+            kind: "binding".to_string(),
+            path: PathBuf::from("src/lib.rs"),
+            line: 1,
+        };
+        let edge = |from: &str, to: &str, kind: EdgeKind| Edge {
+            from: from.to_string(),
+            to: to.to_string(),
+            kind,
+        };
+
+        // env::var -DataDep-> query_exec (source -> sink)
+        g.upsert_nodes_batch(vec![
+            node("myapp::env::var"),
+            node("myapp::query_exec"),
+            node("myapp::unrelated"),
+        ])
+        .await
+        .expect("upsert_nodes_batch");
+
+        g.upsert_edges_batch(vec![
+            edge("myapp::env::var", "myapp::query_exec", EdgeKind::DataDep),
+        ])
+        .await
+        .expect("upsert_edges_batch");
+    }
+
+    /// Spec test e2e_mcp_taint_dispatch: dispatch memory_taint_paths returns findings JSON.
+    #[tokio::test]
+    async fn e2e_mcp_taint_dispatch() {
+        let (srv, _tmp) = open_server().await;
+        seed_taint_graph(&srv).await;
+
+        // 1. With explicit patterns that match the seeded graph.
+        let resp = srv
+            .handle(rpc_call(
+                10,
+                "memory_taint_paths",
+                json!({
+                    "sources": ["env::var"],
+                    "sinks": ["query"],
+                }),
+            ))
+            .await
+            .expect("response");
+        assert!(resp.error.is_none(), "memory_taint_paths: RPC error: {:?}", resp.error);
+        let result = resp.result.expect("memory_taint_paths result");
+        assert_eq!(result["isError"], false, "memory_taint_paths isError: {result}");
+        let data = &result["data"];
+        assert!(data.get("findings").is_some(), "taint data must have findings; got {data}");
+        assert!(data.get("truncated").is_some(), "taint data must have truncated; got {data}");
+        assert!(data.get("source_matches").is_some(), "taint data must have source_matches; got {data}");
+        assert!(data.get("sink_matches").is_some(), "taint data must have sink_matches; got {data}");
+        let findings = data["findings"].as_array().expect("findings must be array");
+        assert!(!findings.is_empty(), "must find at least one taint path; got {data}");
+        let f = &findings[0];
+        assert!(f.get("source").is_some(), "finding must have source; got {f}");
+        assert!(f.get("sink").is_some(), "finding must have sink; got {f}");
+        assert!(f.get("path").is_some(), "finding must have path; got {f}");
+
+        // 2. Edge case: unknown pattern → findings=[], source_matches=0, exit ok.
+        let resp2 = srv
+            .handle(rpc_call(
+                11,
+                "memory_taint_paths",
+                json!({
+                    "sources": ["zzz_nothing"],
+                    "sinks": ["zzz_other"],
+                }),
+            ))
+            .await
+            .expect("response2");
+        assert!(resp2.error.is_none(), "unknown pattern: RPC error: {:?}", resp2.error);
+        let result2 = resp2.result.expect("result2");
+        assert_eq!(result2["isError"], false, "unknown pattern isError: {result2}");
+        let data2 = &result2["data"];
+        let findings2 = data2["findings"].as_array().expect("findings2 must be array");
+        assert!(findings2.is_empty(), "unknown patterns must yield empty findings; got {data2}");
+        assert_eq!(data2["source_matches"], 0, "source_matches must be 0; got {data2}");
     }
 }
 

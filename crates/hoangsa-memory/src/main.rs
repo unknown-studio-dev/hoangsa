@@ -95,6 +95,9 @@ enum Cmd {
         /// Source tree to index. Defaults to the current directory.
         #[arg(default_value = ".")]
         path: PathBuf,
+        /// Also build a Program Dependence Graph (PDG) with Cfg and DataDep edges.
+        #[arg(long)]
+        pdg: bool,
     },
 
     /// Query the memory.
@@ -222,7 +225,7 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.cmd {
         Cmd::Init => init_cmd::cmd_init(&root).await?,
-        Cmd::Index { path } => index_cmd::run_index(&root, &path, cli.json).await?,
+        Cmd::Index { path, pdg } => index_cmd::run_index(&root, &path, cli.json, pdg).await?,
         Cmd::Query {
             text,
             top_k,

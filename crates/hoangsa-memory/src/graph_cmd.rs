@@ -66,6 +66,22 @@ pub(crate) enum GraphCmd {
         #[arg(long = "entry-glob")]
         entry_globs: Vec<String>,
     },
+
+    /// Find source→sink taint paths over DataDep and Calls edges.
+    Taint {
+        /// Substring patterns for source nodes.
+        #[arg(long)]
+        source: Vec<String>,
+        /// Substring patterns for sink nodes.
+        #[arg(long)]
+        sink: Vec<String>,
+        /// Maximum BFS depth from each source node.
+        #[arg(short = 'd', long, default_value_t = 12)]
+        max_depth: usize,
+        /// Stop after this many findings.
+        #[arg(long, default_value_t = 50)]
+        max_findings: usize,
+    },
 }
 
 pub(crate) async fn run_graph(root: &Path, cmd: GraphCmd, json: bool) -> Result<()> {
@@ -128,6 +144,39 @@ pub(crate) async fn run_graph(root: &Path, cmd: GraphCmd, json: bool) -> Result<
             });
             let (text, data, is_error) =
                 call_mcp_tool(root, "memory_graph_processes", args).await?;
+            emit_output(text, data, is_error, json)
+        }
+
+        GraphCmd::Taint {
+            source,
+            sink,
+            max_depth,
+            max_findings,
+        } => {
+            let default_sources: Vec<&str> = vec![
+                "env::var", "args", "stdin", "input(", "request",
+            ];
+            let default_sinks: Vec<&str> = vec![
+                "Command::new", "subprocess", "exec", "eval", "fs::write", "query",
+            ];
+            let sources = if source.is_empty() {
+                serde_json::json!(default_sources)
+            } else {
+                serde_json::json!(source)
+            };
+            let sinks = if sink.is_empty() {
+                serde_json::json!(default_sinks)
+            } else {
+                serde_json::json!(sink)
+            };
+            let args = serde_json::json!({
+                "sources": sources,
+                "sinks": sinks,
+                "max_depth": max_depth,
+                "max_findings": max_findings,
+            });
+            let (text, data, is_error) =
+                call_mcp_tool(root, "memory_taint_paths", args).await?;
             emit_output(text, data, is_error, json)
         }
     }

@@ -158,6 +158,7 @@ impl Server {
             "memory_graph_paths" => self.tool_graph_paths(arguments).await,
             "memory_graph_communities" => self.tool_graph_communities(arguments).await,
             "memory_graph_processes" => self.tool_graph_processes(arguments).await,
+            "memory_taint_paths" => self.tool_taint_paths(arguments).await,
             other => {
                 return Err(RpcError::new(
                     error_codes::METHOD_NOT_FOUND,

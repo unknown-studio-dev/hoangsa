@@ -23,7 +23,7 @@ const DAEMON_CONNECT_WAIT: Duration = Duration::from_secs(3);
 /// of hanging forever.
 const STORE_LOCK_WAIT: Duration = Duration::from_secs(120);
 
-pub async fn run_index(root: &Path, src: &Path, json: bool) -> Result<()> {
+pub async fn run_index(root: &Path, src: &Path, json: bool, pdg: bool) -> Result<()> {
     if let Some(mut d) =
         crate::daemon::DaemonClient::connect_or_wait(root, DAEMON_CONNECT_WAIT).await
     {
@@ -66,7 +66,7 @@ pub async fn run_index(root: &Path, src: &Path, json: bool) -> Result<()> {
     // Honour `[index]` in `<root>/config.toml` — ignore patterns, max file
     // size, hidden-dir / symlink toggles. Missing file → defaults.
     let cfg = hoangsa_memory_retrieve::IndexConfig::load_or_default(root).await;
-    let mut idx = Indexer::new(store.clone(), LanguageRegistry::new()).with_config(&cfg);
+    let mut idx = Indexer::new(store.clone(), LanguageRegistry::new()).with_config(&cfg).with_pdg(pdg);
     // Hold the process-wide vector lock for the duration of this run
     // so a hook-triggered `archive ingest` can't load a second copy of
     // the fastembed ONNX model on top of ours. If another vector-using
