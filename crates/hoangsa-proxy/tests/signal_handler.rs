@@ -74,11 +74,13 @@ fn kill_pid(pid: u32, sig: &str) {
 fn sigterm_on_hsp_kills_child() {
     // Sentinel: a unique marker in the sleep cmdline so pgrep can spot
     // only our child, not other sleeps on the machine.
+    // `exec -a` is a bashism — /bin/sh is dash on Ubuntu, where it fails
+    // and the child exits before ever appearing. Spawn bash explicitly.
     let marker = format!("hsp-sigterm-test-{}", std::process::id());
     let script = format!("exec -a {marker} sleep 60");
 
     let mut hsp = Command::new(hsp_bin())
-        .args(["run", "sh", "-c", &script])
+        .args(["run", "bash", "-c", &script])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -103,7 +105,7 @@ fn sigint_on_hsp_kills_child() {
     let script = format!("exec -a {marker} sleep 60");
 
     let mut hsp = Command::new(hsp_bin())
-        .args(["run", "sh", "-c", &script])
+        .args(["run", "bash", "-c", &script])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
