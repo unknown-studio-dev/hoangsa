@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `envelope MODEL-line` parity tests.
 - **CI workflow** running `cargo test`, `clippy -D warnings`, and a changed-file `rustfmt`
   check on every push and pull request.
+- **Claude Fable 5 support** — the `fable` alias (tier above opus, ~2× opus pricing) is
+  recognized in cache cost analytics, the statusline, the init per-role model picker, and
+  the READMEs; route it per role via `model_overrides` in `config.json`.
 
 ### Changed
 - Workflows refactored from step-by-step scripts to **contracts + CLI gates**: spec

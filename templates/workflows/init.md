@@ -166,7 +166,8 @@ For each role the user wants to override, use AskUserQuestion:
   question: "Model cho <role>?"
   header: "<role>"
   options:
-    - label: "opus", description: "Mạnh nhất — tốn token nhất"
+    - label: "fable", description: "Fable 5 — tier trên opus, cho task khó nhất ($10/$50 per MTok, ~2× opus)"
+    - label: "opus", description: "Rất mạnh — mặc định cho role nặng"
     - label: "sonnet", description: "Cân bằng — phù hợp hầu hết"
     - label: "haiku", description: "Nhanh, rẻ — cho task đơn giản"
     - label: "Giữ default", description: "Dùng theo profile đã chọn"

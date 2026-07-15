@@ -626,6 +626,7 @@ mod tests {
     fn shorten_model_strips_prefix() {
         assert_eq!(shorten_model("claude-opus-4-7"), "opus-4-7");
         assert_eq!(shorten_model("Claude Opus 4.7"), "opus-4.7");
+        assert_eq!(shorten_model("claude-fable-5"), "fable-5");
         assert_eq!(shorten_model("gpt-4"), "gpt-4");
     }
 
