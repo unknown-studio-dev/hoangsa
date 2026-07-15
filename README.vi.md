@@ -124,6 +124,8 @@ Chọn profile (`quality` / `balanced` / `budget`) để kiểm soát model ở 
 | tester | sonnet | haiku | haiku |
 | committer | sonnet | haiku | haiku |
 
+Alias `fable` (Claude Fable 5 — tier trên opus, giá ~2× opus) không thuộc profile nào. Route theo từng role qua `model_overrides` trong `config.json`, ví dụ `{ "model_overrides": { "designer": "fable" } }`.
+
 ---
 
 ## Giấy phép

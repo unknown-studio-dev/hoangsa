@@ -13,7 +13,9 @@ struct Pricing {
 
 fn get_pricing(model_id: &str) -> Pricing {
     let norm = model_id.to_lowercase().replace(['-', '_'], "");
-    if norm.contains("claudeopus4") && !norm.contains("claudeopus41") {
+    if norm.contains("claudefable") {
+        Pricing { input: 10.0, cache_write: 12.50, cache_read: 1.00, output: 50.0 }
+    } else if norm.contains("claudeopus4") && !norm.contains("claudeopus41") {
         Pricing { input: 5.0, cache_write: 6.25, cache_read: 0.50, output: 25.0 }
     } else if norm.contains("claudeopus41") || norm.contains("claudeopus3") {
         Pricing { input: 15.0, cache_write: 18.75, cache_read: 1.50, output: 75.0 }
@@ -365,4 +367,21 @@ pub fn cmd_cache(args: &[&str], cwd: &str) {
         },
         "sessions": session_list,
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pricing_resolves_fable_tier() {
+        let p = get_pricing("claude-fable-5");
+        assert_eq!(
+            (p.input, p.cache_write, p.cache_read, p.output),
+            (10.0, 12.50, 1.00, 50.0)
+        );
+        // fable must not fall through to the opus or default branches
+        let opus = get_pricing("claude-opus-4-7");
+        assert_eq!(opus.input, 5.0);
+    }
 }

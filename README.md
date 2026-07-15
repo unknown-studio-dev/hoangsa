@@ -343,6 +343,8 @@ Select a profile (`quality` / `balanced` / `budget`) to control the model at eac
 | tester | sonnet | haiku | haiku |
 | committer | sonnet | haiku | haiku |
 
+The `fable` alias (Claude Fable 5 — the tier above opus, ~2× opus pricing) is not part of any profile. Route it per role via `model_overrides` in `config.json`, e.g. `{ "model_overrides": { "designer": "fable" } }`.
+
 ---
 
 ## License
