@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-15
+
+### Added
+- **Code graph traversal & analytics.** New MCP tools + `hoangsa-memory graph …` CLI:
+  `memory_graph_query` (BFS traversal from seed symbols → callers/callees/refs/imports,
+  edge-kind filtered, JSON or Graphviz DOT export), `memory_graph_paths` (shortest
+  dependency path A→B), `memory_graph_communities` (architecture clusters via label
+  propagation), `memory_graph_processes` (execution-flow tracing from entry points).
+- **PDG + taint analysis** (opt-in `index --pdg`). Statement-level control-flow (`Cfg`) and
+  data-dependence (`DataDep`) graph for Rust & Python, with an interprocedural call-arg
+  bridge. `memory_taint_paths` MCP tool + `graph taint` CLI trace source→sink flows over
+  `DataDep`/`Calls` only (never control-flow reachability), with built-in default
+  source/sink patterns.
+- **`memory_event_trace`** surfaced — publishers/subscribers of an event-bus topic.
+- **Self-repair loop.** `prompt-guard` (UserPromptSubmit) frustration sensor with
+  lesson-gated Stop escalation; `hoangsa-memory lesson feedback` wires the previously
+  dormant lesson success/failure counters so lessons accrue evidence.
+- **`graph-affordance` hook** — a non-blocking PreToolUse nudge toward the graph tools on
+  repeated code-searching, plus sharpened tool descriptions and graph tools surfaced in the
+  memory-guidance list and the `memory-exploring` / `memory-cli` skills.
+- **`stats report --all`** cross-session token aggregation; **model routing** — the worker
+  envelope now stamps the config-resolved `MODEL:` on line 1 and records it in stats.
+- **`/hoangsa:qc`** workflow — spec-driven QC with evidence-backed pass/fail verdicts.
+- **Wiring & drift gates** (machine-enforced consistency): `no_orphan_tools` (every MCP
+  tool must be surfaced to the agent), `catalog↔dispatch`, `hook↔dispatch`, and
+  `envelope MODEL-line` parity tests.
+- **CI workflow** running `cargo test`, `clippy -D warnings`, and a changed-file `rustfmt`
+  check on every push and pull request.
+
+### Changed
+- Workflows refactored from step-by-step scripts to **contracts + CLI gates**: spec
+  contracts machine-enforced (`validate spec|tests|plan`), worker-prompt assembly moved
+  into the CLI (`envelope`, `rules compose`), bulk specs lazy-loaded, and an efficiency
+  loop (no duplicate cook→taste test runs, stats consumed by `check`/`menu`, phase
+  chaining).
+- Large modules split into submodules (`hook.rs`, `install.rs`, `server.rs`).
+
+### Fixed
+- Patched 8 Dependabot advisories (1 high).
+- Statement text is now persisted into the graph node payload so taint patterns match
+  statement content, not just the FQN.
+- Revived `lesson-guard`, which was silently inert (hardcoded memory root missed migrated
+  projects; the query CLI stripped bodies the guard read).
+- Audit round 2: removed unused dependencies and dead code, tightened the recall/hook hot
+  paths, and fixed a machine-dependent test.
+
+## [0.3.0] - 2026-07-01
+
 ### Added
 - Zero-dep `curl | sh` installer as a per-tag GitHub Release asset. See README for the one-liner.
 - New Rust subcommand `hoangsa-cli install [--global|--local] [--install-chroma] [--dry-run]` owning all install logic.
