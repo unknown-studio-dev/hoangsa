@@ -42,6 +42,28 @@ fn wait_for_no_match(pattern: &str, timeout: Duration) {
     }
 }
 
+/// Poll `pgrep -f PATTERN` until it finds a match (→ ok) or the deadline
+/// elapses (→ panic). Inverse of [`wait_for_no_match`]: waits for the child to
+/// actually appear before we kill it. A fixed sleep here races a slow or
+/// loaded CI runner — the child may not have exec'd yet, which surfaced as
+/// "child sleep never started".
+fn wait_for_match(pattern: &str, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let out = Command::new("pgrep")
+            .args(["-f", pattern])
+            .output()
+            .expect("pgrep");
+        if out.status.success() && !String::from_utf8_lossy(&out.stdout).trim().is_empty() {
+            return;
+        }
+        if Instant::now() > deadline {
+            panic!("child sleep never started within {timeout:?}; pattern={pattern:?}");
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
 fn kill_pid(pid: u32, sig: &str) {
     let _ = Command::new("kill")
         .args([&format!("-{sig}"), &pid.to_string()])
@@ -63,18 +85,9 @@ fn sigterm_on_hsp_kills_child() {
         .spawn()
         .expect("spawn hsp");
 
-    // Give hsp + child ~300ms to start before we kill.
-    thread::sleep(Duration::from_millis(300));
-
-    // Child should be alive by now.
-    let pgrep = Command::new("pgrep")
-        .args(["-f", &marker])
-        .output()
-        .expect("pgrep");
-    assert!(
-        pgrep.status.success(),
-        "child sleep never started; marker={marker}"
-    );
+    // Wait (poll) for the child to actually appear before killing — a fixed
+    // sleep races a slow/loaded CI runner.
+    wait_for_match(&marker, Duration::from_secs(5));
 
     // Send SIGTERM to hsp. The handler must forward it to the child.
     kill_pid(hsp.id(), "TERM");
@@ -96,7 +109,7 @@ fn sigint_on_hsp_kills_child() {
         .stderr(Stdio::null())
         .spawn()
         .expect("spawn hsp");
-    thread::sleep(Duration::from_millis(300));
+    wait_for_match(&marker, Duration::from_secs(5));
 
     kill_pid(hsp.id(), "INT");
     let _ = hsp.wait();
