@@ -52,6 +52,9 @@ when tracing how code connects:
   (`::main`). "Walk me through the main flow."
 - `memory_taint_paths({sources, sinks})` — source→sink security
   dataflow. Requires an index built with `--pdg`.
+- `memory_event_trace({topic})` — publishers + subscribers of an
+  event-bus topic, when pub/sub is decoupled by a broker so the call
+  graph can't connect them.
 
 `USER.md`, `MEMORY.md`, and `LESSONS.md` are already injected at
 SessionStart — scan them for preferences and applicable lessons before
