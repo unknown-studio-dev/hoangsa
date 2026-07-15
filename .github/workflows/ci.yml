@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # hoangsa-ui-server embeds crates/hoangsa-ui-web/dist/ via rust-embed at
+      # compile time. dist/ is gitignored; an empty folder compiles fine (the
+      # UI just serves the placeholder), and no test asserts on real assets —
+      # so ensure the folder exists rather than building the SPA here.
+      - run: mkdir -p crates/hoangsa-ui-web/dist
+      - run: cargo test --workspace --locked
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: mkdir -p crates/hoangsa-ui-web/dist
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  fmt:
+    name: rustfmt (changed files)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      # Format-check only NEWLY ADDED .rs files. The repository is not
+      # uniformly rustfmt'd and there is a standing decision not to
+      # mass-reformat (it churns 100+ legacy files); a blanket
+      # `cargo fmt --check`, or even a "changed files" check, would force
+      # reformatting untouched legacy code inside any file you edit. Gating
+      # only added files keeps new modules/tests clean without reformatting
+      # existing code. Tighten to the full diff once the tree is formatted.
+      - name: rustfmt added files
+        run: |
+          set -euo pipefail
+          BASE="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$BASE" ]; then BASE="${{ github.event.before }}"; fi
+          if [ -z "$BASE" ] || ! git rev-parse --verify "$BASE^{commit}" >/dev/null 2>&1; then
+            echo "No valid base commit to diff against; skipping."
+            exit 0
+          fi
+          files=$(git diff --name-only --diff-filter=A "$BASE" HEAD -- '*.rs' || true)
+          if [ -z "$files" ]; then
+            echo "No newly added .rs files."
+            exit 0
+          fi
+          echo "Checking:"; echo "$files"
+          echo "$files" | xargs rustfmt --edition 2024 --check

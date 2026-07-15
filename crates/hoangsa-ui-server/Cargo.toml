@@ -1,6 +1,6 @@
 [package]
 name = "hoangsa-ui-server"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version.workspace = true
 license.workspace = true
@@ -17,7 +17,7 @@ name = "hoangsa-ui"
 path = "src/main.rs"
 
 [dependencies]
-hoangsa-cli = { path = "../hoangsa-cli", version = "0.3.0" }
+hoangsa-cli = { path = "../hoangsa-cli", version = "0.4.0" }
 hoangsa-memory-core = { workspace = true }
 tokio = { workspace = true, features = ["signal", "net"] }
 serde = { workspace = true }

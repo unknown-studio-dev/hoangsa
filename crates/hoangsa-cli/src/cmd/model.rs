@@ -159,34 +159,6 @@ pub fn resolve_model(role: &str, cwd: &str) {
     }));
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn resolve_parts_defaults_to_balanced_profile() {
-        let dir = std::env::temp_dir().join("hoangsa-model-test-empty");
-        let _ = std::fs::create_dir_all(&dir);
-        let (model, profile, source) = resolve_model_parts("worker", dir.to_str().unwrap());
-        assert_eq!((model.as_str(), profile.as_str(), source), ("sonnet", "balanced", "profile"));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn resolve_parts_override_beats_profile() {
-        let dir = std::env::temp_dir().join("hoangsa-model-test-ovr");
-        let _ = std::fs::create_dir_all(dir.join(".hoangsa"));
-        std::fs::write(
-            dir.join(".hoangsa/config.json"),
-            r#"{"profile":"quality","model_overrides":{"worker":"haiku"}}"#,
-        )
-        .unwrap();
-        let (model, profile, source) = resolve_model_parts("worker", dir.to_str().unwrap());
-        assert_eq!((model.as_str(), profile.as_str(), source), ("haiku", "quality", "override"));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
-
 /// `resolve-model --all` — show all role→model mappings for current config.
 pub fn resolve_all(cwd: &str) {
     let mut profile = "balanced".to_string();
@@ -220,4 +192,32 @@ pub fn resolve_all(cwd: &str) {
         "models": mappings,
         "overrides": model_overrides.unwrap_or(json!({})),
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_parts_defaults_to_balanced_profile() {
+        let dir = std::env::temp_dir().join("hoangsa-model-test-empty");
+        let _ = std::fs::create_dir_all(&dir);
+        let (model, profile, source) = resolve_model_parts("worker", dir.to_str().unwrap());
+        assert_eq!((model.as_str(), profile.as_str(), source), ("sonnet", "balanced", "profile"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_parts_override_beats_profile() {
+        let dir = std::env::temp_dir().join("hoangsa-model-test-ovr");
+        let _ = std::fs::create_dir_all(dir.join(".hoangsa"));
+        std::fs::write(
+            dir.join(".hoangsa/config.json"),
+            r#"{"profile":"quality","model_overrides":{"worker":"haiku"}}"#,
+        )
+        .unwrap();
+        let (model, profile, source) = resolve_model_parts("worker", dir.to_str().unwrap());
+        assert_eq!((model.as_str(), profile.as_str(), source), ("haiku", "quality", "override"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

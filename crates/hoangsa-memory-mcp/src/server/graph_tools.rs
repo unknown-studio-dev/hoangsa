@@ -1072,6 +1072,37 @@ impl Server {
     }
 }
 
+fn parse_direction(s: &str) -> anyhow::Result<Direction> {
+    match s {
+        "out" => Ok(Direction::Out),
+        "in" => Ok(Direction::In),
+        "both" => Ok(Direction::Both),
+        other => anyhow::bail!(
+            "invalid direction {other:?}; expected one of: out | in | both"
+        ),
+    }
+}
+
+/// Parse optional edge-kind strings. Returns `None` (= all kinds) when the
+/// slice is empty. Returns a tool error (via `Err`) when any tag is unknown.
+fn parse_edge_kinds(kinds: Option<&[String]>) -> anyhow::Result<Option<Vec<EdgeKind>>> {
+    let Some(ks) = kinds else { return Ok(None) };
+    if ks.is_empty() {
+        return Ok(None);
+    }
+    let mut out = Vec::with_capacity(ks.len());
+    for tag in ks {
+        match EdgeKind::from_tag(tag) {
+            Some(k) => out.push(k),
+            None => anyhow::bail!(
+                "unknown edge kind {tag:?}; valid values: {}",
+                VALID_EDGE_KINDS.join(", ")
+            ),
+        }
+    }
+    Ok(Some(out))
+}
+
 // ---- spec-named tests (T-04) -----------------------------------------------
 
 #[cfg(test)]
@@ -1311,35 +1342,4 @@ mod tests {
         assert!(findings2.is_empty(), "unknown patterns must yield empty findings; got {data2}");
         assert_eq!(data2["source_matches"], 0, "source_matches must be 0; got {data2}");
     }
-}
-
-fn parse_direction(s: &str) -> anyhow::Result<Direction> {
-    match s {
-        "out" => Ok(Direction::Out),
-        "in" => Ok(Direction::In),
-        "both" => Ok(Direction::Both),
-        other => anyhow::bail!(
-            "invalid direction {other:?}; expected one of: out | in | both"
-        ),
-    }
-}
-
-/// Parse optional edge-kind strings. Returns `None` (= all kinds) when the
-/// slice is empty. Returns a tool error (via `Err`) when any tag is unknown.
-fn parse_edge_kinds(kinds: Option<&[String]>) -> anyhow::Result<Option<Vec<EdgeKind>>> {
-    let Some(ks) = kinds else { return Ok(None) };
-    if ks.is_empty() {
-        return Ok(None);
-    }
-    let mut out = Vec::with_capacity(ks.len());
-    for tag in ks {
-        match EdgeKind::from_tag(tag) {
-            Some(k) => out.push(k),
-            None => anyhow::bail!(
-                "unknown edge kind {tag:?}; valid values: {}",
-                VALID_EDGE_KINDS.join(", ")
-            ),
-        }
-    }
-    Ok(Some(out))
 }
