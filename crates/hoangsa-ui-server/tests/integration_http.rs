@@ -26,9 +26,9 @@ fn spawn_server(project_dir: PathBuf, fake_home: &std::path::Path) -> (std::proc
     let mut line = String::new();
     reader.read_line(&mut line).expect("read first line");
     let url = line
-        .splitn(2, ": ")
-        .nth(1)
+        .split_once(": ")
         .expect("url in first line")
+        .1
         .trim()
         .to_string();
 
