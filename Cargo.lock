@@ -1530,7 +1530,7 @@ checksum = "ec9d92d097f4749b64e8cc33d924d9f40a2d4eb91402b458014b781f5733d60f"
 
 [[package]]
 name = "hoangsa-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ab_glyph",
  "glob",
@@ -1544,12 +1544,13 @@ dependencies = [
  "tempfile",
  "tiktoken-rs",
  "time",
+ "toml_edit",
  "walkdir",
 ]
 
 [[package]]
 name = "hoangsa-memory"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1569,7 +1570,7 @@ dependencies = [
 
 [[package]]
 name = "hoangsa-memory-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1583,7 +1584,7 @@ dependencies = [
 
 [[package]]
 name = "hoangsa-memory-graph"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "hoangsa-memory-core",
  "hoangsa-memory-parse",
@@ -1596,7 +1597,7 @@ dependencies = [
 
 [[package]]
 name = "hoangsa-memory-mcp"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -1621,7 +1622,7 @@ dependencies = [
 
 [[package]]
 name = "hoangsa-memory-parse"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -1643,7 +1644,7 @@ dependencies = [
 
 [[package]]
 name = "hoangsa-memory-policy"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "hoangsa-memory-core",
  "hoangsa-memory-store",
@@ -1659,7 +1660,7 @@ dependencies = [
 
 [[package]]
 name = "hoangsa-memory-retrieve"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1683,7 +1684,7 @@ dependencies = [
 
 [[package]]
 name = "hoangsa-memory-store"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "criterion",
@@ -1704,7 +1705,7 @@ dependencies = [
 
 [[package]]
 name = "hoangsa-proxy"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1722,7 +1723,7 @@ dependencies = [
 
 [[package]]
 name = "hoangsa-ui-server"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "axum",
