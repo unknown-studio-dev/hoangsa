@@ -1,8 +1,10 @@
+mod codex;
 mod enforce;
 mod events;
 mod session;
 mod state;
 
+pub use codex::cmd_hook_codex;
 pub use enforce::cmd_enforce;
 // Part of the lib API (and used by the tests below); the bin target's private
 // `mod cmd` tree never references these, which would otherwise trip
@@ -73,6 +75,40 @@ fn find_memory_bin() -> Option<String> {
         return Some(candidate.to_string_lossy().to_string());
     }
     None
+}
+
+/// Extract the file paths an `apply_patch` envelope touches.
+///
+/// Codex serializes file edits to hooks as tool_name `apply_patch` with
+/// `tool_input.command` holding the patch text — there is no `file_path`
+/// field like Claude's Edit/Write. Recognized headers:
+///
+///   *** Add File: <path>
+///   *** Update File: <path>
+///   *** Delete File: <path>
+///   *** Move to: <path>       (rename destination)
+///
+/// Headers are matched at column 0 only — hunk body lines carry a
+/// +/-/space prefix, so a context line that happens to CONTAIN header
+/// text must not parse as one. Unknown lines are ignored; order is
+/// preserved; duplicates are kept (callers dedupe if they care).
+fn apply_patch_file_paths(patch: &str) -> Vec<String> {
+    const HEADERS: [&str; 4] = [
+        "*** Add File: ",
+        "*** Update File: ",
+        "*** Delete File: ",
+        "*** Move to: ",
+    ];
+    patch
+        .lines()
+        .filter_map(|line| {
+            HEADERS
+                .iter()
+                .find_map(|h| line.strip_prefix(h))
+                .map(|p| p.trim().to_string())
+                .filter(|p| !p.is_empty())
+        })
+        .collect()
 }
 
 fn is_source_file(path: &str) -> bool {
@@ -176,6 +212,37 @@ mod tests {
         let events = "garbage line\n{invalid json\n\n";
         let result = intent_guard_edit(events, "/abs/path/foo.rs");
         assert!(matches!(result, IntentOutcome::Block(_)));
+    }
+
+    // ── apply_patch_file_paths ───────────────────────────────────────────────
+
+    #[test]
+    fn apply_patch_paths_extracts_all_headers() {
+        let patch = "*** Begin Patch\n*** Update File: src/a.rs\n@@\n-x\n+y\n*** Add File: src/b.rs\n+fn b() {}\n*** Delete File: old/c.py\n*** End Patch";
+        assert_eq!(
+            apply_patch_file_paths(patch),
+            vec!["src/a.rs", "src/b.rs", "old/c.py"]
+        );
+    }
+
+    #[test]
+    fn apply_patch_paths_ignores_body_and_empty() {
+        // Hunk body lines carry a +/-/space prefix; none may parse as a
+        // header even when they contain header-looking text.
+        let patch = "*** Begin Patch\n+*** Update File: added-line\n *** Update File: context-line\n-*** Update File: removed-line\n*** Update File: \n*** End Patch";
+        assert!(apply_patch_file_paths(patch).is_empty());
+    }
+
+    #[test]
+    fn apply_patch_paths_includes_move_destination() {
+        let patch = "*** Begin Patch\n*** Update File: src/old.rs\n*** Move to: src/new.rs\n@@\n-a\n+b\n*** End Patch";
+        assert_eq!(apply_patch_file_paths(patch), vec!["src/old.rs", "src/new.rs"]);
+    }
+
+    #[test]
+    fn apply_patch_paths_empty_patch() {
+        assert!(apply_patch_file_paths("").is_empty());
+        assert!(apply_patch_file_paths("no headers here").is_empty());
     }
 
     // ── intent_guard_bash_commit ─────────────────────────────────────────────
@@ -565,6 +632,41 @@ mod tests {
     }
 
     #[test]
+    fn tally_transcript_sums_codex_rollout_token_counts() {
+        use std::io::Write as _;
+        let tmp = tempfile::NamedTempFile::new().expect("tmp");
+        let mut f = tmp.reopen().expect("reopen");
+        writeln!(
+            f,
+            r#"{{"timestamp":"t","type":"session_meta","payload":{{"id":"x"}}}}"#
+        )
+        .unwrap();
+        // Codex input_tokens INCLUDES cached_input_tokens.
+        writeln!(
+            f,
+            r#"{{"timestamp":"t","type":"event_msg","payload":{{"type":"token_count","info":{{"last_token_usage":{{"input_tokens":100,"cached_input_tokens":80,"output_tokens":30,"total_tokens":130}}}}}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"timestamp":"t","type":"event_msg","payload":{{"type":"agent_message","message":"hi"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"timestamp":"t","type":"event_msg","payload":{{"type":"token_count","info":{{"last_token_usage":{{"input_tokens":200,"cached_input_tokens":150,"output_tokens":40,"total_tokens":240}}}}}}}}"#
+        )
+        .unwrap();
+
+        let t = tally_transcript(tmp.path()).expect("tally");
+        assert_eq!(t.input, 70, "input excludes the cached share");
+        assert_eq!(t.cache_read, 230);
+        assert_eq!(t.output, 70);
+        assert_eq!(t.cache_creation, 0);
+        assert_eq!(t.turns, 2);
+    }
+
+    #[test]
     fn tally_transcript_missing_file_returns_none() {
         assert!(tally_transcript(Path::new("/nonexistent/path/transcript.jsonl")).is_none());
     }
@@ -584,6 +686,29 @@ mod tests {
         assert_eq!(t.input, 10);
         assert_eq!(t.output, 20);
         assert_eq!(t.turns, 1);
+    }
+
+    // ── apply_patch intent guard (Codex) ─────────────────────────────────────
+
+    #[test]
+    fn apply_patch_guard_blocks_uncovered_source_file() {
+        let patch = "*** Begin Patch\n*** Update File: src/lib.rs\n*** End Patch";
+        let outcome = enforce::apply_patch_intent_outcome("", patch);
+        assert!(matches!(outcome, Some(IntentOutcome::Block(_))));
+    }
+
+    #[test]
+    fn apply_patch_guard_approves_covered_files() {
+        let events = r#"{"event":"impact","file":"src/lib.rs","symbol":"x"}
+"#;
+        let patch = "*** Begin Patch\n*** Update File: src/lib.rs\n*** End Patch";
+        assert_eq!(enforce::apply_patch_intent_outcome(events, patch), None);
+    }
+
+    #[test]
+    fn apply_patch_guard_skips_non_source_files() {
+        let patch = "*** Begin Patch\n*** Update File: README.md\n*** Add File: notes.txt\n*** End Patch";
+        assert_eq!(enforce::apply_patch_intent_outcome("", patch), None);
     }
 
     // ── parse_git_add_files ──────────────────────────────────────────────────

@@ -537,7 +537,14 @@ async fn parse_conversation(path: &Path) -> Result<Vec<Turn>> {
     let content = tokio::fs::read_to_string(path)
         .await
         .context("reading conversation file")?;
+    Ok(parse_conversation_lines(&content))
+}
 
+/// Line-level transcript parser. Understands both Claude Code project
+/// transcripts and Codex rollout files (`{"type":"response_item", …}`
+/// lines) — the two formats never share a file, but per-line dispatch
+/// keeps this a single pass with no upfront format sniff.
+fn parse_conversation_lines(content: &str) -> Vec<Turn> {
     let mut turns = Vec::new();
     let mut tool_use_map: HashMap<String, String> = HashMap::new();
 
@@ -552,6 +559,10 @@ async fn parse_conversation(path: &Path) -> Result<Vec<Turn>> {
         };
 
         let entry_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if entry_type == "response_item" {
+            rollout_response_item(&v, &mut turns);
+            continue;
+        }
         let role = match entry_type {
             "user" | "assistant" => entry_type,
             "" => v.get("role").and_then(|r| r.as_str()).unwrap_or("unknown"),
@@ -637,7 +648,111 @@ async fn parse_conversation(path: &Path) -> Result<Vec<Turn>> {
             timestamp,
         });
     }
-    Ok(turns)
+    turns
+}
+
+/// Fold one Codex rollout `response_item` line into `turns`.
+///
+/// `message` payloads become user/assistant turns (consecutive assistant
+/// items merge, mirroring the Claude path); `function_call` /
+/// `function_call_output` payloads append condensed tool traces to the
+/// current assistant turn. `developer` messages and Codex-injected
+/// user wrappers (`<user_instructions>`, `<environment_context>`, …) are
+/// noise, not conversation.
+fn rollout_response_item(v: &serde_json::Value, turns: &mut Vec<Turn>) {
+    let Some(payload) = v.get("payload") else {
+        return;
+    };
+    match payload.get("type").and_then(|t| t.as_str()) {
+        Some("message") => {
+            let role = payload.get("role").and_then(|r| r.as_str()).unwrap_or("");
+            if !matches!(role, "user" | "assistant") {
+                return;
+            }
+            let raw = rollout_message_text(payload);
+            if role == "user" && is_rollout_injected_context(&raw) {
+                return;
+            }
+            let cleaned = strip_noise(&raw);
+            if cleaned.is_empty() {
+                return;
+            }
+            if role == "assistant"
+                && turns.last().map(|t| t.role.as_str()) == Some("assistant")
+            {
+                let last = turns.last_mut().expect("non-empty checked above");
+                last.text.push('\n');
+                last.text.push_str(&cleaned);
+                return;
+            }
+            let timestamp = v
+                .get("timestamp")
+                .and_then(|t| t.as_str())
+                .and_then(chrono_parse_unix);
+            turns.push(Turn {
+                role: role.to_string(),
+                text: cleaned,
+                timestamp,
+            });
+        }
+        Some("function_call") | Some("custom_tool_call") => {
+            let Some(name) = payload.get("name").and_then(|n| n.as_str()) else {
+                return;
+            };
+            let args = payload
+                .get("arguments")
+                .or_else(|| payload.get("input"))
+                .and_then(|a| a.as_str())
+                .unwrap_or("");
+            let trace = format!("🔧 {name}({})", truncate_on_char_boundary(args, 160));
+            if let Some(last) = turns.last_mut().filter(|t| t.role == "assistant") {
+                last.text.push('\n');
+                last.text.push_str(&trace);
+            }
+        }
+        Some("function_call_output") | Some("custom_tool_call_output") => {
+            let Some(output) = payload.get("output").and_then(|o| o.as_str()) else {
+                return;
+            };
+            let cleaned = strip_noise(output);
+            if cleaned.is_empty() {
+                return;
+            }
+            if let Some(last) = turns.last_mut().filter(|t| t.role == "assistant") {
+                last.text.push_str("\n  → ");
+                last.text.push_str(truncate_on_char_boundary(&cleaned, 200));
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Concatenate the text blocks of a rollout message payload.
+fn rollout_message_text(payload: &serde_json::Value) -> String {
+    payload
+        .get("content")
+        .and_then(|c| c.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|b| match b.get("type").and_then(|t| t.as_str()) {
+                    Some("input_text") | Some("output_text") => {
+                        b.get("text").and_then(|t| t.as_str())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
+/// Codex records its injected context wrappers as `user` messages;
+/// they are configuration, not the user speaking.
+fn is_rollout_injected_context(text: &str) -> bool {
+    let t = text.trim_start();
+    ["<user_instructions>", "<environment_context>", "<permissions", "<turn_context", "<AGENTS.md"]
+        .iter()
+        .any(|m| t.starts_with(m))
 }
 
 fn extract_text_rich(
@@ -708,6 +823,62 @@ fn home_claude_sessions() -> Result<PathBuf> {
         .map(PathBuf::from)
         .context("cannot determine home directory")?;
     Ok(home.join(".claude").join("projects"))
+}
+
+/// Codex rollout root: `$CODEX_HOME/sessions` or `~/.codex/sessions`.
+fn home_codex_sessions() -> Result<PathBuf> {
+    if let Some(raw) = std::env::var_os("CODEX_HOME")
+        && !raw.is_empty()
+    {
+        return Ok(PathBuf::from(raw).join("sessions"));
+    }
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .context("cannot determine home directory")?;
+    Ok(home.join(".codex").join("sessions"))
+}
+
+/// Recursively collect `rollout-*.jsonl` files under the Codex sessions
+/// tree (layout: `sessions/YYYY/MM/DD/rollout-<ts>-<id>.jsonl`; the
+/// depth cap guards against symlink cycles or exotic layouts).
+fn collect_rollout_files(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
+    if depth > 4 {
+        return;
+    }
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in rd.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let Ok(ft) = entry.file_type() else { continue };
+        if ft.is_dir() {
+            collect_rollout_files(&path, depth + 1, out);
+        } else if ft.is_file() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("rollout-") && name.ends_with(".jsonl") {
+                out.push(path);
+            }
+        }
+    }
+}
+
+/// Project association for a rollout file: the `cwd` recorded in its
+/// first `session_meta` line. `None` when the header is missing or
+/// unparsable — such files are skipped rather than misfiled.
+fn rollout_project_cwd(path: &Path) -> Option<String> {
+    use std::io::BufRead;
+    let file = std::fs::File::open(path).ok()?;
+    let mut first_line = String::new();
+    std::io::BufReader::new(file).read_line(&mut first_line).ok()?;
+    let v: serde_json::Value = serde_json::from_str(first_line.trim()).ok()?;
+    if v.get("type").and_then(|t| t.as_str()) != Some("session_meta") {
+        return None;
+    }
+    v.get("payload")
+        .and_then(|p| p.get("cwd"))
+        .and_then(|c| c.as_str())
+        .map(str::to_string)
 }
 
 fn decode_project_name(encoded: &str) -> String {
@@ -814,8 +985,12 @@ pub async fn run_ingest(
     } = opts;
 
     let sessions_root = home_claude_sessions()?;
-    if !sessions_root.is_dir() {
-        bail!("No Claude sessions found at {}", sessions_root.display());
+    let codex_root = home_codex_sessions().ok().filter(|p| p.is_dir());
+    if !sessions_root.is_dir() && codex_root.is_none() {
+        bail!(
+            "No Claude sessions found at {} and no Codex sessions either",
+            sessions_root.display()
+        );
     }
 
     // First-run cap: if the tracker is empty and the caller didn't
@@ -848,11 +1023,17 @@ pub async fn run_ingest(
         mtime: std::time::SystemTime,
     }
 
-    let mut project_dirs: Vec<_> = std::fs::read_dir(&sessions_root)
-        .context("reading Claude projects dir")?
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-        .collect();
+    let mut project_dirs: Vec<_> = match std::fs::read_dir(&sessions_root) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+            .collect(),
+        // Codex-only machines have no ~/.claude/projects; anything other
+        // than NotFound (EACCES, I/O) must still abort — silently finding
+        // zero candidates would masquerade as a successful ingest.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(e).context("reading Claude projects dir"),
+    };
     project_dirs.sort_by_key(|e| e.file_name());
 
     let mut candidates: Vec<Candidate> = Vec::new();
@@ -907,6 +1088,42 @@ pub async fn run_ingest(
                     }
                 }
             }
+        }
+    }
+
+    // Codex rollouts: date-nested files, project association via the
+    // cwd in each file's session_meta header. The cwd is passed through
+    // `decode_project_name` so it lands in the SAME (lossy, hyphens→
+    // slashes) name space Claude candidates use — otherwise a project
+    // path containing '-' would split its archive across two names and
+    // `project_filter` would only ever match one harness.
+    if let Some(codex_root) = &codex_root {
+        let mut rollout_files = Vec::new();
+        collect_rollout_files(codex_root, 0, &mut rollout_files);
+        for path in rollout_files {
+            let Some(project_name) = rollout_project_cwd(&path).map(|c| decode_project_name(&c))
+            else {
+                continue;
+            };
+            if let Some(filter) = project_filter.as_deref()
+                && project_name != filter
+            {
+                continue;
+            }
+            let session_id = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let mtime = path
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            candidates.push(Candidate {
+                project_name,
+                session_id,
+                path,
+                mtime,
+            });
         }
     }
 
@@ -1095,6 +1312,52 @@ pub async fn run_ingest(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_rollout_lines_extracts_user_and_assistant_turns() {
+        let content = concat!(
+            r#"{"timestamp":"2026-06-14T16:48:55.862Z","type":"session_meta","payload":{"id":"s1","cwd":"/Users/x/proj"}}"#, "\n",
+            r#"{"timestamp":"2026-06-14T16:49:00.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<user_instructions>injected</user_instructions>"}]}}"#, "\n",
+            r#"{"timestamp":"2026-06-14T16:49:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"What is 2+2?"}]}}"#, "\n",
+            r#"{"timestamp":"2026-06-14T16:49:02.000Z","type":"response_item","payload":{"type":"reasoning","summary":[]}}"#, "\n",
+            r#"{"timestamp":"2026-06-14T16:49:03.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"4"}]}}"#, "\n",
+            r#"{"timestamp":"2026-06-14T16:49:04.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","namespace":null,"arguments":"{\"cmd\":\"ls\"}","call_id":"c1"}}"#, "\n",
+            r#"{"timestamp":"2026-06-14T16:49:05.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"README.md src"}}"#, "\n",
+            r#"{"timestamp":"2026-06-14T16:49:06.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done."}]}}"#, "\n",
+            r#"{"timestamp":"2026-06-14T16:49:07.000Z","type":"event_msg","payload":{"type":"token_count","info":{}}}"#, "\n",
+            r#"{"timestamp":"2026-06-14T16:49:08.000Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<permissions instructions>sandbox"}]}}"#, "\n",
+        );
+        let turns = parse_conversation_lines(content);
+        let texts: Vec<_> = turns.iter().map(|t| (&t.role, &t.text)).collect();
+        assert_eq!(turns.len(), 2, "user + merged assistant, got: {texts:?}");
+        assert_eq!(turns[0].role, "user");
+        assert_eq!(turns[0].text, "What is 2+2?");
+        assert_eq!(turns[1].role, "assistant");
+        assert!(turns[1].text.contains('4'));
+        assert!(turns[1].text.contains("🔧 exec_command"), "{}", turns[1].text);
+        assert!(turns[1].text.contains("README.md src"));
+        assert!(turns[1].text.contains("Done."));
+        assert!(turns[1].timestamp.is_some());
+    }
+
+    #[test]
+    fn parse_claude_lines_still_works() {
+        let content = concat!(
+            r#"{"type":"user","message":{"role":"user","content":"hi"}}"#, "\n",
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]}}"#, "\n",
+        );
+        let turns = parse_conversation_lines(content);
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].text, "hi");
+        assert_eq!(turns[1].text, "hello");
+    }
+
+    #[test]
+    fn rollout_injected_context_is_filtered() {
+        assert!(is_rollout_injected_context("<environment_context>x"));
+        assert!(is_rollout_injected_context("  <user_instructions>y"));
+        assert!(!is_rollout_injected_context("real question"));
+    }
 
     #[test]
     fn truncate_on_char_boundary_snaps_back_on_multibyte() {

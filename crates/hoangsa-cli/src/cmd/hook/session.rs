@@ -449,7 +449,6 @@ pub(super) fn parse_stop_events(events_text: &str) -> (bool, bool, Vec<String>) 
 /// the file being edited → block. Otherwise → approve with context shown.
 pub fn cmd_lesson_guard(cwd: &str) {
     use std::io::Read;
-    use std::process::Command;
 
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input).ok();
@@ -457,22 +456,62 @@ pub fn cmd_lesson_guard(cwd: &str) {
     let parsed: serde_json::Value =
         serde_json::from_str(&input).unwrap_or(json!({}));
 
-    let file_path = parsed
+    // Edit/Write carry one file_path; Codex apply_patch carries a patch
+    // envelope that may touch several files. The guard must see every
+    // file — a NEVER lesson on the second file in a patch still blocks.
+    let mut files: Vec<String> = Vec::new();
+    if let Some(fp) = parsed
         .get("tool_input")
         .and_then(|ti| ti.get("file_path"))
-        .and_then(|fp| fp.as_str())
-        .unwrap_or("");
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        files.push(fp.to_string());
+    } else if parsed.get("tool_name").and_then(|t| t.as_str()) == Some("apply_patch") {
+        files = parsed
+            .get("tool_input")
+            .and_then(|ti| ti.get("command"))
+            .and_then(|c| c.as_str())
+            .map(super::apply_patch_file_paths)
+            .unwrap_or_default();
+        // Each file costs one recall subprocess — bound the fan-out.
+        files.truncate(5);
+    }
 
-    if file_path.is_empty() {
+    if files.is_empty() {
         out(&json!({"decision": "approve"}));
         return;
     }
 
+    let mut advisories: Vec<String> = Vec::new();
+    for file in &files {
+        let decision = lesson_guard_decision(cwd, file);
+        if decision.get("decision").and_then(|d| d.as_str()) == Some("block") {
+            out(&decision);
+            return;
+        }
+        if let Some(r) = decision.get("reason").and_then(|r| r.as_str()) {
+            advisories.push(r.to_string());
+        }
+    }
+    if advisories.is_empty() {
+        out(&json!({"decision": "approve"}));
+    } else {
+        out(&json!({"decision": "approve", "reason": advisories.join("\n\n---\n\n")}));
+    }
+}
+
+/// Per-file lesson guard: recall lessons for `file_path`, hard-block on a
+/// NEVER-lesson match against installed-copy paths, otherwise surface the
+/// recalled lessons as advisory context. Returns a Claude-shaped decision
+/// value — the caller merges decisions across a multi-file patch.
+fn lesson_guard_decision(cwd: &str, file_path: &str) -> serde_json::Value {
+    use std::process::Command;
+
     // Build a query from the file path — extract meaningful path segments
     let query = build_recall_query(file_path);
     if query.is_empty() {
-        out(&json!({"decision": "approve"}));
-        return;
+        return json!({"decision": "approve"});
     }
 
     // Resolve the memory root the same way the rest of the system does —
@@ -480,18 +519,14 @@ pub fn cmd_lesson_guard(cwd: &str) {
     // A hardcoded local path silently no-ops the guard on every project
     // migrated to ~/.hoangsa/memory/projects/<slug>/.
     let Some(memory_root) = hoangsa_memory_root(cwd).filter(|r| r.exists()) else {
-        out(&json!({"decision": "approve"}));
-        return;
+        return json!({"decision": "approve"});
     };
 
     // Call hoangsa-memory CLI to recall lessons relevant to this file path
     let memory_bin = find_memory_bin();
     let memory_bin = match memory_bin {
         Some(b) => b,
-        None => {
-            out(&json!({"decision": "approve"}));
-            return;
-        }
+        None => return json!({"decision": "approve"}),
     };
 
     let result = Command::new(&memory_bin)
@@ -501,26 +536,17 @@ pub fn cmd_lesson_guard(cwd: &str) {
 
     let output_bytes = match result {
         Ok(o) => o.stdout,
-        Err(_) => {
-            out(&json!({"decision": "approve"}));
-            return;
-        }
+        Err(_) => return json!({"decision": "approve"}),
     };
 
     let recall: serde_json::Value = match serde_json::from_slice(&output_bytes) {
         Ok(v) => v,
-        Err(_) => {
-            out(&json!({"decision": "approve"}));
-            return;
-        }
+        Err(_) => return json!({"decision": "approve"}),
     };
 
     let chunks = match recall.get("chunks").and_then(|c| c.as_array()) {
         Some(c) => c,
-        None => {
-            out(&json!({"decision": "approve"}));
-            return;
-        }
+        None => return json!({"decision": "approve"}),
     };
 
     // Filter to only LESSONS.md and MEMORY.md chunks
@@ -542,8 +568,7 @@ pub fn cmd_lesson_guard(cwd: &str) {
         .collect();
 
     if lessons.is_empty() {
-        out(&json!({"decision": "approve"}));
-        return;
+        return json!({"decision": "approve"});
     }
 
     // Check: does any lesson say "NEVER" + contain a path fragment matching file_path?
@@ -625,38 +650,36 @@ pub fn cmd_lesson_guard(cwd: &str) {
         let should_block = is_gitignored && is_installed_copy_path;
 
         if should_block {
-            out(&json!({
+            json!({
                 "decision": "block",
                 "reason": format!(
                     "BLOCKED: '{}' is a gitignored installed-copy path and matches a NEVER lesson.\n\nLesson:\n{}\n\nEdit the source under templates/ instead, then run bin/install to sync.\n\nIf this is intentional (rare), tell the user to override explicitly.",
                     file_path, lesson
                 )
-            }));
+            })
         } else {
             let gitignore_note = if is_gitignored {
                 "\nNote: This file is in .gitignore — it may be an installed copy, not the source."
             } else {
                 ""
             };
-            out(&json!({
+            json!({
                 "decision": "approve",
                 "reason": format!(
                     "⚠️ LESSON GUARD for '{}':{}\n\nRelevant lesson:\n{}\n\n---\nAll recalled lessons:\n{}\n\nIf this edit is intentional, proceed. If not, find the correct source file.",
                     file_path, gitignore_note, lesson, all_lessons_text
                 )
-            }));
+            })
         }
-    } else if !lessons.is_empty() {
+    } else {
         // No blocking lesson, but surface lessons as context
-        out(&json!({
+        json!({
             "decision": "approve",
             "reason": format!(
                 "Lessons for '{}':\n{}",
                 file_path, all_lessons_text
             )
-        }));
-    } else {
-        out(&json!({"decision": "approve"}));
+        })
     }
 }
 
@@ -1120,29 +1143,61 @@ impl UsageTotals {
     }
 }
 
-/// Sum `message.usage` fields across all assistant lines in a transcript JSONL.
+/// Sum usage across all assistant/turn lines in a transcript JSONL.
+///
+/// Understands both formats line-by-line, so it works no matter which
+/// harness produced the file:
+///   * Claude Code: `{"type":"assistant","message":{"usage":{…}}}`
+///   * Codex rollout: `{"type":"event_msg","payload":{"type":"token_count",
+///     "info":{"last_token_usage":{…}}}}` — Codex's `input_tokens`
+///     INCLUDES `cached_input_tokens`, so the cached share is subtracted
+///     to keep `input` comparable with the Anthropic counters.
 pub(super) fn tally_transcript(transcript_path: &Path) -> Option<UsageTotals> {
     use std::io::{BufRead, BufReader};
     let file = fs::File::open(transcript_path).ok()?;
     let reader = BufReader::new(file);
     let mut t = UsageTotals::default();
     for line in reader.lines().map_while(Result::ok) {
+        // Cheap pre-filter: rollout files are dominated by tool-output
+        // lines that can never match either usage arm — skip the JSON
+        // parse for anything without a usage marker.
+        if !line.contains("token_count") && !line.contains("\"usage\"") {
+            continue;
+        }
         let v: serde_json::Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(_) => continue,
         };
-        if v.get("type").and_then(|s| s.as_str()) != Some("assistant") {
-            continue;
+        match v.get("type").and_then(|s| s.as_str()) {
+            Some("assistant") => {
+                let Some(usage) = v.get("message").and_then(|m| m.get("usage")) else {
+                    continue;
+                };
+                let get = |k: &str| usage.get(k).and_then(|n| n.as_u64()).unwrap_or(0);
+                t.input += get("input_tokens");
+                t.output += get("output_tokens");
+                t.cache_read += get("cache_read_input_tokens");
+                t.cache_creation += get("cache_creation_input_tokens");
+                t.turns += 1;
+            }
+            Some("event_msg") => {
+                let Some(usage) = v
+                    .get("payload")
+                    .filter(|p| p.get("type").and_then(|s| s.as_str()) == Some("token_count"))
+                    .and_then(|p| p.get("info"))
+                    .and_then(|i| i.get("last_token_usage"))
+                else {
+                    continue;
+                };
+                let get = |k: &str| usage.get(k).and_then(|n| n.as_u64()).unwrap_or(0);
+                let cached = get("cached_input_tokens");
+                t.input += get("input_tokens").saturating_sub(cached);
+                t.output += get("output_tokens");
+                t.cache_read += cached;
+                t.turns += 1;
+            }
+            _ => {}
         }
-        let Some(usage) = v.get("message").and_then(|m| m.get("usage")) else {
-            continue;
-        };
-        let get = |k: &str| usage.get(k).and_then(|n| n.as_u64()).unwrap_or(0);
-        t.input += get("input_tokens");
-        t.output += get("output_tokens");
-        t.cache_read += get("cache_read_input_tokens");
-        t.cache_creation += get("cache_creation_input_tokens");
-        t.turns += 1;
     }
     Some(t)
 }

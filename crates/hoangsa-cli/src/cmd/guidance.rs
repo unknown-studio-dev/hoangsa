@@ -92,10 +92,23 @@ memory.
 - Config: `.hoangsa/memory/config.toml` (memory mode, caps, policy).
 "#;
 
-/// Pointer block inserted into project `CLAUDE.md` and `AGENTS.md`. Uses
-/// Claude Code's `@path` import syntax so the full guidance loads at
-/// SessionStart without bloating the root instruction file.
-fn pointer_block() -> String {
+/// How the pointer block references the full guidance document. Claude
+/// Code expands `@path` imports at SessionStart; every other harness that
+/// reads `AGENTS.md` (Codex included) gets a plain instruction to read
+/// the file — `@path` is a Claude-ism that would arrive as literal text.
+enum PointerStyle {
+    ClaudeImport,
+    PlainReference,
+}
+
+/// Pointer block inserted into project `CLAUDE.md` / `AGENTS.md`.
+fn pointer_block(style: PointerStyle) -> String {
+    let reference = match style {
+        PointerStyle::ClaudeImport => format!("Full protocol: @{GUIDANCE_REL_PATH}"),
+        PointerStyle::PlainReference => {
+            format!("Full protocol: read `{GUIDANCE_REL_PATH}` before non-trivial work.")
+        }
+    };
     format!(
         "{START_MARKER}\n\
 ## hoangsa-memory\n\
@@ -106,7 +119,7 @@ and a semantic code graph. Before non-trivial edits, call `memory_recall` / \
 `memory_remember_lesson` / `memory_remember_preference` to persist what's \
 durable.\n\
 \n\
-Full protocol: @{GUIDANCE_REL_PATH}\n\
+{reference}\n\
 {END_MARKER}"
     )
 }
@@ -170,9 +183,29 @@ pub struct SyncReport {
 /// guidance sync into its own JSON output.
 pub fn sync(project_dir: &Path) -> std::io::Result<SyncReport> {
     let body_changed = write_guidance_body(project_dir)?;
-    let block = pointer_block();
-    let claude_changed = upsert_marker_block(&project_dir.join("CLAUDE.md"), &block)?;
-    let agents_changed = upsert_marker_block(&project_dir.join("AGENTS.md"), &block)?;
+    let claude_md = project_dir.join("CLAUDE.md");
+    let agents_md = project_dir.join("AGENTS.md");
+
+    // When one file symlinks the other, two different blocks would
+    // flip-flop on the same inode every sync. The plain reference is the
+    // one shape every harness understands, so it wins.
+    let same_file = match (fs::canonicalize(&claude_md), fs::canonicalize(&agents_md)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    };
+    if same_file {
+        let changed = upsert_marker_block(&claude_md, &pointer_block(PointerStyle::PlainReference))?;
+        return Ok(SyncReport {
+            guidance_path: project_dir.join(GUIDANCE_REL_PATH),
+            guidance_written: body_changed,
+            claude_md_updated: changed,
+            agents_md_updated: changed,
+        });
+    }
+
+    let claude_changed = upsert_marker_block(&claude_md, &pointer_block(PointerStyle::ClaudeImport))?;
+    let agents_changed =
+        upsert_marker_block(&agents_md, &pointer_block(PointerStyle::PlainReference))?;
 
     Ok(SyncReport {
         guidance_path: project_dir.join(GUIDANCE_REL_PATH),
@@ -217,7 +250,10 @@ mod tests {
 
         let agents = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
         assert!(agents.contains(START_MARKER));
-        assert!(agents.contains(&format!("@{GUIDANCE_REL_PATH}")));
+        // AGENTS.md is read by non-Claude harnesses — the reference must be
+        // a plain instruction, not a Claude `@path` import.
+        assert!(!agents.contains(&format!("@{GUIDANCE_REL_PATH}")));
+        assert!(agents.contains(&format!("read `{GUIDANCE_REL_PATH}`")));
     }
 
     #[test]

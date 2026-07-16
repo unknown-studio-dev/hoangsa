@@ -1,6 +1,6 @@
 [package]
 name = "hoangsa-cli"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 
 [lib]
@@ -24,6 +24,7 @@ imageproc = { version = "0.25", optional = true, default-features = false }
 walkdir = { version = "2", optional = true }
 tiktoken-rs = "0.5"
 sha2 = "0.10"
+toml_edit = "0.22"
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -1,4 +1,5 @@
 mod cmd;
+mod codex_wire;
 mod helpers;
 
 use helpers::resolve_cwd;
@@ -194,6 +195,15 @@ fn main() {
         ("media", "check-ffmpeg") => cmd::media::cmd_check_ffmpeg(),
         #[cfg(feature = "media")]
         ("media", "install-ffmpeg") => cmd::media::cmd_install_ffmpeg(),
+        ("hook", "codex") => {
+            cmd::hook::cmd_hook_codex(&rest, &cwd);
+        }
+        ("codex", "render") => {
+            cmd::codex::cmd_codex_render(&rest, &cwd);
+        }
+        ("plugin", "package") => {
+            cmd::plugin::cmd_plugin_package(&rest, &cwd);
+        }
         ("hook", "prompt-guard") => {
             cmd::hook::cmd_prompt_guard(&cwd);
         }

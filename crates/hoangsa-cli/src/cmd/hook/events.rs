@@ -26,7 +26,15 @@ pub fn cmd_post_enforce(cwd: &str) {
         }
     };
 
-    let tool_name = parsed.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+    // Codex sanitizes the MCP server id's hyphen to an underscore
+    // (`mcp__hoangsa_memory__…`) — canonicalize so the arms below match
+    // under both harnesses.
+    let tool_name = parsed
+        .get("tool_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .replace("mcp__hoangsa_memory__", "mcp__hoangsa-memory__");
+    let tool_name = tool_name.as_str();
     let tool_input = parsed.get("tool_input").cloned().unwrap_or(json!({}));
 
     // lesson_saved: any tool whose name contains "remember_lesson" (catches

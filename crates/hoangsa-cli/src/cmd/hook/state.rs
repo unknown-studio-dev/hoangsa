@@ -127,7 +127,11 @@ pub fn cmd_state_clear(cwd: &str) {
         }
     }
 
-    out(&json!({"success": true}));
+    // Decision shape, not a bare `{"success": true}` — the codex wire
+    // translator passes non-decision JSON through verbatim, and Codex's
+    // deny_unknown_fields parser would mark the hook Failed on every
+    // SessionStart.
+    out(&json!({"decision": "approve", "success": true}));
 }
 
 /// On `/clear`, promote the last-seen cost into the baseline so the

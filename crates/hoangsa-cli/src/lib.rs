@@ -4,4 +4,5 @@
 //! is unchanged — both targets share the same source tree.
 
 pub mod cmd;
+pub mod codex_wire;
 pub mod helpers;

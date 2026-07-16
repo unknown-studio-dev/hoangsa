@@ -103,6 +103,8 @@ Rules & enforcement:
   hook stop-check|lesson-guard            Stop-hook + lesson guardrails
   hook session-start|session-archive|session-usage|statusline
   hook state-record|state-check|state-clear
+  hook codex <handler>                    Same handlers, Codex hook wire
+  codex render <command> [--arguments s]  Render a workflow for Codex skills
   enforce override|report                 Inspect / bypass enforcement events
 
 Trust & verification:
@@ -234,9 +236,11 @@ Usage:
   hoangsa-cli hook state-check      Re-read enforcement state
   hoangsa-cli hook state-clear      Wipe enforcement state for the session
   hoangsa-cli hook statusline       Print statusline JSON for Claude Code
+  hoangsa-cli hook codex <handler>  Run any handler above under Codex CLI —
+                                    output translated to Codex hook wire
 
-All hooks read a JSON payload on stdin (per Claude Code hook contract)
-and emit a decision/approve JSON on stdout."
+All hooks read a JSON payload on stdin (per Claude Code hook contract;
+Codex mirrors it) and emit a decision JSON on stdout."
         }
         "install" => {
             "install — install hoangsa-cli + hooks into ~/.hoangsa or ./.claude.
@@ -248,6 +252,7 @@ Flags:
   --global            Install into ~/.hoangsa (default)
   --local             Install into ./.claude (project-local)
   --dry-run           Print actions without writing
+  --harness=<claude|codex|cowork>  Target harness (default: claude)
   --task-manager=<clickup|asana|none>  Pre-select task manager integration
   --no-memory         Skip hoangsa-memory MCP daemon install
   --skip-path-edit    Don't modify shell rc files"

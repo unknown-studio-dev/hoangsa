@@ -84,6 +84,27 @@ pub fn build_hoangsa_hooks(_target_dir: &Path) -> Value {
     build_hoangsa_hooks_inner(super::memory_install_dir().ok().as_deref())
 }
 
+/// One HOANGSA-managed hook entry. The shape is load-bearing:
+/// `is_hoangsa_entry` (and uninstall) recognize our entries by the
+/// sentinel + command layout, so every harness's builder must emit
+/// exactly this form.
+pub(crate) fn managed_entry(command: String, timeout: u64, matcher: Option<&str>) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert(MANAGED_SENTINEL.into(), Value::Bool(true));
+    if let Some(m) = matcher {
+        obj.insert("matcher".into(), Value::String(m.into()));
+    }
+    obj.insert(
+        "hooks".into(),
+        json!([{
+            "type": "command",
+            "command": command,
+            "timeout": timeout,
+        }]),
+    );
+    Value::Object(obj)
+}
+
 /// Core payload builder. `install_root` is `~/.hoangsa/` (or
 /// `$HOANGSA_INSTALL_DIR`) — tests inject a sandboxed path so the hsp
 /// presence check is deterministic instead of reading the caller's env.
@@ -93,23 +114,6 @@ pub fn build_hoangsa_hooks_inner(install_root: Option<&Path>) -> Value {
         .unwrap_or_else(|| PathBuf::from("hoangsa-cli"))
         .display()
         .to_string();
-
-    let managed_entry = |command: String, timeout: u64, matcher: Option<&str>| -> Value {
-        let mut obj = serde_json::Map::new();
-        obj.insert(MANAGED_SENTINEL.into(), Value::Bool(true));
-        if let Some(m) = matcher {
-            obj.insert("matcher".into(), Value::String(m.into()));
-        }
-        obj.insert(
-            "hooks".into(),
-            json!([{
-                "type": "command",
-                "command": command,
-                "timeout": timeout,
-            }]),
-        );
-        Value::Object(obj)
-    };
 
     let mut pre_tool_use = vec![
         managed_entry(format!("{cli} hook lesson-guard"), 10, Some("Edit|Write")),
@@ -159,13 +163,22 @@ pub fn build_hoangsa_hooks_inner(install_root: Option<&Path>) -> Value {
     })
 }
 
+/// Legacy sentinel spelling — a hand-rolled Codex port (mid-2026) wrote
+/// `__hoangsa_managed` entries (including a Python stop-wrapper whose
+/// command mentions no hoangsa binary); recognizing it lets install
+/// sweep those remnants instead of stacking new entries next to them.
+const LEGACY_MANAGED_SENTINEL: &str = "__hoangsa_managed";
+
 /// Return `true` iff `entry` is a HOANGSA-managed hook object (carries
 /// the sentinel flag OR references our binary via the legacy command form).
 fn is_hoangsa_entry(entry: &Value) -> bool {
     let Some(obj) = entry.as_object() else {
         return false;
     };
-    if obj.get(MANAGED_SENTINEL).and_then(|v| v.as_bool()).unwrap_or(false) {
+    if [MANAGED_SENTINEL, LEGACY_MANAGED_SENTINEL]
+        .iter()
+        .any(|k| obj.get(*k).and_then(|v| v.as_bool()).unwrap_or(false))
+    {
         return true;
     }
     if let Some(hooks) = obj.get("hooks").and_then(|h| h.as_array()) {
@@ -390,6 +403,28 @@ mod tests {
         let root = tmp.join("hoangsa-root");
         std::fs::create_dir_all(root.join("bin")).expect("mkdir root/bin");
         root
+    }
+
+    #[test]
+    fn legacy_double_underscore_sentinel_is_swept() {
+        let mut settings = serde_json::json!({
+            "hooks": {
+                "Stop": [
+                    {"__hoangsa_managed": true, "hooks": [{"type": "command", "command": "/x/hoangsa-codex-stop-wrapper.py"}]},
+                    {"hooks": [{"type": "command", "command": "user-stop-hook"}]}
+                ]
+            }
+        });
+        let hoangsa = build_hoangsa_hooks_inner(None);
+        merge_hoangsa_hooks(&mut settings, &hoangsa);
+        let cmds: Vec<&str> = settings["hooks"]["Stop"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["hooks"][0]["command"].as_str().unwrap())
+            .collect();
+        assert!(!cmds.iter().any(|c| c.contains("stop-wrapper")), "{cmds:?}");
+        assert!(cmds.contains(&"user-stop-hook"));
     }
 
     #[test]

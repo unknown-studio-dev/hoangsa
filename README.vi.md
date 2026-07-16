@@ -16,20 +16,48 @@ HOANGSA là hệ thống context engineering cho [Claude Code](https://docs.anth
 
 ## Cài đặt
 
+Hai bước: **1)** cài binaries (chung cho mọi harness), **2)** nối harness bạn dùng.
+
+### Bước 1 — binaries
+
 ```sh
 curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh | sh
 ```
 
-Installer tải sẵn binary native — **không cần Node, không cần `npm`, không cần `cargo`**.
+Installer tải sẵn binary native vào `~/.hoangsa/bin/` — **không cần Node, không cần `npm`, không cần `cargo`**. Nền tảng: `darwin-arm64` (Apple Silicon), `linux-x64`, `linux-arm64`.
 
-- `hoangsa-cli` → `~/.hoangsa/bin/`
-- `hoangsa-memory`, `hoangsa-memory-mcp` → `~/.hoangsa/bin/`
+Flags: `--global` (mặc định), `--local`, `--dry-run`, `--no-embed` (bỏ pre-download weights fastembed; sẽ tải lazy khi dùng lần đầu).
 
-Nền tảng hỗ trợ: `darwin-arm64` (Apple Silicon), `linux-x64`, `linux-arm64`.
+### Bước 2 — nối harness
 
-Flags: `--global` (mặc định), `--local`, `--dry-run`, `--no-embed` (bỏ qua pre-download weights fastembed; sẽ tải lazy khi dùng lần đầu).
+**Claude Code** — installer ở bước 1 đã nối sẵn (MCP + hooks + templates). Chạy lại tay khi cần:
 
-Để gỡ cài đặt: chạy `scripts/uninstall.sh --global` (hoặc `--local`) từ bản checkout của repo. Thêm `--purge` để xoá luôn `~/.hoangsa` (templates + memory data).
+```sh
+hoangsa-cli install --global   # hoặc --local cho một project
+hsp init                       # tuỳ chọn: hook nén output
+```
+
+**Codex CLI / Codex Desktop** — desktop app dùng chung config với CLI:
+
+```sh
+hoangsa-cli install --global --harness codex
+```
+
+Ghi hooks vào `~/.codex/hooks.json` (kèm hsp nếu có), MCP vào `~/.codex/config.toml`, skills + lệnh `/hoangsa:*` vào `~/.agents/skills/hoangsa/`, workflows vào `~/.codex/hoangsa/`. Archive + thống kê token tự đọc `~/.codex/sessions/`. **Sau đó mở Codex, chạy `/hooks` một lần để approve** — Codex không chạy hook chưa được trust.
+
+**Claude Cowork / Claude Desktop**:
+
+```sh
+hoangsa-cli install --harness cowork
+```
+
+Đăng ký memory MCP vào `claude_desktop_config.json` (bridge vào VM của Cowork) — xong restart Claude Desktop. Muốn có lệnh `/hoangsa:*` + skills thì cài plugin: `/plugin marketplace add unknown-studio-dev/hoangsa`. Lưu ý: hooks/gates không chạy được trong VM của Cowork.
+
+**Chỉ cài plugin (không cần binaries)** — `/plugin marketplace add unknown-studio-dev/hoangsa` cho ngay bộ lệnh workflow, agents, skills trên Claude Code/Cowork; nhưng memory, gates và `hsp` vẫn cần bước 1.
+
+### Gỡ cài đặt
+
+Chạy `scripts/uninstall.sh --global` (hoặc `--local`) từ bản checkout của repo. Thêm `--purge` để xoá luôn `~/.hoangsa` (templates + memory data).
 
 ---
 

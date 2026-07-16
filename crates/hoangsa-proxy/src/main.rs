@@ -71,7 +71,7 @@ fn main() -> ExitCode {
         Some(("list", _)) => cmd_list(),
         Some(("doctor", _)) => cmd_doctor(),
         Some(("hook", sub)) => match sub.subcommand() {
-            Some(("rewrite", _)) => cmd_hook_rewrite(),
+            Some(("rewrite", flags)) => cmd_hook_rewrite(flags.get_flag("codex")),
             _ => {
                 eprintln!("usage: hsp hook rewrite");
                 ExitCode::from(2)
@@ -122,7 +122,7 @@ fn cli() -> Command {
         .arg_required_else_help(false)
         .subcommand(
             Command::new("init")
-                .about("Install PreToolUse hook into Claude Code settings")
+                .about("Install PreToolUse hook into Claude Code settings (or Codex hooks.json with --codex)")
                 .arg(
                     Arg::new("global")
                         .short('g')
@@ -134,6 +134,12 @@ fn cli() -> Command {
                         .short('p')
                         .long("project")
                         .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("codex")
+                        .long("codex")
+                        .action(ArgAction::SetTrue)
+                        .help("Target OpenAI Codex CLI (~/.codex/hooks.json)"),
                 ),
         )
         .subcommand(
@@ -150,6 +156,12 @@ fn cli() -> Command {
                         .short('p')
                         .long("project")
                         .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("codex")
+                        .long("codex")
+                        .action(ArgAction::SetTrue)
+                        .help("Target OpenAI Codex CLI (~/.codex/hooks.json)"),
                 ),
         )
         .subcommand(Command::new("list").about("List registered handlers"))
@@ -158,7 +170,14 @@ fn cli() -> Command {
             Command::new("hook")
                 .about("Claude Code hook integration")
                 .subcommand(
-                    Command::new("rewrite").about("PreToolUse rewrite callback (stdin = JSON)"),
+                    Command::new("rewrite")
+                        .about("PreToolUse rewrite callback (stdin = JSON)")
+                        .arg(
+                            Arg::new("codex")
+                                .long("codex")
+                                .action(ArgAction::SetTrue)
+                                .help("Emit Codex hook wire (permissionDecision/updatedInput)"),
+                        ),
                 ),
         )
         .subcommand(
@@ -197,10 +216,14 @@ fn cli() -> Command {
 
 fn cmd_init(sub: &clap::ArgMatches) -> ExitCode {
     let scope = resolve_scope(sub);
+    let harness = resolve_harness(sub);
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    match init::install(scope, &cwd) {
+    match init::install_for(scope, harness, &cwd) {
         Ok(path) => {
             println!("installed hsp PreToolUse hook: {}", path.display());
+            if harness == init::Harness::Codex {
+                println!("note: open Codex and run /hooks once to approve the hook — Codex does not execute untrusted hooks.");
+            }
             ExitCode::from(0)
         }
         Err(e) => {
@@ -212,8 +235,9 @@ fn cmd_init(sub: &clap::ArgMatches) -> ExitCode {
 
 fn cmd_uninit(sub: &clap::ArgMatches) -> ExitCode {
     let scope = resolve_scope(sub);
+    let harness = resolve_harness(sub);
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    match init::uninstall(scope, &cwd) {
+    match init::uninstall_for(scope, harness, &cwd) {
         Ok(path) => {
             println!("removed hsp PreToolUse hook: {}", path.display());
             ExitCode::from(0)
@@ -222,6 +246,14 @@ fn cmd_uninit(sub: &clap::ArgMatches) -> ExitCode {
             eprintln!("hsp uninit failed: {e}");
             ExitCode::from(1)
         }
+    }
+}
+
+fn resolve_harness(sub: &clap::ArgMatches) -> init::Harness {
+    if sub.get_flag("codex") {
+        init::Harness::Codex
+    } else {
+        init::Harness::Claude
     }
 }
 
@@ -273,15 +305,14 @@ fn cmd_list() -> ExitCode {
     ExitCode::from(0)
 }
 
-/// PreToolUse hook callback: reads Claude Code's JSON from stdin, and if
+/// PreToolUse hook callback: reads the harness's JSON from stdin, and if
 /// the Bash command starts with a known command, emits a rewrite decision.
+/// Codex mirrors Claude's stdin shape, so one parser serves both.
 ///
-/// Input shape (Claude Code PreToolUse for Bash):
+/// Input shape (PreToolUse for Bash):
 ///   { "tool_name": "Bash", "tool_input": { "command": "git log -5" } }
 ///
-/// Output: either
-///   {}  (no modification)
-/// or
+/// Output: either `{}` (no modification), or for Claude
 ///   {
 ///     "decision": "approve",
 ///     "hookSpecificOutput": {
@@ -289,7 +320,16 @@ fn cmd_list() -> ExitCode {
 ///       "modifiedToolInput": { "command": "hsp git log -5" }
 ///     }
 ///   }
-fn cmd_hook_rewrite() -> ExitCode {
+/// or with `--codex` (Codex rejects `decision:"approve"` and expects
+/// `permissionDecision:"allow"` + `updatedInput`):
+///   {
+///     "hookSpecificOutput": {
+///       "hookEventName": "PreToolUse",
+///       "permissionDecision": "allow",
+///       "updatedInput": { "command": "hsp git log -5" }
+///     }
+///   }
+fn cmd_hook_rewrite(codex: bool) -> ExitCode {
     let mut buf = String::new();
     if std::io::stdin().read_to_string(&mut buf).is_err() {
         println!("{{}}");
@@ -339,13 +379,23 @@ fn cmd_hook_rewrite() -> ExitCode {
     }
 
     let rewritten = format!("hsp {command}");
-    let out = serde_json::json!({
-        "decision": "approve",
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "modifiedToolInput": { "command": rewritten }
-        }
-    });
+    let out = if codex {
+        serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "updatedInput": { "command": rewritten }
+            }
+        })
+    } else {
+        serde_json::json!({
+            "decision": "approve",
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "modifiedToolInput": { "command": rewritten }
+            }
+        })
+    };
     println!("{}", out);
     ExitCode::from(0)
 }

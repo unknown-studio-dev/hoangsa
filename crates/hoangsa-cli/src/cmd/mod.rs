@@ -2,6 +2,7 @@ pub mod addon;
 pub mod bootstrap;
 pub mod budget;
 pub mod cache;
+pub mod codex;
 pub mod commit;
 pub mod config;
 pub mod context;
@@ -15,6 +16,7 @@ pub mod install;
 #[cfg(feature = "media")]
 pub mod media;
 pub mod model;
+pub mod plugin;
 pub mod pref;
 pub mod rule;
 pub mod session;

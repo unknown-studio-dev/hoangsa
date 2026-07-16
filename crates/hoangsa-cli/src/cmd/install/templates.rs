@@ -106,10 +106,15 @@ fn now_iso() -> String {
 
 /// Compute the SHA256 digest of a file as a lowercase hex string.
 pub fn compute_file_sha256(path: &Path) -> io::Result<String> {
-    let bytes = fs::read(path)?;
+    Ok(sha256_hex(&fs::read(path)?))
+}
+
+/// SHA256 of a byte slice as lowercase hex — the one encoding every
+/// manifest hash in the install pipeline must agree on.
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    Ok(hex_encode(&hasher.finalize()))
+    hasher.update(bytes);
+    hex_encode(&hasher.finalize())
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -145,7 +150,7 @@ pub fn save_manifest(path: &Path, manifest: &Manifest) -> io::Result<()> {
 }
 
 /// Recursively list every regular file under `dir`, returning absolute paths.
-fn walk_files(dir: &Path) -> io::Result<Vec<PathBuf>> {
+pub(crate) fn walk_files(dir: &Path) -> io::Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     walk_files_inner(dir, &mut out)?;
     out.sort();
@@ -168,7 +173,7 @@ fn walk_files_inner(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
 }
 
 /// Normalize a relative path to forward-slash form for manifest keys.
-fn rel_key(rel: &Path) -> String {
+pub(crate) fn rel_key(rel: &Path) -> String {
     rel.components()
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .collect::<Vec<_>>()

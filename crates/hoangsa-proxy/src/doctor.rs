@@ -73,8 +73,17 @@ pub fn run(cwd: &Path) -> Vec<Check> {
         check_binary_path(),
         check_hook(Scope::Global, cwd),
         check_hook(Scope::Project, cwd),
-        check_hook_rewrite_works(),
     ];
+    // Codex checks only apply on machines that actually have Codex — a
+    // Claude-only setup must stay warning-free.
+    if init::hook_config_path(Scope::Global, init::Harness::Codex, cwd)
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+        .is_some_and(|dir| dir.is_dir())
+    {
+        out.push(check_hook_for(Scope::Global, init::Harness::Codex, cwd));
+        out.push(check_hook_for(Scope::Project, init::Harness::Codex, cwd));
+    }
+    out.push(check_hook_rewrite_works());
     out.extend(check_config(cwd));
     out.push(check_handlers(cwd));
     out
@@ -117,11 +126,17 @@ fn check_binary_path() -> Check {
 }
 
 fn check_hook(scope: Scope, cwd: &Path) -> Check {
-    let name = match scope {
-        Scope::Global => "hook_global",
-        Scope::Project => "hook_project",
+    check_hook_for(scope, init::Harness::Claude, cwd)
+}
+
+fn check_hook_for(scope: Scope, harness: init::Harness, cwd: &Path) -> Check {
+    let name = match (harness, scope) {
+        (init::Harness::Claude, Scope::Global) => "hook_global",
+        (init::Harness::Claude, Scope::Project) => "hook_project",
+        (init::Harness::Codex, Scope::Global) => "hook_codex_global",
+        (init::Harness::Codex, Scope::Project) => "hook_codex_project",
     };
-    let Some(path) = init::settings_path(scope, cwd) else {
+    let Some(path) = init::hook_config_path(scope, harness, cwd) else {
         return Check {
             item: name.into(),
             status: Status::Warn,

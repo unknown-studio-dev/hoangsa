@@ -24,8 +24,18 @@ pub fn read_file(file_path: &str) -> Option<String> {
 }
 
 /// Print a JSON value to stdout with 2-space indentation.
+///
+/// When the `hook codex` dispatcher has set an active Codex event, the
+/// value is first translated from the Claude hook shape to valid Codex
+/// wire (see `codex_wire::translate`) so handlers stay harness-agnostic.
 pub fn out(obj: &Value) {
-    println!("{}", serde_json::to_string_pretty(obj).unwrap());
+    match crate::codex_wire::active_event() {
+        Some(event) => println!(
+            "{}",
+            serde_json::to_string_pretty(&crate::codex_wire::translate(event, obj)).unwrap()
+        ),
+        None => println!("{}", serde_json::to_string_pretty(obj).unwrap()),
+    }
 }
 
 pub const ERR_READ_CONFIG: &str = "Cannot read config.json";

@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-16
+
+### Added
+- **Full OpenAI Codex CLI support** (`--harness codex`):
+  - `hoangsa-cli hook codex <handler>` — Codex hook entry point reusing every
+    existing handler; output auto-translated to Codex wire (no
+    `decision:"approve"`, advisory reasons → `additionalContext` /
+    `systemMessage`, `deny_unknown_fields`-safe).
+  - `hoangsa-cli install --harness codex` — hooks.json merge (idempotent,
+    preserves user entries, sweeps legacy hand-rolled hoangsa entries),
+    `[mcp_servers.hoangsa-memory]` registration in `config.toml` via
+    comment-preserving TOML edits, skills → `~/.agents/skills/hoangsa/`,
+    generated command wrapper skills + shared `hoangsa-command-player`,
+    workflows → `~/.codex/hoangsa/workflows/` with path/MCP-name adaptation.
+  - `hoangsa-cli codex render <command> --arguments …` — workflow renderer
+    backing the Codex command skills.
+  - `hsp init|uninit --codex` and `hsp hook rewrite --codex`
+    (`permissionDecision:"allow"` + `updatedInput`); doctor checks for
+    `~/.codex/hooks.json`.
+  - Enforcement guards understand Codex `apply_patch` payloads (per-file
+    first-touch impact checks parsed from the patch envelope).
+  - Archive ingest + session usage read Codex rollout files
+    (`~/.codex/sessions/**/rollout-*.jsonl`) alongside Claude transcripts.
+- **Claude Cowork memory** (`--harness cowork`): registers `hoangsa-memory`
+  in Claude Desktop's `claude_desktop_config.json` (bridged into the Cowork
+  task VM). Memory tools only — hooks/skills need a plugin bundle, and the
+  host CLI is unreachable from inside the VM.
+- **Claude plugin bundle** (`plugin/` + `.claude-plugin/marketplace.json`):
+  install the `/hoangsa:*` commands, worker agents, skills, and workflows
+  via `/plugin marketplace add unknown-studio-dev/hoangsa` — works in Claude
+  Code and Claude Cowork. Instruction layer only: hooks and the MCP server
+  stay installer-managed (bundling them would double-register on Claude Code
+  and cannot reach the host binaries from Cowork's VM). Regenerate with
+  `make plugin` (`hoangsa-cli plugin package`).
+
+### Changed
+- `AGENTS.md` guidance block now uses a plain file reference instead of the
+  Claude-only `@path` import (Codex and other harnesses read it literally).
+
 ## [0.4.0] - 2026-07-15
 
 ### Added

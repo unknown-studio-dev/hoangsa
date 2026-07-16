@@ -15,6 +15,8 @@
 #   HOANGSA_CLI_DIR      Install root for hoangsa-cli / hsp (default: $HOANGSA_INSTALL_DIR/bin)
 #   HOANGSA_NO_PATH_EDIT If "1", skip shell rc file edit (manual export only)
 #   CARGO_PROFILE        release|debug (default: release)
+#   HOANGSA_CARGO_FEATURES  Extra cargo features, e.g. "hoangsa-cli/media"
+#                        to enable the visual-debug media commands
 
 set -eu
 
@@ -366,7 +368,7 @@ section "build"
 if [ "$SKIP_BUILD" -eq 0 ]; then
     info "building binaries (profile: $CARGO_PROFILE)"
     # shellcheck disable=SC2086
-    cargo build $CARGO_FLAGS $CARGO_PKGS
+    cargo build $CARGO_FLAGS $CARGO_PKGS ${HOANGSA_CARGO_FEATURES:+--features "$HOANGSA_CARGO_FEATURES"}
 else
     info "skipping build; using $BIN_DIR"
 fi
