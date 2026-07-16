@@ -1,0 +1,14 @@
+{
+  "name": "hoangsa",
+  "description": "HOANGSA — context engineering workflows, worker agents, and memory-discipline skills for Claude Code and Claude Cowork.",
+  "owner": {
+    "name": "unknownstudio"
+  },
+  "plugins": [
+    {
+      "name": "hoangsa",
+      "source": "./plugin",
+      "description": "HOANGSA context engineering — /hoangsa:* workflow commands, worker agents, and memory-discipline skills."
+    }
+  ]
+}

@@ -16,7 +16,12 @@ HOANGSA is a context engineering system for [Claude Code](https://docs.anthropic
 
 HOANGSA ships four binaries: three CLIs you invoke directly
 (`hoangsa-cli`, `hoangsa-memory`, `hsp`) plus one MCP server
-(`hoangsa-memory-mcp`) that Claude Code spawns on your behalf.
+(`hoangsa-memory-mcp`) that your agent harness spawns on your behalf.
+
+Installing is two steps: **1)** get the binaries (release installer or
+build from source), **2)** wire the harness you use — Claude Code
+(done by default), Codex CLI/Desktop, or Claude Cowork. See
+[Wire your harness](#wire-your-harness).
 
 ### Supported platforms
 
@@ -124,6 +129,61 @@ setup.
 
 ---
 
+### Wire your harness
+
+The binaries are shared; each harness needs one wiring step.
+
+#### Claude Code
+
+Nothing extra — the release installer (and `install-local.sh`) already
+registers the MCP server, copies templates, and writes the hooks.
+Re-run by hand if needed:
+
+```sh
+hoangsa-cli install --global    # or --local for one project
+hsp init                        # optional: output compressor hook
+```
+
+#### OpenAI Codex CLI / Codex Desktop
+
+```sh
+hoangsa-cli install --global --harness codex
+```
+
+Writes hooks to `~/.codex/hooks.json` (hsp included when present), the
+MCP server to `~/.codex/config.toml`, skills + `/hoangsa:*` commands to
+`~/.agents/skills/hoangsa/`, workflows to `~/.codex/hoangsa/`. The
+desktop app shares this config. Archive and token stats pick up
+`~/.codex/sessions/` automatically.
+
+**Then open Codex and run `/hooks` once to approve the hooks** — Codex
+does not run untrusted hooks.
+
+#### Claude Cowork / Claude Desktop
+
+```sh
+hoangsa-cli install --harness cowork
+```
+
+Registers the memory MCP server in `claude_desktop_config.json`
+(bridged into the Cowork task VM). Restart Claude Desktop afterwards.
+For the `/hoangsa:*` commands and skills, install the plugin:
+
+```text
+/plugin marketplace add unknown-studio-dev/hoangsa
+```
+
+Hooks/enforcement gates don't apply inside Cowork's VM.
+
+#### Plugin only (no binaries)
+
+`/plugin marketplace add unknown-studio-dev/hoangsa` on its own gives
+you the workflow commands, agents, and skills in Claude Code or Cowork.
+Memory tools, enforcement hooks, and `hsp` still require the binary
+install above.
+
+---
+
 ### Post-install: PATH and verification
 
 The installer appends a managed block to the first existing rc file it
@@ -204,7 +264,7 @@ savings on the noisiest commands.
 
 - **Binary:** `~/.hoangsa/bin/hsp`
 - **Global hook:** `hsp init` — writes PreToolUse hook into
-  `~/.claude/settings.json`
+  `~/.claude/settings.json` (`hsp init --codex` → `~/.codex/hooks.json`)
 - **Per-project hook:** `hsp init -p` — writes into
   `./.claude/settings.local.json`
 - **Self-check:** `hsp doctor`
@@ -253,7 +313,7 @@ cargo uninstall hoangsa-proxy       # binary name is `hsp`
 
 ## Quick Start
 
-Prerequisites: the **[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)**.
+Prerequisites: the **[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)** — for Codex or Cowork see [Wire your harness](#wire-your-harness).
 
 ```bash
 curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh | sh

@@ -82,6 +82,23 @@ pub fn local_mcp_path(cwd: &Path) -> PathBuf {
     cwd.join(".mcp.json")
 }
 
+/// Path to Claude Desktop's `claude_desktop_config.json` — the MCP config
+/// read by the desktop app and bridged into Claude Cowork's task VM.
+/// Same `mcpServers` shape as `.claude.json`, so registration reuses
+/// [`register_mcp_global_to`].
+pub fn claude_desktop_config_path() -> Result<PathBuf, String> {
+    Ok(claude_desktop_config_path_from(&super::home_path()?))
+}
+
+fn claude_desktop_config_path_from(home: &Path) -> PathBuf {
+    let app_dir = if cfg!(target_os = "macos") {
+        home.join("Library").join("Application Support").join("Claude")
+    } else {
+        home.join(".config").join("Claude")
+    };
+    app_dir.join("claude_desktop_config.json")
+}
+
 /// Absolute path to the globally-installed `hoangsa-memory-mcp` binary.
 /// Resolves under `$HOANGSA_INSTALL_DIR` (default `~/.hoangsa`) so
 /// a user who overrode the install dir in `scripts/install.sh` still gets
@@ -410,6 +427,22 @@ mod tests {
             cwd.join(".hoangsa").join("rules.json"),
             cwd.join(".memoryignore")];
         actions
+    }
+
+    #[test]
+    fn desktop_config_path_per_platform() {
+        let p = claude_desktop_config_path_from(Path::new("/home/u"));
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                p,
+                Path::new("/home/u/Library/Application Support/Claude/claude_desktop_config.json")
+            );
+        } else {
+            assert_eq!(
+                p,
+                Path::new("/home/u/.config/Claude/claude_desktop_config.json")
+            );
+        }
     }
 
     #[test]

@@ -101,6 +101,7 @@ USAGE:
 FLAGS (forwarded to `hoangsa-cli install`):
     --global            Install globally for the current user (default)
     --local             Install for the current project (cwd)
+    --harness <name>    Target harness: claude (default), codex, or cowork
     --no-embed          Disable semantic embeddings entirely (BM25 + graph
                         only). Skips the model pre-download AND records a
                         marker so the ~118 MB weights are never fetched

@@ -137,6 +137,8 @@ struct InstallFlags {
     skip_path_edit: bool,
     /// Value of `--task-manager[=<clickup|asana|none>]`; None when not provided.
     task_manager: Option<String>,
+    /// Value of `--harness[=<claude|codex>]`; defaults to claude.
+    harness: Option<String>,
 }
 
 fn parse_flags(args: &[&str]) -> Result<InstallFlags, String> {
@@ -160,6 +162,16 @@ fn parse_flags(args: &[&str]) -> Result<InstallFlags, String> {
             s if s.starts_with("--task-manager=") => {
                 f.task_manager = Some(s["--task-manager=".len()..].to_string());
             }
+            "--harness" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--harness requires a value (claude|codex)".into());
+                }
+                f.harness = Some(args[i].to_string());
+            }
+            s if s.starts_with("--harness=") => {
+                f.harness = Some(s["--harness=".len()..].to_string());
+            }
             other => return Err(format!("Unknown flag: {other}")),
         }
         i += 1;
@@ -170,6 +182,11 @@ fn parse_flags(args: &[&str]) -> Result<InstallFlags, String> {
 fn validate(f: &InstallFlags) -> Result<(), String> {
     if f.global && f.local {
         return Err("--global and --local are mutually exclusive".into());
+    }
+    if let Some(h) = f.harness.as_deref()
+        && !matches!(h, "claude" | "codex" | "cowork")
+    {
+        return Err(format!("--harness must be claude, codex or cowork, got: {h}"));
     }
     Ok(())
 }
@@ -184,6 +201,7 @@ fn mode_str(f: &InstallFlags) -> &'static str {
     }
 }
 
+pub mod codex;
 pub mod hooks;
 pub mod mode;
 pub mod relocate;
@@ -226,6 +244,15 @@ pub fn cmd_install(args: &[&str]) {
 
     let mode = mode_str(&flags);
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    if flags.harness.as_deref() == Some("codex") {
+        cmd_install_codex(&flags, mode, &cwd);
+        return;
+    }
+    if flags.harness.as_deref() == Some("cowork") {
+        cmd_install_cowork(&flags);
+        return;
+    }
 
     if flags.dry_run {
         let mut actions_json: Vec<serde_json::Value> = Vec::new();
@@ -616,6 +643,224 @@ pub fn cmd_install(args: &[&str]) {
         "memory_guidance_synced": guidance_synced,
         "memory_guidance_claude_updated": guidance_report.as_ref().map(|r| r.claude_md_updated),
         "memory_guidance_agents_updated": guidance_report.as_ref().map(|r| r.agents_md_updated),
+    }));
+}
+
+/// `--harness cowork` — Claude Cowork runs tasks in a sandboxed VM, but
+/// Claude Desktop bridges stdio MCP servers from
+/// `claude_desktop_config.json` into it. Registering `hoangsa-memory`
+/// there is the whole integration: hooks / skills / commands have no
+/// Cowork surface outside plugin bundles (not shipped yet), and the
+/// hoangsa CLI on the host is unreachable from inside the VM.
+fn cmd_install_cowork(flags: &InstallFlags) {
+    // Claude Desktop's config is per-user; there is no project scope, and
+    // MCP registration is the flow's only action — reject flags that
+    // would otherwise be silently ignored.
+    if flags.local {
+        eprintln!("install: --harness cowork is global-only (claude_desktop_config.json has no project scope)");
+        std::process::exit(2);
+    }
+    if flags.no_memory {
+        eprintln!("install: --harness cowork only registers the memory MCP server — nothing to do with --no-memory");
+        std::process::exit(2);
+    }
+    let config = match mode::claude_desktop_config_path() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("install: {e}");
+            std::process::exit(1);
+        }
+    };
+    let mcp_bin = match mode::memory_mcp_bin() {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("install: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    if flags.dry_run {
+        helpers::out(&json!({
+            "harness": "cowork",
+            "actions": [{ "action": "register_mcp_desktop", "target": config }],
+        }));
+        return;
+    }
+
+    if !mcp_bin.exists() {
+        eprintln!(
+            "install: hoangsa-memory-mcp missing at {} — run the release installer first",
+            mcp_bin.display()
+        );
+        std::process::exit(3);
+    }
+    if let Err(e) = mode::register_mcp_global_to(&config, &mcp_bin) {
+        eprintln!("install: register desktop MCP failed: {e}");
+        std::process::exit(1);
+    }
+    helpers::out(&json!({
+        "status": "ok",
+        "harness": "cowork",
+        "mcp_target": config,
+        "next_step": "Restart Claude Desktop so Cowork picks up the hoangsa-memory MCP server.",
+    }));
+}
+
+/// Live + dry-run install flow for `--harness codex`. Deliberately a
+/// separate function from the Claude flow — the two share the template
+/// source and MCP binary but nothing about destinations, so interleaving
+/// them behind `mode` matches would obscure both.
+fn cmd_install_codex(flags: &InstallFlags, mode: &str, cwd: &Path) {
+    let mut warnings: Vec<String> = Vec::new();
+
+    let src = match templates::templates_source_dir(mode, cwd) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("install: {e}");
+            std::process::exit(1);
+        }
+    };
+    let (codex_root, skills_root, hooks_file, config_file, manifest_path) = match (
+        codex::codex_dst_dir(mode, cwd),
+        codex::agents_skills_dir(mode, cwd),
+        codex::hooks_json_path(mode, cwd),
+        codex::config_toml_path(mode, cwd),
+        codex::codex_manifest_path(),
+    ) {
+        (Ok(a), Ok(b), Ok(c), Ok(d), Ok(e)) => (a, b, c, d, e),
+        (a, b, c, d, e) => {
+            for err in [a.err(), b.err(), c.err(), d.err(), e.err()].into_iter().flatten() {
+                eprintln!("install: {err}");
+            }
+            std::process::exit(1);
+        }
+    };
+
+    if flags.dry_run {
+        helpers::out(&json!({
+            "mode": mode,
+            "harness": "codex",
+            "actions": [
+                { "action": "copy_templates_codex", "src": src, "codex_root": codex_root, "skills_root": skills_root },
+                { "action": "merge_hooks_json", "target": hooks_file },
+                { "action": "register_mcp_codex", "target": config_file },
+                { "action": "memory_guidance_sync", "target": cwd.join("AGENTS.md") },
+            ],
+            "note": "Codex requires approving the installed hooks once via /hooks inside Codex.",
+        }));
+        return;
+    }
+
+    let prev = match templates::load_manifest(&manifest_path) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("install: {e}");
+            std::process::exit(1);
+        }
+    };
+    let (report, new_manifest) =
+        match codex::install_codex_templates(&src, &codex_root, &skills_root, &prev) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("install: install_codex_templates failed: {e}");
+                std::process::exit(1);
+            }
+        };
+    if let Err(e) = templates::save_manifest(&manifest_path, &new_manifest) {
+        eprintln!("install: save_manifest failed: {e}");
+        std::process::exit(1);
+    }
+
+    // hooks.json shares the Claude entry shape, so the whole document is
+    // treated as a settings object with a single `hooks` key and merged
+    // with the same idempotent machinery (stale hoangsa entries — even
+    // hand-written ones referencing `hoangsa-cli` — get replaced;
+    // user-authored entries survive).
+    let mut hooks_doc = match hooks::load_settings(&hooks_file) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("install: load hooks.json failed: {e}");
+            std::process::exit(1);
+        }
+    };
+    let hooks_added = hooks::merge_hoangsa_hooks(&mut hooks_doc, &codex::build_codex_hooks());
+    if let Err(e) = hooks::save_settings(&hooks_file, &hooks_doc) {
+        eprintln!("install: save hooks.json failed: {e}");
+        std::process::exit(1);
+    }
+
+    // MCP registration is fatal like the Claude flow — memory is the
+    // point — unless the user opted out with --no-memory.
+    let mut mcp_changed = false;
+    if !flags.no_memory {
+        let mcp_bin = match mode::memory_mcp_bin() {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("install: {e}");
+                std::process::exit(1);
+            }
+        };
+        if !mcp_bin.exists() {
+            eprintln!(
+                "install: hoangsa-memory-mcp missing at {} — run the release installer first",
+                mcp_bin.display()
+            );
+            std::process::exit(3);
+        }
+        mcp_changed = match codex::register_mcp_codex(&config_file, &mcp_bin) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("install: register_mcp_codex failed: {e}");
+                std::process::exit(1);
+            }
+        };
+    }
+
+    // Local-mode seeds are harness-agnostic (.hoangsa/rules.json, .memoryignore).
+    let mut rules_seeded = false;
+    let mut memory_ignore_seeded = false;
+    if mode == "local" {
+        match mode::seed_local_rules(cwd) {
+            Ok(wrote) => rules_seeded = wrote,
+            Err(e) => warnings.push(format!("seed_local_rules: {e}")),
+        }
+        match mode::seed_memory_ignore(cwd) {
+            Ok(wrote) => memory_ignore_seeded = wrote,
+            Err(e) => warnings.push(format!("seed_memory_ignore: {e}")),
+        }
+    }
+
+    let (guidance_synced, guidance_report) = match super::guidance::sync(cwd) {
+        Ok(r) => (true, Some(r)),
+        Err(e) => {
+            warnings.push(format!("memory-guidance sync failed: {e}"));
+            (false, None)
+        }
+    };
+
+    let status = if warnings.is_empty() { "ok" } else { "partial" };
+    helpers::out(&json!({
+        "status": status,
+        "harness": "codex",
+        "warnings": warnings,
+        "mode": mode,
+        "src": src,
+        "codex_root": codex_root,
+        "skills_root": skills_root,
+        "manifest": manifest_path,
+        "copied": report.copied.len(),
+        "backups": report.patched_backups.len(),
+        "skipped": report.skipped.len(),
+        "backups_paths": report.patched_backups,
+        "hooks_file": hooks_file,
+        "hooks_added": hooks_added,
+        "mcp_target": (!flags.no_memory).then_some(&config_file),
+        "mcp_changed": mcp_changed,
+        "rules_seeded": rules_seeded,
+        "memory_ignore_seeded": memory_ignore_seeded,
+        "memory_guidance_synced": guidance_synced,
+        "memory_guidance_agents_updated": guidance_report.as_ref().map(|r| r.agents_md_updated),
+        "next_step": "Open Codex and run /hooks once to approve the hoangsa hooks — Codex does not execute untrusted hooks.",
     }));
 }
 

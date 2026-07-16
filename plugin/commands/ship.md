@@ -1,0 +1,24 @@
+---
+description: Ship — review code + security, then push or create PR. Use when the user says "ship", "push", "send", "create PR", or wants to ship their work with quality gates.
+allowed-tools:
+  - Read
+  - Bash
+  - Agent
+  - AskUserQuestion
+---
+
+<objective>
+Review code changes (code quality + security) in parallel, block on critical issues, then let user push or create PR.
+</objective>
+
+<execution_context>
+Resolve HOANGSA install path — check local first, then global:
+1. `${CLAUDE_PLUGIN_ROOT}/workflows/ship.md`
+2. `${CLAUDE_PLUGIN_ROOT}/workflows/ship.md`
+Read the first path that exists.
+</execution_context>
+
+<process>
+Follow the ship workflow loaded above.
+</process>
+

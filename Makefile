@@ -8,3 +8,10 @@ ui:
 
 ui-clean:
 	rm -rf crates/hoangsa-ui-web/dist/* crates/hoangsa-ui-web/node_modules
+
+# Regenerate the checked-in Claude plugin bundle from templates/.
+# Run before a release whenever templates/ changed.
+plugin:
+	cargo run -q -p hoangsa-cli -- plugin package --out plugin
+
+.PHONY: plugin

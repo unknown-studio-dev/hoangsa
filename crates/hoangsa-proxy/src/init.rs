@@ -1,8 +1,12 @@
 //! PreToolUse hook installer.
 //!
-//! `hsp init` writes a PreToolUse entry into Claude Code's `settings.json`
-//! (global: `~/.claude/settings.json`, or project: `<cwd>/.claude/settings.local.json`)
-//! that invokes `hsp hook rewrite`. Existing unrelated hook entries are preserved.
+//! `hsp init` writes a PreToolUse entry into the harness's hook config —
+//! Claude Code's `settings.json` (global: `~/.claude/settings.json`, or
+//! project: `<cwd>/.claude/settings.local.json`) or, with `--codex`,
+//! Codex's `hooks.json` (global: `~/.codex/hooks.json`, project:
+//! `<cwd>/.codex/hooks.json`). Both formats nest entries under a
+//! top-level `hooks` key with the same entry shape, so one merge path
+//! serves both. Existing unrelated hook entries are preserved.
 //!
 //! The installer is intentionally conservative: it refuses to clobber an
 //! entry it did not write, and `uninit` only removes entries it recognises
@@ -20,16 +24,42 @@ pub enum Scope {
     Project,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Harness {
+    Claude,
+    Codex,
+}
+
 pub fn settings_path(scope: Scope, cwd: &Path) -> Option<PathBuf> {
-    match scope {
-        Scope::Global => dirs::home_dir().map(|h| h.join(".claude/settings.json")),
-        Scope::Project => Some(cwd.join(".claude/settings.local.json")),
+    hook_config_path(scope, Harness::Claude, cwd)
+}
+
+pub fn hook_config_path(scope: Scope, harness: Harness, cwd: &Path) -> Option<PathBuf> {
+    match (harness, scope) {
+        (Harness::Claude, Scope::Global) => {
+            dirs::home_dir().map(|h| h.join(".claude/settings.json"))
+        }
+        (Harness::Claude, Scope::Project) => Some(cwd.join(".claude/settings.local.json")),
+        (Harness::Codex, Scope::Global) => codex_home().map(|h| h.join("hooks.json")),
+        (Harness::Codex, Scope::Project) => Some(cwd.join(".codex/hooks.json")),
+    }
+}
+
+/// `$CODEX_HOME` (as Codex itself resolves it) or `~/.codex`.
+fn codex_home() -> Option<PathBuf> {
+    match std::env::var_os("CODEX_HOME") {
+        Some(raw) if !raw.is_empty() => Some(PathBuf::from(raw)),
+        _ => dirs::home_dir().map(|h| h.join(".codex")),
     }
 }
 
 pub fn install(scope: Scope, cwd: &Path) -> anyhow::Result<PathBuf> {
-    let path = settings_path(scope, cwd)
-        .ok_or_else(|| anyhow::anyhow!("could not resolve settings.json path"))?;
+    install_for(scope, Harness::Claude, cwd)
+}
+
+pub fn install_for(scope: Scope, harness: Harness, cwd: &Path) -> anyhow::Result<PathBuf> {
+    let path = hook_config_path(scope, harness, cwd)
+        .ok_or_else(|| anyhow::anyhow!("could not resolve hook config path"))?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -56,15 +86,19 @@ pub fn install(scope: Scope, cwd: &Path) -> anyhow::Result<PathBuf> {
     pre_tool_arr.retain(|entry| !is_hsp_entry(entry));
 
     // Append the fresh entry.
-    pre_tool_arr.push(hsp_hook_entry());
+    pre_tool_arr.push(hsp_hook_entry(harness));
 
     save_json(&path, &settings)?;
     Ok(path)
 }
 
 pub fn uninstall(scope: Scope, cwd: &Path) -> anyhow::Result<PathBuf> {
-    let path = settings_path(scope, cwd)
-        .ok_or_else(|| anyhow::anyhow!("could not resolve settings.json path"))?;
+    uninstall_for(scope, Harness::Claude, cwd)
+}
+
+pub fn uninstall_for(scope: Scope, harness: Harness, cwd: &Path) -> anyhow::Result<PathBuf> {
+    let path = hook_config_path(scope, harness, cwd)
+        .ok_or_else(|| anyhow::anyhow!("could not resolve hook config path"))?;
     if !path.exists() {
         return Ok(path);
     }
@@ -108,12 +142,18 @@ fn is_hsp_entry(entry: &Value) -> bool {
     })
 }
 
-fn hsp_hook_entry() -> Value {
+fn hsp_hook_entry(harness: Harness) -> Value {
+    // Codex needs the flag so `hook rewrite` emits Codex-shaped output
+    // (permissionDecision/updatedInput instead of decision/modifiedToolInput).
+    let command = match harness {
+        Harness::Claude => format!("hsp hook rewrite {HSP_MARKER}"),
+        Harness::Codex => format!("hsp hook rewrite --codex {HSP_MARKER}"),
+    };
     json!({
         "matcher": "Bash",
         "hooks": [{
             "type": "command",
-            "command": format!("hsp hook rewrite {HSP_MARKER}")
+            "command": command
         }]
     })
 }
@@ -156,6 +196,31 @@ mod tests {
         let v: Value = serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
         let arr = v["hooks"]["PreToolUse"].as_array().unwrap();
         assert_eq!(arr.len(), 2, "preserve existing entries");
+    }
+
+    #[test]
+    fn install_codex_targets_hooks_json_with_codex_flag() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().to_path_buf();
+
+        let file = install_for(Scope::Project, Harness::Codex, &path).unwrap();
+        assert!(file.ends_with(".codex/hooks.json"), "{}", file.display());
+        let v: Value = serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
+        let cmd = v["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap();
+        assert!(cmd.contains("--codex"), "{cmd}");
+        assert!(cmd.contains(HSP_MARKER));
+
+        // Idempotent.
+        install_for(Scope::Project, Harness::Codex, &path).unwrap();
+        let v2: Value = serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(v2["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
+
+        // Uninstall removes it.
+        uninstall_for(Scope::Project, Harness::Codex, &path).unwrap();
+        let v3: Value = serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
+        assert!(v3["hooks"]["PreToolUse"].as_array().unwrap().is_empty());
     }
 
     #[test]

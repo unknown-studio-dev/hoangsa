@@ -2,7 +2,7 @@ use crate::helpers::out;
 use serde_json::json;
 use std::fs;
 
-use super::{enforcement_events_path, is_source_file};
+use super::{apply_patch_file_paths, enforcement_events_path, is_source_file};
 
 // ── Unified Enforcement Hook ─────────────────────────────────────────────────
 
@@ -79,7 +79,7 @@ pub fn cmd_enforce(cwd: &str) {
     }
 
     // ── Layer 2: Stateful checks (require impact/detect_changes) ──
-    if let Some(result) = stateful_check(cwd, tool_name, &tool_input) {
+    if let Some(result) = stateful_check(cwd, tool_name, &tool_input, &config) {
         match result.decision.as_str() {
             "block" => {
                 // Append any pattern warnings to the reason
@@ -116,22 +116,39 @@ struct EnforceResult {
 
 /// Stateful enforcement checks based on event log.
 /// Returns None if no stateful rule applies to this tool call.
-fn stateful_check(cwd: &str, tool_name: &str, tool_input: &serde_json::Value) -> Option<EnforceResult> {
+/// `config` is the effective rule set `cmd_enforce` already loaded —
+/// this hook runs on every tool call, so re-reading rules.json here
+/// would double the per-call file I/O.
+fn stateful_check(
+    cwd: &str,
+    tool_name: &str,
+    tool_input: &serde_json::Value,
+    config: &crate::cmd::rule::RulesConfig,
+) -> Option<EnforceResult> {
     match tool_name {
         "Edit" | "Write" => {
-            if stateful_rule_enabled(cwd, "require-memory-impact") {
+            if stateful_rule_enabled(config, "require-memory-impact") {
                 stateful_check_edit(cwd, tool_input)
             } else {
                 None
             }
         }
+        // Codex serializes file edits as `apply_patch` (patch text in
+        // tool_input.command) instead of Edit/Write with a file_path.
+        "apply_patch" => {
+            if stateful_rule_enabled(config, "require-memory-impact") {
+                stateful_check_apply_patch(cwd, tool_input)
+            } else {
+                None
+            }
+        }
         "Bash" => {
-            if stateful_rule_enabled(cwd, "require-detect-changes")
+            if stateful_rule_enabled(config, "require-detect-changes")
                 && let Some(r) = stateful_check_bash(cwd, tool_input)
             {
                 return Some(r);
             }
-            if stateful_rule_enabled(cwd, "no-git-add-ignored")
+            if stateful_rule_enabled(config, "no-git-add-ignored")
                 && let Some(r) = check_gitignore_add(cwd, tool_input)
             {
                 return Some(r);
@@ -151,9 +168,7 @@ fn stateful_check(cwd: &str, tool_name: &str, tool_input: &serde_json::Value) ->
 /// stateful rule the user hasn't explicitly enabled. This is the deliberate
 /// "nothing configured → nothing applied implicitly" contract; the old
 /// back-compat default of enabling unlisted stateful rules is gone.
-fn stateful_rule_enabled(cwd: &str, stateful_id: &str) -> bool {
-    use crate::cmd::rule::read_effective_rules_config;
-    let config = read_effective_rules_config(cwd);
+fn stateful_rule_enabled(config: &crate::cmd::rule::RulesConfig, stateful_id: &str) -> bool {
     for rule in &config.rules {
         if rule.stateful.as_deref() == Some(stateful_id) {
             return rule.enabled;
@@ -175,6 +190,42 @@ fn stateful_check_edit(cwd: &str, tool_input: &serde_json::Value) -> Option<Enfo
         IntentOutcome::Approve => None,
         IntentOutcome::Block(reason) => Some(EnforceResult { decision: "block".to_string(), reason, warning: None }),
         IntentOutcome::Warn(w) => Some(EnforceResult { decision: "approve".to_string(), reason: String::new(), warning: Some(w) }),
+    }
+}
+
+/// Rule #9 for Codex: apply the first-touch impact guard to every source
+/// file an `apply_patch` envelope touches. Any uncovered file blocks;
+/// Warn outcomes accumulate into a single warning.
+/// Thin wrapper — does I/O, delegates correlation to `apply_patch_intent_outcome`.
+fn stateful_check_apply_patch(cwd: &str, tool_input: &serde_json::Value) -> Option<EnforceResult> {
+    let patch = tool_input.get("command").and_then(|v| v.as_str())?;
+    let events = fs::read_to_string(enforcement_events_path(cwd)).unwrap_or_default();
+    match apply_patch_intent_outcome(&events, patch)? {
+        IntentOutcome::Approve => None,
+        IntentOutcome::Block(reason) => Some(EnforceResult { decision: "block".to_string(), reason, warning: None }),
+        IntentOutcome::Warn(w) => Some(EnforceResult { decision: "approve".to_string(), reason: String::new(), warning: Some(w) }),
+    }
+}
+
+/// Pure: run `intent_guard_edit` over every source file in an apply_patch
+/// envelope. `None` when no source file needs a verdict; first Block wins;
+/// Warns join into one.
+pub(super) fn apply_patch_intent_outcome(events: &str, patch: &str) -> Option<IntentOutcome> {
+    let mut warnings: Vec<String> = Vec::new();
+    for file in apply_patch_file_paths(patch) {
+        if !is_source_file(&file) {
+            continue;
+        }
+        match intent_guard_edit(events, &file) {
+            IntentOutcome::Approve => {}
+            block @ IntentOutcome::Block(_) => return Some(block),
+            IntentOutcome::Warn(w) => warnings.push(w),
+        }
+    }
+    if warnings.is_empty() {
+        None
+    } else {
+        Some(IntentOutcome::Warn(warnings.join("\n")))
     }
 }
 
