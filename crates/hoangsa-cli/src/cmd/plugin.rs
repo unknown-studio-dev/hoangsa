@@ -72,8 +72,8 @@ fn plugin_manifest() -> serde_json::Value {
         "description": "HOANGSA context engineering — /hoangsa:* workflow commands, worker agents, and memory-discipline skills. Pair with the hoangsa installer for enforcement hooks and the hoangsa-memory MCP server.",
         "version": PLUGIN_VERSION,
         "author": { "name": "hoangsa" },
-        "homepage": "https://github.com//unknown-studio-dev/hoangsa",
-        "repository": "https://github.com//unknown-studio-dev/hoangsa",
+        "homepage": "https://github.com/unknown-studio-dev/hoangsa",
+        "repository": "https://github.com/unknown-studio-dev/hoangsa",
         "license": "MIT",
         "keywords": ["workflow", "memory", "context-engineering"],
     })

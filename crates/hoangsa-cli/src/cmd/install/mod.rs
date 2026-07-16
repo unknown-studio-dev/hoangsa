@@ -137,7 +137,7 @@ struct InstallFlags {
     skip_path_edit: bool,
     /// Value of `--task-manager[=<clickup|asana|none>]`; None when not provided.
     task_manager: Option<String>,
-    /// Value of `--harness[=<claude|codex>]`; defaults to claude.
+    /// Value of `--harness[=<claude|codex|cowork>]`; defaults to claude.
     harness: Option<String>,
 }
 
@@ -165,7 +165,7 @@ fn parse_flags(args: &[&str]) -> Result<InstallFlags, String> {
             "--harness" => {
                 i += 1;
                 if i >= args.len() {
-                    return Err("--harness requires a value (claude|codex)".into());
+                    return Err("--harness requires a value (claude|codex|cowork)".into());
                 }
                 f.harness = Some(args[i].to_string());
             }

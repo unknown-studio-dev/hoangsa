@@ -3,7 +3,7 @@
     "name": "hoangsa"
   },
   "description": "HOANGSA context engineering — /hoangsa:* workflow commands, worker agents, and memory-discipline skills. Pair with the hoangsa installer for enforcement hooks and the hoangsa-memory MCP server.",
-  "homepage": "https://github.com//unknown-studio-dev/hoangsa",
+  "homepage": "https://github.com/unknown-studio-dev/hoangsa",
   "keywords": [
     "workflow",
     "memory",
@@ -11,6 +11,6 @@
   ],
   "license": "MIT",
   "name": "hoangsa",
-  "repository": "https://github.com//unknown-studio-dev/hoangsa",
+  "repository": "https://github.com/unknown-studio-dev/hoangsa",
   "version": "0.5.0"
 }
