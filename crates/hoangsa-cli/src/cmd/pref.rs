@@ -1,4 +1,4 @@
-use crate::helpers::{ERR_READ_CONFIG, out, read_json, require_arg};
+use crate::helpers::{ERR_READ_CONFIG, default_task_manager, out, read_json, require_arg};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
@@ -34,14 +34,7 @@ fn ensure_config(project_dir: &str) -> Option<Value> {
                 "context_mode": "selective",
                 "memory_strict": false,
             },
-            "task_manager": {
-                "provider": null,
-                "mcp_server": null,
-                "verified": false,
-                "verified_at": null,
-                "project_id": null,
-                "default_list": null,
-            },
+            "task_manager": default_task_manager(),
         });
         fs::write(
             &config_file,
@@ -292,14 +285,7 @@ mod tests {
                 "context_mode": "selective",
                 "memory_strict": false,
             },
-            "task_manager": {
-                "provider": null,
-                "mcp_server": null,
-                "verified": false,
-                "verified_at": null,
-                "project_id": null,
-                "default_list": null,
-            },
+            "task_manager": default_task_manager(),
         });
         fs::write(
             hoangsa_dir.join("config.json"),

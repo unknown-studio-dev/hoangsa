@@ -185,9 +185,50 @@ pub fn atomic_write_string(path: &std::path::Path, content: &str) -> std::io::Re
     std::fs::rename(&tmp, path)
 }
 
+/// The `task_manager` block a freshly bootstrapped config starts with.
+///
+/// `config get` and `pref get` both create the file when it is missing, and
+/// each used to carry its own copy of this literal — three copies that had to
+/// stay in sync by hand.
+pub(crate) fn default_task_manager() -> Value {
+    serde_json::json!({
+        "provider": null,
+        "mcp_server": null,
+        "verified": false,
+        "verified_at": null,
+        "project_id": null,
+        "default_list": null,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The bootstrap block is a wire contract: `config get .` and `pref get .`
+    /// must emit the same object, and nothing may be added, removed or
+    /// renamed by the de-duplication.
+    #[test]
+    fn default_task_manager_is_single_source() {
+        let tm = default_task_manager();
+        let obj = tm.as_object().expect("task_manager must be a JSON object");
+        let expected = [
+            ("provider", Value::Null),
+            ("mcp_server", Value::Null),
+            ("verified", Value::Bool(false)),
+            ("verified_at", Value::Null),
+            ("project_id", Value::Null),
+            ("default_list", Value::Null),
+        ];
+        assert_eq!(
+            obj.len(),
+            expected.len(),
+            "exactly six fields, no more no fewer: {tm}"
+        );
+        for (key, want) in expected {
+            assert_eq!(obj.get(key), Some(&want), "field {key}");
+        }
+    }
 
     #[test]
     fn test_count_tokens_nonempty() {

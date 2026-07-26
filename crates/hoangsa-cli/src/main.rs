@@ -5,6 +5,15 @@ mod helpers;
 use helpers::resolve_cwd;
 use std::path::Path;
 
+/// Value that follows `name` in `rest`, or `None` when the flag is absent or
+/// is the last token with nothing after it.
+fn find_flag<'a>(rest: &[&'a str], name: &str) -> Option<&'a str> {
+    rest.iter()
+        .position(|a| *a == name)
+        .and_then(|i| rest.get(i + 1))
+        .copied()
+}
+
 fn main() {
     let raw_args: Vec<String> = std::env::args().collect();
     let cwd = resolve_cwd(&raw_args);
@@ -67,32 +76,18 @@ fn main() {
             let dir = rest.first().copied().unwrap_or(&cwd);
             cmd::addon::cmd_remove(Some(dir), rest.get(1).copied());
         }
-        ("rules", "compose") => {
-            let flag = |name: &str| {
-                rest.iter()
-                    .position(|a| *a == name)
-                    .and_then(|i| rest.get(i + 1))
-                    .copied()
-            };
-            cmd::envelope::cmd_compose(
-                rest.first().unwrap_or(&cwd.as_str()),
-                flag("--task-type").unwrap_or("impl"),
-                flag("--role").unwrap_or("impl"),
-            )
-        }
+        ("rules", "compose") => cmd::envelope::cmd_compose(
+            rest.first().unwrap_or(&cwd.as_str()),
+            find_flag(&rest, "--task-type").unwrap_or("impl"),
+            find_flag(&rest, "--role").unwrap_or("impl"),
+        ),
         ("envelope", _) => {
             // envelope <sessionDir> <taskId> [--kind cook|fix] [--memory-status s]
-            let flag = |name: &str| {
-                rest.iter()
-                    .position(|a| *a == name)
-                    .and_then(|i| rest.get(i + 1))
-                    .copied()
-            };
             cmd::envelope::cmd_envelope(
                 sub,
                 rest.first().unwrap_or(&""),
-                flag("--kind").unwrap_or("cook"),
-                flag("--memory-status").unwrap_or("MEMORY_AVAILABLE"),
+                find_flag(&rest, "--kind").unwrap_or("cook"),
+                find_flag(&rest, "--memory-status").unwrap_or("MEMORY_AVAILABLE"),
             )
         }
         ("plan", "task-ids") => cmd::validate::cmd_task_ids(rest.first().unwrap_or(&"")),
@@ -231,7 +226,10 @@ fn main() {
             cmd::hook::cmd_graph_affordance(&cwd);
         }
         ("hook", "rule-gate") => {
-            let _ = cmd::rule::cmd_rule_gate();
+            if let Err(e) = cmd::rule::cmd_rule_gate() {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
         }
         ("hook", "enforce") => {
             cmd::hook::cmd_enforce(&cwd);
@@ -275,27 +273,42 @@ fn main() {
         }
         ("rule", "list") => {
             let dir = rest.first().copied().unwrap_or(&cwd);
-            let _ = cmd::rule::cmd_rule_list(dir);
+            if let Err(e) = cmd::rule::cmd_rule_list(dir) {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
         }
         ("rule", "add") => {
             let dir = rest.first().copied().unwrap_or(&cwd);
             let json_arg = rest.get(1).copied().unwrap_or("{}");
-            let _ = cmd::rule::cmd_rule_add(dir, json_arg);
+            if let Err(e) = cmd::rule::cmd_rule_add(dir, json_arg) {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
         }
         ("rule", "remove") => {
             let dir = rest.first().copied().unwrap_or(&cwd);
             let id = rest.get(1).copied().unwrap_or("");
-            let _ = cmd::rule::cmd_rule_remove(dir, id);
+            if let Err(e) = cmd::rule::cmd_rule_remove(dir, id) {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
         }
         ("rule", "enable") => {
             let dir = rest.first().copied().unwrap_or(&cwd);
             let id = rest.get(1).copied().unwrap_or("");
-            let _ = cmd::rule::cmd_rule_enable(dir, id);
+            if let Err(e) = cmd::rule::cmd_rule_enable(dir, id) {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
         }
         ("rule", "disable") => {
             let dir = rest.first().copied().unwrap_or(&cwd);
             let id = rest.get(1).copied().unwrap_or("");
-            let _ = cmd::rule::cmd_rule_disable(dir, id);
+            if let Err(e) = cmd::rule::cmd_rule_disable(dir, id) {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
         }
         ("rule", "sync") => {
             let dir = rest.first().copied().unwrap_or(&cwd);
@@ -397,5 +410,20 @@ fn main() {
             cmd::help::print_help(topic, true);
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_flag;
+
+    #[test]
+    fn find_flag_parses_like_the_old_closure() {
+        let rest = ["--session", "/p", "--role", "impl", "--kind"];
+        assert_eq!(find_flag(&rest, "--session"), Some("/p"));
+        assert_eq!(find_flag(&rest, "--role"), Some("impl"));
+        assert_eq!(find_flag(&rest, "--kind"), None);
+        assert_eq!(find_flag(&rest, "--memory-status"), None);
+        assert_eq!(find_flag(&[], "--role"), None);
     }
 }

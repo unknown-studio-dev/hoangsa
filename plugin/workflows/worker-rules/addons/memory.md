@@ -5,7 +5,7 @@ test_frameworks: []
 priority: 70
 inject_position: after_base
 allowed_tools: []
-pre_invoke_gate: "hoangsa-cli pref get . memory_strict | grep -q true"
+requires_pref: memory_strict
 ---
 
 # hoangsa-memory — Code Intelligence

@@ -1832,11 +1832,25 @@ fn test_addon(t: &mut TestRunner) {
             active == 2,
             &format!("config active_addons len={active}"),
         );
-        // Check project-level addon files copied
+        // REQ-02: enabling an addon is a config edit only — the root-tier file
+        // is read where it lives, nothing is copied into the project tier.
+        let project_addons: Vec<String> = fs::read_dir(dir.join(".hoangsa/worker-rules/addons"))
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let react_active = config["codebase"]["active_addons"]
+            .as_array()
+            .map(|a| a.iter().any(|v| v.as_str() == Some("react")))
+            .unwrap_or(false);
         t.check(
-            "addon add copies react.md",
-            dir.join(".hoangsa/worker-rules/addons/react.md").exists(),
-            "react.md not found in project addons",
+            "addon add enables react without copying a project file",
+            react_active && project_addons.is_empty(),
+            &format!(
+                "react in config active_addons={react_active}, project addon dir={project_addons:?}"
+            ),
         );
         // Check worker-rules.md regenerated
         let wr = fs::read_to_string(dir.join(".hoangsa/worker-rules.md")).unwrap_or_default();
@@ -1878,6 +1892,13 @@ fn test_addon(t: &mut TestRunner) {
 
     // T-INT-05: addon remove — disables addons
     {
+        // A user-authored project-tier file. Its body differs from the root-tier
+        // react.md, so the copy migration keeps it — `addon remove` must too.
+        const USER_REACT: &str = "---\nname: react\n---\n\n# React addon — edited by the user\n";
+        let user_react = dir.join(".hoangsa/worker-rules/addons/react.md");
+        fs::create_dir_all(user_react.parent().unwrap()).unwrap();
+        fs::write(&user_react, USER_REACT).unwrap();
+
         let out = t.run_json(&["addon", "remove", d, "[\"react\"]"], &dir);
         t.check(
             "addon remove success",
@@ -1889,10 +1910,16 @@ fn test_addon(t: &mut TestRunner) {
             out["active_addons"].as_array().map(|a| a.len()).unwrap_or(0) == 1,
             &format!("got {out:?}"),
         );
+        // REQ-02: `addon remove` is a config edit only — it deletes no files.
+        let still_react = out["active_addons"]
+            .as_array()
+            .map(|a| a.iter().any(|v| v.as_str() == Some("react")))
+            .unwrap_or(true);
+        let survived = fs::read_to_string(&user_react).unwrap_or_default();
         t.check(
-            "addon remove deletes project addon file",
-            !dir.join(".hoangsa/worker-rules/addons/react.md").exists(),
-            "react.md still exists after remove",
+            "addon remove disables react without deleting project files",
+            !still_react && survived == USER_REACT,
+            &format!("got {out:?}; project react.md = {survived:?}"),
         );
     }
 

@@ -118,11 +118,13 @@ const DEFAULT_CONFIG_TOML: &str = r#"# hoangsa-memory config. All fields are opt
 
 [vector_store]
 # Enable the in-process semantic vector store (fastembed + SQLite BLOBs).
-# Default: true — the installer pre-downloads the
-# `multilingual-e5-small` ONNX weights (~118 MB) so there is no
-# first-call stall. Set `enabled = false` to disable semantic retrieval
-# (BM25 + graph still work). Legacy `[chroma]` table is still accepted.
-# enabled = true
+# Default: false — the `multilingual-e5-small` ONNX weights cost a
+# ~465 MB shared cache plus a resident inference session, so semantic
+# retrieval is opt-in; BM25 + symbol + graph retrieval work without it.
+# To turn it on: set `enabled = true` below, then run
+# `hoangsa-memory prefetch-embed` once so the first recall doesn't stall
+# on the download. Legacy `[chroma]` table is still accepted.
+# enabled = false
 
 # Custom path for the vectors SQLite file. When unset, falls back to
 # `StoreRoot::vectors_path()` under the memory root.
@@ -198,3 +200,75 @@ const DEFAULT_CONFIG_TOML: &str = r#"# hoangsa-memory config. All fields are opt
 # grouping (always flat list).
 # impact_group_threshold = 50
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::DEFAULT_CONFIG_TOML;
+
+    /// The `[vector_store]` comment block, up to the next table header.
+    fn vector_store_block() -> &'static str {
+        let start = DEFAULT_CONFIG_TOML
+            .find("[vector_store]")
+            .expect("template must document [vector_store]");
+        let rest = &DEFAULT_CONFIG_TOML[start + "[vector_store]".len()..];
+        match rest.find("\n[") {
+            Some(end) => &rest[..end],
+            None => rest,
+        }
+    }
+
+    /// The seeded template documented `Default: true` for a field whose
+    /// `Default` impl is `false`, so a user reading their own config
+    /// believed semantic retrieval was on while it was off. The text and
+    /// the behaviour must agree.
+    #[test]
+    fn seeded_config_states_vector_store_opt_in() {
+        let block = vector_store_block();
+        assert!(
+            !block.contains("Default: true"),
+            "[vector_store] claims a true default; VectorStoreConfig::enabled defaults to false"
+        );
+        assert!(
+            block.contains("Default: false"),
+            "[vector_store] must state the real default"
+        );
+        // Leaving `enabled` commented out is what keeps the seeded default
+        // false — an uncommented `enabled = true` would flip behaviour.
+        assert!(
+            !block.lines().any(|l| {
+                let t = l.trim();
+                !t.starts_with('#') && t.starts_with("enabled")
+            }),
+            "`enabled` must stay commented out in the seeded template"
+        );
+    }
+
+    /// Behavioural half of the gate: parse the template we actually seed
+    /// and confirm the vector store resolves to disabled.
+    #[test]
+    fn seeded_config_resolves_vector_store_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.toml"), DEFAULT_CONFIG_TOML).unwrap();
+        let cfg = hoangsa_memory_retrieve::VectorStoreConfig::load_or_default_sync(dir.path());
+        assert!(
+            !cfg.enabled,
+            "seeded config must leave the vector store off (opt-in)"
+        );
+    }
+
+    /// `~118 MB` was the pre-`multilingual-e5-small` cache size; the real
+    /// cache is ~465 MB. The same stale figure was already corrected once
+    /// in `uninstall.sh` (see CHANGELOG 0.6.0), so it must not come back
+    /// through the seeded config either.
+    #[test]
+    fn seeded_config_has_no_stale_model_size() {
+        assert!(
+            !DEFAULT_CONFIG_TOML.contains("118"),
+            "template carries the stale ~118 MB model-cache figure"
+        );
+        assert!(
+            vector_store_block().contains("465 MB"),
+            "[vector_store] must state the real ~465 MB cache cost"
+        );
+    }
+}

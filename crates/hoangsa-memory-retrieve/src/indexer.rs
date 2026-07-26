@@ -220,7 +220,18 @@ impl Indexer {
     /// 4. Commit the BM25 writer so fresh docs become searchable.
     pub async fn index_path(&self, root: impl AsRef<Path>) -> Result<IndexStats> {
         self.check_parser_schema_version().await?;
-        let root = root.as_ref().to_path_buf();
+        // One file must have exactly one stored path. The root used to be
+        // recorded verbatim, so `index .` wrote './crates/x.rs' while
+        // `index /abs/proj` wrote '/abs/proj/crates/x.rs' — two identities
+        // for the same file, each consuming a recall slot, and
+        // purge-before-write only clears the flavour it was handed, so both
+        // copies survived every reindex. Absolute is the form
+        // `SymbolRow::path` already documents and the form the session-start
+        // bootstrap passes. A root we cannot resolve (missing, unreadable)
+        // falls through as given: the walk then finds nothing and callers
+        // keep the zero-stats result they rely on today.
+        let root = root.as_ref();
+        let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
         let files = walk_sources(&root, &self.registry, &self.walk_opts);
         let total = files.len();
         debug!(
@@ -1121,4 +1132,91 @@ pub async fn read_span(path: &Path, start_line: u32, end_line: u32) -> Result<St
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod root_canonicalisation_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    const SRC: &str = "pub fn alpha() -> u32 { 1 }\n";
+
+    /// Index the tree through `spelling` and return every distinct path the
+    /// symbol table now holds for `a.rs`.
+    async fn stored_paths_after(
+        store: &StoreRoot,
+        spelling: std::path::PathBuf,
+    ) -> HashSet<std::path::PathBuf> {
+        let idx = Indexer::new(store.clone(), LanguageRegistry::new());
+        idx.index_path(&spelling).await.unwrap();
+        store
+            .kv
+            .symbols_for_path_like(Path::new("a.rs"))
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.path)
+            .collect()
+    }
+
+    /// Reaching one tree by two names is how the duplicate rows appeared in
+    /// the first place, so indexing through a symlink must store the real
+    /// path — the same string a later run through the real directory writes.
+    ///
+    /// A `<dir>/.` spelling is deliberately not used here: the walker
+    /// swallows the `CurDir` component on its own, so that assertion passes
+    /// with or without the canonicalisation and proves nothing.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn index_path_stores_real_path_for_symlinked_root() {
+        let src = tempfile::tempdir().unwrap();
+        std::fs::write(src.path().join("a.rs"), SRC).unwrap();
+        let link_parent = tempfile::tempdir().unwrap();
+        let link = link_parent.path().join("link-to-src");
+        std::os::unix::fs::symlink(src.path(), &link).unwrap();
+
+        let mem = tempfile::tempdir().unwrap();
+        let store = StoreRoot::open(mem.path()).await.unwrap();
+
+        let via_link = stored_paths_after(&store, link).await;
+        let real = stored_paths_after(&store, src.path().to_path_buf()).await;
+        assert_eq!(
+            via_link, real,
+            "a symlinked root must store the real path, not a second flavour of it"
+        );
+        assert_eq!(via_link.len(), 1, "one file, one stored path: {via_link:?}");
+    }
+
+    /// A root spelled through a child and back up resolves to the same tree.
+    #[tokio::test]
+    async fn index_path_resolves_parent_dir_spelling() {
+        let src = tempfile::tempdir().unwrap();
+        std::fs::write(src.path().join("a.rs"), SRC).unwrap();
+        std::fs::create_dir(src.path().join("sub")).unwrap();
+        let mem = tempfile::tempdir().unwrap();
+        let store = StoreRoot::open(mem.path()).await.unwrap();
+
+        let plain = stored_paths_after(&store, src.path().to_path_buf()).await;
+        let via_parent =
+            stored_paths_after(&store, src.path().join("sub").join("..")).await;
+        assert_eq!(
+            via_parent, plain,
+            "`sub/..` must resolve to the same stored path as the plain root"
+        );
+    }
+
+    /// Callers treat an unreadable root as "nothing to index", not an error
+    /// — `hoangsa-memory index /gone` reports zero stats rather than failing.
+    #[tokio::test]
+    async fn index_path_on_missing_root_is_not_an_error() {
+        let mem = tempfile::tempdir().unwrap();
+        let store = StoreRoot::open(mem.path()).await.unwrap();
+        let idx = Indexer::new(store, LanguageRegistry::new());
+        let stats = idx
+            .index_path(Path::new("/hoangsa/definitely/not/here"))
+            .await
+            .expect("a missing root must not turn into Err");
+        assert_eq!(stats.files, 0);
+        assert_eq!(stats.chunks, 0);
+    }
 }

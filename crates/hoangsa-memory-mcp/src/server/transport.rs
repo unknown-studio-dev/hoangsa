@@ -227,16 +227,22 @@ pub async fn run_socket(server: Server) -> anyhow::Result<()> {
     }
 }
 
-/// Idle ceiling on a single socket connection. A client that opens the
-/// socket and goes silent (no read, no close) would otherwise pin an
-/// `Arc<Server>` clone — and through it, defer eviction of any data the
-/// dispatch chain might touch — for the daemon's lifetime. 5 min is well
-/// above the cadence of any real MCP client (Claude Code keep-alive +
-/// per-tool RPCs land within seconds) while trimming zombie connections
-/// in bounded time.
-const SOCKET_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
-
 /// Handle one Unix-socket connection: read lines, dispatch, respond.
+///
+/// **There is deliberately no idle timeout here.** An earlier version closed
+/// any connection silent for 5 minutes, on the stated premise that "per-tool
+/// RPCs land within seconds" for a real MCP client. That premise is false:
+/// a relayed client (see [`run_stdio_proxy`]) forwards only what its own
+/// client sends, and Claude Code sends no keep-alive on this path — during a
+/// long agent turn it can legitimately go many minutes between tool calls.
+/// The timer reaped those live sessions, and the MCP server "randomly"
+/// disconnected mid-task.
+///
+/// The timer also never did the job it was added for. A dead peer is already
+/// reaped by the `n == 0` arm below: when the relay process exits, its end of
+/// the `AF_UNIX` pair closes and `read_line` returns EOF. The only connection
+/// a timer could collect is one that is alive, connected, and merely quiet —
+/// exactly the one that must be kept. Do not re-add it.
 pub(crate) async fn handle_socket_conn(
     server: Server,
     stream: tokio::net::UnixStream,
@@ -247,21 +253,7 @@ pub(crate) async fn handle_socket_conn(
 
     loop {
         line.clear();
-        let n = match tokio::time::timeout(
-            SOCKET_IDLE_TIMEOUT,
-            reader.read_line(&mut line),
-        )
-        .await
-        {
-            Ok(res) => res?,
-            Err(_) => {
-                debug!(
-                    idle_secs = SOCKET_IDLE_TIMEOUT.as_secs(),
-                    "socket connection idle; closing"
-                );
-                break;
-            }
-        };
+        let n = reader.read_line(&mut line).await?;
         if n == 0 {
             break;
         }
@@ -286,4 +278,72 @@ pub(crate) async fn handle_socket_conn(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    use super::handle_socket_conn;
+    use crate::Server;
+
+    async fn open_server() -> (Server, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let srv = Server::open(tmp.path()).await.expect("Server::open");
+        (srv, tmp)
+    }
+
+    /// One `initialize` request, so the test does not depend on any tool.
+    const PING: &str =
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
+
+    /// A quiet connection must survive an arbitrarily long gap between
+    /// requests. Time is paused, so the ten virtual minutes cost nothing —
+    /// and any idle timer re-added to `handle_socket_conn` would fire during
+    /// the `advance` and make the second request go unanswered.
+    #[tokio::test(start_paused = true)]
+    async fn idle_socket_connection_is_not_closed() {
+        let (srv, _tmp) = open_server().await;
+        let (client, server_end) = tokio::net::UnixStream::pair().expect("socketpair");
+        let task = tokio::spawn(handle_socket_conn(srv, server_end));
+
+        let (rx, mut tx) = client.into_split();
+        let mut rx = BufReader::new(rx);
+        let mut line = String::new();
+
+        tx.write_all(format!("{PING}\n").as_bytes()).await.expect("write 1");
+        rx.read_line(&mut line).await.expect("read 1");
+        assert!(!line.is_empty(), "first request answered");
+
+        // Ten minutes of silence — twice the 5 min timer this test exists
+        // to keep out.
+        tokio::time::advance(std::time::Duration::from_secs(600)).await;
+
+        line.clear();
+        tx.write_all(format!("{PING}\n").as_bytes()).await.expect("write 2");
+        rx.read_line(&mut line).await.expect("read 2 — connection was closed while idle");
+        assert!(
+            line.contains("\"id\":1"),
+            "second request answered on the same connection: {line}"
+        );
+
+        drop(tx);
+        task.await.expect("join").expect("handler ok");
+    }
+
+    /// The mechanism that makes the missing timer safe: a peer that goes away
+    /// yields EOF, so the handler returns on its own.
+    #[tokio::test]
+    async fn socket_connection_ends_when_peer_drops() {
+        let (srv, _tmp) = open_server().await;
+        let (client, server_end) = tokio::net::UnixStream::pair().expect("socketpair");
+        let task = tokio::spawn(handle_socket_conn(srv, server_end));
+
+        drop(client);
+
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .expect("handler must return on peer drop, not hang");
+        ended.expect("join").expect("handler ok");
+    }
 }

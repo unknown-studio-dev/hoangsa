@@ -360,6 +360,51 @@ pub fn root() -> i32 { mid() }
     );
 }
 
+/// `git diff` emits repo-relative paths, and that is the flavour a PR
+/// pre-check actually sends. A relative needle must never be resolved against
+/// this process's cwd — in service mode that directory belongs to whichever
+/// project started the daemon, so resolving it could name a file in a
+/// different repo and turn a real hit into a silent "no overlap". The
+/// component-suffix match is what handles this flavour.
+#[tokio::test]
+async fn detect_changes_matches_a_repo_relative_diff_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let srv = open(&tmp).await;
+
+    let src = r#"
+pub fn leaf() -> i32 { 1 }
+pub fn mid() -> i32 { leaf() }
+"#;
+    let _src_dir = index_rust_fixture(&srv, src).await;
+
+    // Bare "m.rs" — no directory component, exactly what `git diff` would
+    // produce for a file at the repo root, and not resolvable from cwd.
+    let diff = "diff --git a/m.rs b/m.rs\n--- a/m.rs\n+++ b/m.rs\n@@ -2,1 +2,1 @@\n pub fn leaf() -> i32 { 1 }\n";
+
+    let resp = srv
+        .handle(req(
+            107,
+            "hoangsa-memory.call",
+            json!({
+                "name": "memory_detect_changes",
+                "arguments": { "diff": diff, "depth": 2 }
+            }),
+        ))
+        .await
+        .expect("response");
+    let data = resp.result.unwrap()["data"].clone();
+    let touched: Vec<String> = data["touched"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["fqn"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        touched.iter().any(|f| f == "m::leaf"),
+        "a repo-relative diff path must still resolve to the indexed symbol; got {touched:?}"
+    );
+}
+
 #[tokio::test]
 async fn impact_groups_by_file_when_hits_exceed_threshold() {
     // Lower the threshold to 2 so a small 3-caller fixture trips grouping.

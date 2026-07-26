@@ -1,4 +1,4 @@
-use crate::helpers::{ERR_READ_CONFIG, out, read_json, require_arg};
+use crate::helpers::{ERR_READ_CONFIG, default_task_manager, out, read_json, require_arg};
 use serde_json::{Map, Value, json};
 use std::fs;
 use std::path::Path;
@@ -39,14 +39,7 @@ fn default_config() -> Value {
             "entry_points": [],
             "active_addons": [],
         },
-        "task_manager": {
-            "provider": null,
-            "mcp_server": null,
-            "verified": false,
-            "verified_at": null,
-            "project_id": null,
-            "default_list": null,
-        },
+        "task_manager": default_task_manager(),
     })
 }
 

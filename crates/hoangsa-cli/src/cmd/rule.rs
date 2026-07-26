@@ -80,13 +80,117 @@ pub fn evaluate_condition(condition: &Condition, field_value: &str) -> bool {
     }
 }
 
-pub fn evaluate_rule_conditions(rule: &Rule, tool_input: &serde_json::Value) -> bool {
+/// A condition whose regex — if it has one — was compiled once, when the rule
+/// set was loaded, instead of on every tool call.
+///
+/// `regex` is `Some` only for a [`ConditionOp::Regex`] condition whose pattern
+/// compiled successfully. `None` for every other operator, and for a regex
+/// pattern that failed to compile: such a condition simply never matches
+/// (the failure is reported once, at load — see [`compile_rules_config`]).
+#[derive(Debug, Clone)]
+pub struct CompiledCondition {
+    pub condition: Condition,
+    pub regex: Option<Regex>,
+}
+
+/// A rule paired with its compiled conditions.
+///
+/// Derefs to the underlying [`Rule`], so every reader of the rule's metadata
+/// (`id`, `matcher`, `action`, …) is unchanged; only condition evaluation goes
+/// through the compiled view.
+#[derive(Debug, Clone)]
+pub struct CompiledRule {
+    pub rule: Rule,
+    pub conditions: Vec<CompiledCondition>,
+}
+
+impl std::ops::Deref for CompiledRule {
+    type Target = Rule;
+    fn deref(&self) -> &Rule {
+        &self.rule
+    }
+}
+
+/// An effective rule set with every regex already compiled.
+///
+/// Derefs to the plain [`RulesConfig`] it was built from, so callers that only
+/// need rule metadata (the stateful-check dispatcher in `hook::enforce`) keep
+/// working against `&RulesConfig`; `self.rules` shadows it with the compiled
+/// view used by [`evaluate_rule_conditions`].
+#[derive(Debug, Clone)]
+pub struct CompiledRulesConfig {
+    plain: RulesConfig,
+    pub rules: Vec<CompiledRule>,
+}
+
+impl std::ops::Deref for CompiledRulesConfig {
+    type Target = RulesConfig;
+    fn deref(&self) -> &RulesConfig {
+        &self.plain
+    }
+}
+
+fn compile_rule(rule: &Rule, warnings: &mut Vec<String>) -> CompiledRule {
+    let conditions = rule
+        .conditions
+        .iter()
+        .map(|condition| {
+            let regex = match condition.op {
+                ConditionOp::Regex => match Regex::new(&condition.value) {
+                    Ok(re) => Some(re),
+                    Err(_) => {
+                        warnings.push(format!(
+                            "hoangsa: rule '{}' has an invalid regex pattern '{}' — that condition will never match",
+                            rule.id, condition.value
+                        ));
+                        None
+                    }
+                },
+                _ => None,
+            };
+            CompiledCondition { condition: condition.clone(), regex }
+        })
+        .collect();
+    CompiledRule { rule: rule.clone(), conditions }
+}
+
+/// Compile every `ConditionOp::Regex` pattern in `config` exactly once.
+///
+/// Returns the compiled rule set plus one warning line per pattern that failed
+/// to compile. An uncompilable pattern disables only its own condition — the
+/// rest of the rule set is untouched.
+fn compile_rules_config(config: RulesConfig) -> (CompiledRulesConfig, Vec<String>) {
+    let mut warnings = Vec::new();
+    let rules = config
+        .rules
+        .iter()
+        .map(|rule| compile_rule(rule, &mut warnings))
+        .collect();
+    (CompiledRulesConfig { plain: config, rules }, warnings)
+}
+
+fn evaluate_compiled_condition(condition: &CompiledCondition, field_value: &str) -> bool {
+    match condition.condition.op {
+        // The pattern was compiled at load; `None` means it did not compile,
+        // and an uncompilable pattern matches nothing.
+        ConditionOp::Regex => condition
+            .regex
+            .as_ref()
+            .is_some_and(|re| re.is_match(field_value)),
+        _ => evaluate_condition(&condition.condition, field_value),
+    }
+}
+
+pub fn evaluate_rule_conditions(rule: &CompiledRule, tool_input: &serde_json::Value) -> bool {
     for condition in &rule.conditions {
-        let field_value = match tool_input.get(&condition.field).and_then(|v| v.as_str()) {
+        let field_value = match tool_input
+            .get(&condition.condition.field)
+            .and_then(|v| v.as_str())
+        {
             Some(v) => v,
             None => return false,
         };
-        if !evaluate_condition(condition, field_value) {
+        if !evaluate_compiled_condition(condition, field_value) {
             return false;
         }
     }
@@ -184,6 +288,30 @@ fn read_layer_lenient(path: &Path) -> Option<RulesConfig> {
     read_rules_config_at(path).ok().flatten()
 }
 
+/// Strict counterpart of [`read_layer_lenient`] for callers that must not
+/// degrade: an absent layer is still fine (it contributes no rules), but a
+/// layer that exists and cannot be read or parsed is an error naming the path.
+fn check_layer_readable(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    read_rules_config_at(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(())
+}
+
+/// Strict readability check across BOTH layers, for enforcement callers that
+/// must not degrade. Absence is not corruption: a layer whose file does not
+/// exist contributes no rules and is fine, and a global path that cannot be
+/// resolved at all (no home directory) counts as absent too. Only a file that
+/// exists and cannot be read or parsed is an error, and the error names it.
+///
+/// Callers pair this with [`read_effective_rules_config`], which stays lenient:
+/// this decides whether the rule set is trustworthy, that one builds it.
+pub fn check_rules_layers_readable(project_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
+    check_layer_readable(&rules_path(project_dir))?;
+    if let Some(global) = global_rules_path() {
+        check_layer_readable(&global)?;
+    }
+    Ok(())
+}
+
 /// Resolve the effective rule set for `project_dir`: the global layer
 /// (`~/.hoangsa/rules.json`) overlaid by the project layer
 /// (`<project_dir>/.hoangsa/rules.json`), with project rules overriding global
@@ -194,10 +322,18 @@ fn read_layer_lenient(path: &Path) -> Option<RulesConfig> {
 /// that never ran `rule init` is unruled (nothing enforced implicitly), and a
 /// corrupt global file can never silently disable a valid project rule. When
 /// neither layer yields rules the result is an empty set.
-pub fn read_effective_rules_config(project_dir: &str) -> RulesConfig {
+///
+/// Every regex condition in the resulting set is compiled here, once, rather
+/// than on each tool call; a pattern that fails to compile is reported on
+/// stderr — once, naming the rule — and its condition never matches.
+pub fn read_effective_rules_config(project_dir: &str) -> CompiledRulesConfig {
     let global = global_rules_path().and_then(|path| read_layer_lenient(&path));
     let project = read_layer_lenient(&rules_path(project_dir));
-    merge_rule_layers(global, project)
+    let (compiled, warnings) = compile_rules_config(merge_rule_layers(global, project));
+    for warning in &warnings {
+        eprintln!("{warning}");
+    }
+    compiled
 }
 
 pub fn cmd_rule_gate() -> Result<(), Box<dyn std::error::Error>> {
@@ -207,8 +343,17 @@ pub fn cmd_rule_gate() -> Result<(), Box<dyn std::error::Error>> {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input).ok();
 
+    // Resolve rules.json path via cwd
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    rule_gate(&cwd, &input)
+}
+
+fn rule_gate(project_dir: &str, input: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Parse the hook payload: {tool_name, tool_input}
-    let parsed: serde_json::Value = serde_json::from_str(&input).unwrap_or(serde_json::json!({}));
+    let parsed: serde_json::Value = serde_json::from_str(input).unwrap_or(serde_json::json!({}));
     let tool_name = parsed
         .get("tool_name")
         .and_then(|v| v.as_str())
@@ -218,16 +363,22 @@ pub fn cmd_rule_gate() -> Result<(), Box<dyn std::error::Error>> {
         .cloned()
         .unwrap_or(serde_json::json!({}));
 
-    // Resolve rules.json path via cwd
-    let cwd = std::env::current_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-
     // Effective rules = global (~/.hoangsa/rules.json) overlaid by project;
-    // project overrides global by id. A missing OR malformed file at either
-    // layer contributes no rules (graceful degradation, REQ-09); with an empty
-    // rule set nothing matches and the gate approves.
-    let config = read_effective_rules_config(&cwd);
+    // project overrides global by id. A missing file at either layer
+    // contributes no rules; with an empty rule set nothing matches and the
+    // gate approves.
+    //
+    // `read_effective_rules_config` also degrades a MALFORMED layer to "no
+    // rules" — deliberate for `hook enforce`, wrong here: a gate that cannot
+    // read the rules it is meant to enforce would approve every call. So each
+    // layer the gate depends on is re-checked strictly first, making a broken
+    // gate loud (exit 1) instead of silently permissive.
+    check_layer_readable(&rules_path(project_dir))?;
+    if let Some(global) = global_rules_path() {
+        check_layer_readable(&global)?;
+    }
+
+    let config = read_effective_rules_config(project_dir);
 
     let mut warnings: Vec<(String, String, String)> = Vec::new(); // (rule_id, rule_name, message)
 
@@ -259,7 +410,7 @@ pub fn cmd_rule_gate() -> Result<(), Box<dyn std::error::Error>> {
         match rule.action {
             RuleAction::Block => {
                 // First match wins for block
-                let matched_condition = rule.conditions.first();
+                let matched_condition = rule.conditions.first().map(|c| &c.condition);
                 let field_info = matched_condition
                     .map(|c| format!("Field: {} matched {} '{}'", c.field, op_label(&c.op), c.value))
                     .unwrap_or_default();
@@ -314,6 +465,13 @@ fn write_rules_config(project_dir: &str, config: &RulesConfig) -> Result<(), Box
 }
 
 pub fn cmd_rule_list(project_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
+    // A project that never ran `rule init` has no rules.json and lists an empty
+    // rule set — that is success. A project directory that does not exist, or
+    // that cannot be read, is not: `read_rules_config` only stats the rules.json
+    // path, so both look identical to it. Opening the directory separates them.
+    if let Err(e) = fs::read_dir(project_dir) {
+        return Err(format!("project directory {project_dir}: {e}").into());
+    }
     match read_rules_config(project_dir)? {
         None => {
             out(&json!({ "rules": [], "count": 0, "enabled": 0, "disabled": 0 }));
@@ -339,140 +497,159 @@ pub fn default_rules() -> Vec<Rule> {
     fn cond(field: &str, op: ConditionOp, value: &str) -> Condition {
         Condition { field: field.to_string(), op, value: value.to_string() }
     }
-    #[allow(clippy::too_many_arguments)]
-    fn rule(
-        id: &str,
-        name: &str,
+    /// Named-field spec for one default rule. A seeded default is always
+    /// enabled, so `enabled` is not part of the spec.
+    struct RuleSpec<'a> {
+        id: &'a str,
+        name: &'a str,
         enforcement: Enforcement,
-        matcher: &str,
+        matcher: &'a str,
         conditions: Vec<Condition>,
         action: RuleAction,
-        message: &str,
-        stateful: Option<&str>,
-    ) -> Rule {
-        Rule {
-            id: id.to_string(),
-            name: name.to_string(),
-            enabled: true,
-            enforcement,
-            matcher: matcher.to_string(),
-            conditions,
-            action,
-            message: message.to_string(),
-            stateful: stateful.map(String::from),
+        message: &'a str,
+        stateful: Option<&'a str>,
+    }
+    impl RuleSpec<'_> {
+        fn into_rule(self) -> Rule {
+            Rule {
+                id: self.id.to_string(),
+                name: self.name.to_string(),
+                enabled: true,
+                enforcement: self.enforcement,
+                matcher: self.matcher.to_string(),
+                conditions: self.conditions,
+                action: self.action,
+                message: self.message.to_string(),
+                stateful: self.stateful.map(String::from),
+            }
         }
     }
     vec![
-        rule(
-            "no-edit-claude",
-            "Block direct .claude/ edits",
-            Enforcement::Prompt,
-            "Edit|Write",
-            vec![cond("file_path", ConditionOp::Contains, ".claude/")],
-            RuleAction::Block,
-            "Do not edit files in .claude/ directly — use hoangsa-cli or bin/install to manage",
-            None,
-        ),
-        rule(
-            "no-bare-unwrap",
-            "Avoid bare unwrap()",
-            Enforcement::Prompt,
-            "Edit|Write",
-            vec![cond("new_string", ConditionOp::Regex, r"\bunwrap\(\)")],
-            RuleAction::Warn,
-            "Use expect(\"context\") or ? instead of unwrap() — makes panic debugging easier",
-            None,
-        ),
-        rule(
-            "no-todo-unimplemented",
-            "No todo!/unimplemented! in commits",
-            Enforcement::Prompt,
-            "Edit|Write",
-            vec![cond("new_string", ConditionOp::Regex, r"\b(todo!|unimplemented!)")],
-            RuleAction::Warn,
-            "Do not commit unimplemented code — finish it or create an issue instead",
-            None,
-        ),
-        rule(
-            "no-git-add-force",
-            "Block git add --force",
-            Enforcement::Prompt,
-            "Bash",
-            vec![cond("command", ConditionOp::Regex, r"git\s+add\s+(-f|--force)")],
-            RuleAction::Block,
-            "Do not force-add gitignored files — check .gitignore or remove the -f flag",
-            None,
-        ),
-        rule(
-            "warn-git-add-all",
-            "Warn on git add . / git add -A",
-            Enforcement::Prompt,
-            "Bash",
-            vec![cond("command", ConditionOp::Regex, r"git\s+add\s+(-A|\.)")],
-            RuleAction::Warn,
-            "Prefer adding specific files by name — git add . may include unwanted files",
-            None,
-        ),
-        rule(
-            "no-git-stash",
-            "Block git stash",
-            Enforcement::Hook,
-            "Bash",
-            vec![cond("command", ConditionOp::Regex, r"git\s+stash")],
-            RuleAction::Block,
-            "Never use git stash — leads to lost work and confusing state",
-            None,
-        ),
-        rule(
-            "no-force-push-main",
-            "Block git push --force to main/master",
-            Enforcement::Hook,
-            "Bash",
-            vec![cond("command", ConditionOp::Regex, r"git\s+push.*--force.*(main|master)")],
-            RuleAction::Block,
-            "Never force-push to main/master — rewrites shared history",
-            None,
-        ),
-        rule(
-            "no-skip-hooks",
-            "Block --no-verify",
-            Enforcement::Hook,
-            "Bash",
-            vec![cond("command", ConditionOp::Regex, r"--no-verify")],
-            RuleAction::Block,
-            "Never skip git hooks — fix the underlying issue instead",
-            None,
-        ),
-        rule(
-            "require-memory-impact",
-            "Require memory_impact before first edit to a source file",
-            Enforcement::Hook,
-            "Edit|Write",
-            vec![],
-            RuleAction::Block,
-            "Run memory_impact on this file before editing. Softened: subsequent edits to the same file in this session are allowed.",
-            Some("require-memory-impact"),
-        ),
-        rule(
-            "require-detect-changes",
-            "Require memory_detect_changes before git commit",
-            Enforcement::Hook,
-            "Bash",
-            vec![],
-            RuleAction::Block,
-            "Run memory_detect_changes before committing to verify the change scope.",
-            Some("require-detect-changes"),
-        ),
-        rule(
-            "no-git-add-ignored",
-            "Block git add of gitignored files",
-            Enforcement::Hook,
-            "Bash",
-            vec![],
-            RuleAction::Block,
-            "git add contains gitignored files: {files}. Remove them from the command or update .gitignore.",
-            Some("no-git-add-ignored"),
-        ),
+        RuleSpec {
+            id: "no-edit-claude",
+            name: "Block direct .claude/ edits",
+            enforcement: Enforcement::Prompt,
+            matcher: "Edit|Write",
+            conditions: vec![cond("file_path", ConditionOp::Contains, ".claude/")],
+            action: RuleAction::Block,
+            message: "Do not edit files in .claude/ directly — use hoangsa-cli or bin/install to manage",
+            stateful: None,
+        }
+        .into_rule(),
+        RuleSpec {
+            id: "no-bare-unwrap",
+            name: "Avoid bare unwrap()",
+            enforcement: Enforcement::Prompt,
+            matcher: "Edit|Write",
+            conditions: vec![cond("new_string", ConditionOp::Regex, r"\bunwrap\(\)")],
+            action: RuleAction::Warn,
+            message: "Use expect(\"context\") or ? instead of unwrap() — makes panic debugging easier",
+            stateful: None,
+        }
+        .into_rule(),
+        RuleSpec {
+            id: "no-todo-unimplemented",
+            name: "No todo!/unimplemented! in commits",
+            enforcement: Enforcement::Prompt,
+            matcher: "Edit|Write",
+            conditions: vec![cond("new_string", ConditionOp::Regex, r"\b(todo!|unimplemented!)")],
+            action: RuleAction::Warn,
+            message: "Do not commit unimplemented code — finish it or create an issue instead",
+            stateful: None,
+        }
+        .into_rule(),
+        RuleSpec {
+            id: "no-git-add-force",
+            name: "Block git add --force",
+            enforcement: Enforcement::Prompt,
+            matcher: "Bash",
+            conditions: vec![cond("command", ConditionOp::Regex, r"git\s+add\s+(-f|--force)")],
+            action: RuleAction::Block,
+            message: "Do not force-add gitignored files — check .gitignore or remove the -f flag",
+            stateful: None,
+        }
+        .into_rule(),
+        RuleSpec {
+            id: "warn-git-add-all",
+            name: "Warn on git add . / git add -A",
+            enforcement: Enforcement::Prompt,
+            matcher: "Bash",
+            conditions: vec![cond("command", ConditionOp::Regex, r"git\s+add\s+(-A|\.)")],
+            action: RuleAction::Warn,
+            message: "Prefer adding specific files by name — git add . may include unwanted files",
+            stateful: None,
+        }
+        .into_rule(),
+        RuleSpec {
+            id: "no-git-stash",
+            name: "Block git stash",
+            enforcement: Enforcement::Hook,
+            matcher: "Bash",
+            conditions: vec![cond("command", ConditionOp::Regex, r"git\s+stash")],
+            action: RuleAction::Block,
+            message: "Never use git stash — leads to lost work and confusing state",
+            stateful: None,
+        }
+        .into_rule(),
+        RuleSpec {
+            id: "no-force-push-main",
+            name: "Block git push --force to main/master",
+            enforcement: Enforcement::Hook,
+            matcher: "Bash",
+            conditions: vec![cond(
+                "command",
+                ConditionOp::Regex,
+                r"git\s+push.*--force.*(main|master)",
+            )],
+            action: RuleAction::Block,
+            message: "Never force-push to main/master — rewrites shared history",
+            stateful: None,
+        }
+        .into_rule(),
+        RuleSpec {
+            id: "no-skip-hooks",
+            name: "Block --no-verify",
+            enforcement: Enforcement::Hook,
+            matcher: "Bash",
+            conditions: vec![cond("command", ConditionOp::Regex, r"--no-verify")],
+            action: RuleAction::Block,
+            message: "Never skip git hooks — fix the underlying issue instead",
+            stateful: None,
+        }
+        .into_rule(),
+        RuleSpec {
+            id: "require-memory-impact",
+            name: "Require memory_impact before first edit to a source file",
+            enforcement: Enforcement::Hook,
+            matcher: "Edit|Write",
+            conditions: vec![],
+            action: RuleAction::Block,
+            message: "Run memory_impact on this file before editing. Softened: subsequent edits to the same file in this session are allowed.",
+            stateful: Some("require-memory-impact"),
+        }
+        .into_rule(),
+        RuleSpec {
+            id: "require-detect-changes",
+            name: "Require memory_detect_changes before git commit",
+            enforcement: Enforcement::Hook,
+            matcher: "Bash",
+            conditions: vec![],
+            action: RuleAction::Block,
+            message: "Run memory_detect_changes before committing to verify the change scope.",
+            stateful: Some("require-detect-changes"),
+        }
+        .into_rule(),
+        RuleSpec {
+            id: "no-git-add-ignored",
+            name: "Block git add of gitignored files",
+            enforcement: Enforcement::Hook,
+            matcher: "Bash",
+            conditions: vec![],
+            action: RuleAction::Block,
+            message: "git add contains gitignored files: {files}. Remove them from the command or update .gitignore.",
+            stateful: Some("no-git-add-ignored"),
+        }
+        .into_rule(),
     ]
 }
 
@@ -756,6 +933,11 @@ mod tests {
         }
     }
 
+    /// Compile a rule the way loading does, discarding the warnings.
+    fn compiled(rule: &Rule) -> CompiledRule {
+        compile_rule(rule, &mut Vec::new())
+    }
+
     // ── condition operator tests ──────────────────────────────────────────────
 
     #[test]
@@ -833,7 +1015,7 @@ mod tests {
             ],
         );
         let input = json!({ "path": "dist/bundle.js" });
-        assert!(evaluate_rule_conditions(&rule, &input));
+        assert!(evaluate_rule_conditions(&compiled(&rule), &input));
     }
 
     #[test]
@@ -847,7 +1029,7 @@ mod tests {
             ],
         );
         let input = json!({ "path": "dist/bundle.js" });
-        assert!(!evaluate_rule_conditions(&rule, &input));
+        assert!(!evaluate_rule_conditions(&compiled(&rule), &input));
     }
 
     #[test]
@@ -858,7 +1040,7 @@ mod tests {
             vec![make_condition("nonexistent_field", ConditionOp::Contains, "foo")],
         );
         let input = json!({ "path": "dist/bundle.js" });
-        assert!(!evaluate_rule_conditions(&rule, &input));
+        assert!(!evaluate_rule_conditions(&compiled(&rule), &input));
     }
 
     // ── gate / matcher logic tests ────────────────────────────────────────────
@@ -880,7 +1062,7 @@ mod tests {
         assert!(matcher_matches, "Expected tool_name 'Edit' to match matcher 'Edit|Write'");
 
         // Conditions also pass, so the rule would fire
-        assert!(evaluate_rule_conditions(&rule, &tool_input));
+        assert!(evaluate_rule_conditions(&compiled(&rule), &tool_input));
     }
 
     // ── enforcement field tests ────────────────────────────────────────────
@@ -1048,6 +1230,344 @@ mod tests {
         assert!(
             merged.rules.iter().any(|r| r.id == "keep"),
             "an unrelated global rule is untouched"
+        );
+    }
+
+    // ── compiled-regex tests (REQ-05) ─────────────────────────────────────────
+
+    #[test]
+    fn invalid_regex_disables_only_that_condition() {
+        // EC-07: a rules.json where rule A carries an uncompilable pattern.
+        let json_str = r#"{
+            "version": "1.0",
+            "rules": [
+                {
+                    "id": "rule-a", "name": "A", "enabled": true, "matcher": "Bash",
+                    "conditions": [{"field": "command", "op": "regex", "value": "("}],
+                    "action": "block", "message": "a"
+                },
+                {
+                    "id": "rule-b", "name": "B", "enabled": true, "matcher": "Bash",
+                    "conditions": [{"field": "command", "op": "regex", "value": "git\\s+stash"}],
+                    "action": "block", "message": "b"
+                }
+            ]
+        }"#;
+        let parsed: RulesConfig = serde_json::from_str(json_str).expect("fixture rules.json parses");
+        let (compiled, warnings) = compile_rules_config(parsed);
+
+        assert_eq!(warnings.len(), 1, "exactly one warning, got {warnings:?}");
+        assert!(
+            warnings[0].contains("rule-a"),
+            "warning names the offending rule id: {}",
+            warnings[0]
+        );
+        assert!(
+            warnings[0].contains("'('"),
+            "warning names the offending pattern: {}",
+            warnings[0]
+        );
+
+        let input = json!({ "command": "git stash" });
+        assert!(
+            !evaluate_rule_conditions(&compiled.rules[0], &input),
+            "the uncompilable pattern never matches"
+        );
+        assert!(
+            evaluate_rule_conditions(&compiled.rules[1], &input),
+            "the neighbouring valid rule still fires"
+        );
+    }
+
+    #[test]
+    fn regex_compiled_once_per_load() {
+        // Match results must be identical to the pre-change implementation,
+        // which called `Regex::new` on every evaluation.
+        let cases = [
+            (r"\bunwrap\(\)", "let x = y.unwrap();", true),
+            (r"\bunwrap\(\)", "let x = y.unwrap_or(0);", false),
+            (r"git\s+add\s+(-A|\.)", "git add -A", true),
+            (r"git\s+add\s+(-A|\.)", "git add src/main.rs", false),
+            (
+                r"git\s+push.*--force.*(main|master)",
+                "git push --force origin main",
+                true,
+            ),
+            (r"--no-verify", "git commit --no-verify", true),
+            (r"--no-verify", "git commit -m msg", false),
+            (r"^$", "", true),
+            ("(", "anything", false),
+            ("[unclosed", "anything", false),
+        ];
+        for (pattern, input, expected) in cases {
+            let rule = make_rule(
+                "Bash",
+                vec![make_condition("command", ConditionOp::Regex, pattern)],
+            );
+            let compiled_rule = compiled(&rule);
+            assert_eq!(
+                compiled_rule.conditions[0].regex.is_some(),
+                Regex::new(pattern).is_ok(),
+                "pattern {pattern:?} is compiled at load exactly when it is valid"
+            );
+
+            let got = evaluate_rule_conditions(&compiled_rule, &json!({ "command": input }));
+            // Oracle: the per-call implementation this change replaces.
+            let reference = Regex::new(pattern)
+                .map(|r| r.is_match(input))
+                .unwrap_or(false);
+            assert_eq!(
+                got, reference,
+                "compiled result differs from the per-call result for {pattern:?} / {input:?}"
+            );
+            assert_eq!(got, expected, "pattern {pattern:?} against {input:?}");
+        }
+
+        // The table above passes whether the regex is compiled at load or
+        // recompiled on every call — both produce the same verdicts. What
+        // separates them is which text the verdict comes from: rewrite the
+        // condition's pattern after load and a per-call implementation would
+        // pick up the new text, while a load-compiled one cannot.
+        let mut stale = compiled(&make_rule(
+            "Bash",
+            vec![make_condition("command", ConditionOp::Regex, "^never-matches$")],
+        ));
+        stale.conditions[0].condition.value = "git".to_string();
+        assert!(
+            !evaluate_rule_conditions(&stale, &json!({ "command": "git stash" })),
+            "evaluation followed the rewritten pattern text — the regex is being recompiled per call"
+        );
+
+        // Same invariant on the failure side: a pattern that did not compile
+        // stays disabled for the life of the load, even if its text is later
+        // replaced by one that would compile and match.
+        let mut repaired = compiled(&make_rule(
+            "Bash",
+            vec![make_condition("command", ConditionOp::Regex, "(")],
+        ));
+        assert!(repaired.conditions[0].regex.is_none());
+        repaired.conditions[0].condition.value = "git".to_string();
+        assert!(
+            !evaluate_rule_conditions(&repaired, &json!({ "command": "git stash" })),
+            "a condition whose pattern failed to compile at load must never match"
+        );
+    }
+
+    // ── default rule builder refactor (REQ-08) ────────────────────────────────
+
+    /// `serde_json::to_string_pretty(&default_rules())` captured before the
+    /// positional-builder refactor. REQ-08 is a pure refactor: any diff here
+    /// is a behaviour change, not a cleanup.
+    const DEFAULT_RULES_SNAPSHOT: &str = r#"[
+  {
+    "id": "no-edit-claude",
+    "name": "Block direct .claude/ edits",
+    "enabled": true,
+    "enforcement": "prompt",
+    "matcher": "Edit|Write",
+    "conditions": [
+      {
+        "field": "file_path",
+        "op": "contains",
+        "value": ".claude/"
+      }
+    ],
+    "action": "block",
+    "message": "Do not edit files in .claude/ directly — use hoangsa-cli or bin/install to manage"
+  },
+  {
+    "id": "no-bare-unwrap",
+    "name": "Avoid bare unwrap()",
+    "enabled": true,
+    "enforcement": "prompt",
+    "matcher": "Edit|Write",
+    "conditions": [
+      {
+        "field": "new_string",
+        "op": "regex",
+        "value": "\\bunwrap\\(\\)"
+      }
+    ],
+    "action": "warn",
+    "message": "Use expect(\"context\") or ? instead of unwrap() — makes panic debugging easier"
+  },
+  {
+    "id": "no-todo-unimplemented",
+    "name": "No todo!/unimplemented! in commits",
+    "enabled": true,
+    "enforcement": "prompt",
+    "matcher": "Edit|Write",
+    "conditions": [
+      {
+        "field": "new_string",
+        "op": "regex",
+        "value": "\\b(todo!|unimplemented!)"
+      }
+    ],
+    "action": "warn",
+    "message": "Do not commit unimplemented code — finish it or create an issue instead"
+  },
+  {
+    "id": "no-git-add-force",
+    "name": "Block git add --force",
+    "enabled": true,
+    "enforcement": "prompt",
+    "matcher": "Bash",
+    "conditions": [
+      {
+        "field": "command",
+        "op": "regex",
+        "value": "git\\s+add\\s+(-f|--force)"
+      }
+    ],
+    "action": "block",
+    "message": "Do not force-add gitignored files — check .gitignore or remove the -f flag"
+  },
+  {
+    "id": "warn-git-add-all",
+    "name": "Warn on git add . / git add -A",
+    "enabled": true,
+    "enforcement": "prompt",
+    "matcher": "Bash",
+    "conditions": [
+      {
+        "field": "command",
+        "op": "regex",
+        "value": "git\\s+add\\s+(-A|\\.)"
+      }
+    ],
+    "action": "warn",
+    "message": "Prefer adding specific files by name — git add . may include unwanted files"
+  },
+  {
+    "id": "no-git-stash",
+    "name": "Block git stash",
+    "enabled": true,
+    "enforcement": "hook",
+    "matcher": "Bash",
+    "conditions": [
+      {
+        "field": "command",
+        "op": "regex",
+        "value": "git\\s+stash"
+      }
+    ],
+    "action": "block",
+    "message": "Never use git stash — leads to lost work and confusing state"
+  },
+  {
+    "id": "no-force-push-main",
+    "name": "Block git push --force to main/master",
+    "enabled": true,
+    "enforcement": "hook",
+    "matcher": "Bash",
+    "conditions": [
+      {
+        "field": "command",
+        "op": "regex",
+        "value": "git\\s+push.*--force.*(main|master)"
+      }
+    ],
+    "action": "block",
+    "message": "Never force-push to main/master — rewrites shared history"
+  },
+  {
+    "id": "no-skip-hooks",
+    "name": "Block --no-verify",
+    "enabled": true,
+    "enforcement": "hook",
+    "matcher": "Bash",
+    "conditions": [
+      {
+        "field": "command",
+        "op": "regex",
+        "value": "--no-verify"
+      }
+    ],
+    "action": "block",
+    "message": "Never skip git hooks — fix the underlying issue instead"
+  },
+  {
+    "id": "require-memory-impact",
+    "name": "Require memory_impact before first edit to a source file",
+    "enabled": true,
+    "enforcement": "hook",
+    "matcher": "Edit|Write",
+    "conditions": [],
+    "action": "block",
+    "message": "Run memory_impact on this file before editing. Softened: subsequent edits to the same file in this session are allowed.",
+    "stateful": "require-memory-impact"
+  },
+  {
+    "id": "require-detect-changes",
+    "name": "Require memory_detect_changes before git commit",
+    "enabled": true,
+    "enforcement": "hook",
+    "matcher": "Bash",
+    "conditions": [],
+    "action": "block",
+    "message": "Run memory_detect_changes before committing to verify the change scope.",
+    "stateful": "require-detect-changes"
+  },
+  {
+    "id": "no-git-add-ignored",
+    "name": "Block git add of gitignored files",
+    "enabled": true,
+    "enforcement": "hook",
+    "matcher": "Bash",
+    "conditions": [],
+    "action": "block",
+    "message": "git add contains gitignored files: {files}. Remove them from the command or update .gitignore.",
+    "stateful": "no-git-add-ignored"
+  }
+]"#;
+
+    #[test]
+    fn default_rules_unchanged_after_builder_refactor() {
+        let actual =
+            serde_json::to_string_pretty(&default_rules()).expect("default rules serialize");
+        assert_eq!(
+            actual, DEFAULT_RULES_SNAPSHOT,
+            "default_rules() drifted from the pre-refactor snapshot"
+        );
+    }
+
+    // ── error paths that must reach the caller (REQ-03) ───────────────────────
+
+    #[test]
+    fn rule_list_errors_on_missing_project_dir() {
+        let err = cmd_rule_list("/nonexistent-dir-xyz")
+            .expect_err("a project directory that does not exist must be an error");
+        assert!(
+            err.to_string().contains("/nonexistent-dir-xyz"),
+            "the error must name the directory; got: {err}"
+        );
+    }
+
+    #[test]
+    fn rule_list_returns_empty_set_for_uninitialised_project() {
+        let tmp = tempfile::TempDir::new().expect("create temp project dir");
+        let dir = tmp.path().to_str().expect("temp dir path is utf-8");
+        cmd_rule_list(dir)
+            .expect("a project with no rules.json yet lists an empty rule set, it does not fail");
+    }
+
+    #[test]
+    fn rule_gate_fails_loud_on_malformed_rules_file() {
+        let tmp = tempfile::TempDir::new().expect("create temp project dir");
+        let dir = tmp.path().to_str().expect("temp dir path is utf-8");
+        fs::create_dir_all(tmp.path().join(".hoangsa")).expect("create .hoangsa dir");
+        fs::write(
+            rules_path(dir),
+            r#"{ "version": "1.0", "rules": [ {"id": "truncated"#,
+        )
+        .expect("write malformed rules file");
+
+        let err = rule_gate(dir, r#"{"tool_name":"Bash","tool_input":{"command":"git stash"}}"#)
+            .expect_err("a gate that cannot read its rules must fail, not approve");
+        assert!(
+            err.to_string().contains("rules.json"),
+            "the error must name the rules file; got: {err}"
         );
     }
 }
