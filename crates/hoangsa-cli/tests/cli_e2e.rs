@@ -348,9 +348,10 @@ fn cli_config_and_pref_agree_on_task_manager() {
         "`pref get` did not bootstrap {} — there is nothing to compare",
         pref_config_file.display()
     );
-    let pref_json: Value =
-        serde_json::from_str(&fs::read_to_string(&pref_config_file).expect("read pref config.json"))
-            .expect("`pref get` wrote a config.json that is not JSON");
+    let pref_json: Value = serde_json::from_str(
+        &fs::read_to_string(&pref_config_file).expect("read pref config.json"),
+    )
+    .expect("`pref get` wrote a config.json that is not JSON");
 
     assert_eq!(
         task_manager_block(&cfg_json, "`config get` stdout"),

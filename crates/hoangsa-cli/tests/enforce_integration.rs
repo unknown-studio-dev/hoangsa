@@ -36,7 +36,11 @@ fn fixture() -> Fixture {
     // lands on the fixture rather than walking up to a real project.
     fs::write(project.join(".hoangsa").join("config.json"), "{}").expect("write config.json");
     fs::create_dir_all(&home).expect("create hoangsa home");
-    Fixture { project, home, _tmp: tmp }
+    Fixture {
+        project,
+        home,
+        _tmp: tmp,
+    }
 }
 
 impl Fixture {
@@ -141,7 +145,10 @@ fn enforce_malformed_stdin_blocks() {
 
     let (stdout, stderr, ok) = fx.run_enforce("not json");
 
-    assert!(ok, "enforce must exit 0 even when it blocks; stderr: {stderr}");
+    assert!(
+        ok,
+        "enforce must exit 0 even when it blocks; stderr: {stderr}"
+    );
     assert_eq!(
         decision(&stdout),
         "block",
@@ -376,7 +383,10 @@ fn enforce_blocks_when_project_rules_file_is_malformed() {
     let payload = r#"{"tool_name":"Bash","tool_input":{"command":"echo hello"}}"#;
     let (stdout, stderr, ok) = fx.run_enforce(payload);
 
-    assert!(ok, "enforce must exit 0 even when it blocks; stderr: {stderr}");
+    assert!(
+        ok,
+        "enforce must exit 0 even when it blocks; stderr: {stderr}"
+    );
     assert_eq!(
         decision(&stdout),
         "block",
@@ -409,7 +419,10 @@ fn enforce_blocks_when_global_rules_file_is_malformed() {
     let payload = r#"{"tool_name":"Bash","tool_input":{"command":"echo hello"}}"#;
     let (stdout, stderr, ok) = fx.run_enforce(payload);
 
-    assert!(ok, "enforce must exit 0 even when it blocks; stderr: {stderr}");
+    assert!(
+        ok,
+        "enforce must exit 0 even when it blocks; stderr: {stderr}"
+    );
     assert_eq!(
         decision(&stdout),
         "block",
@@ -601,7 +614,10 @@ fn enforce_uncompilable_regex_degrades_one_condition() {
     let payload = r#"{"tool_name":"Bash","tool_input":{"command":"git status"}}"#;
     let (stdout, stderr, ok) = fx.run_enforce(payload);
 
-    assert!(ok, "an uncompilable pattern must not crash the hook; stderr: {stderr}");
+    assert!(
+        ok,
+        "an uncompilable pattern must not crash the hook; stderr: {stderr}"
+    );
     assert_eq!(
         decision(&stdout),
         "approve",

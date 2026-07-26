@@ -146,7 +146,8 @@ fn ok_response(body: &str) -> Vec<u8> {
 }
 
 fn error_response() -> Vec<u8> {
-    b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 4\r\nConnection: close\r\n\r\nboom".to_vec()
+    b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 4\r\nConnection: close\r\n\r\nboom"
+        .to_vec()
 }
 
 struct Fixture {

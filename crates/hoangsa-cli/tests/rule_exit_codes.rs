@@ -109,7 +109,10 @@ fn cli_rule_success_paths_unchanged() {
     // success, not a failure.
     let empty = run_cli(&["rule", "list", dir]);
     assert_eq!(empty.code, Some(0), "rule list <empty project> must exit 0");
-    assert_eq!(empty.stderr, "", "rule list <empty project> must not write to stderr");
+    assert_eq!(
+        empty.stderr, "",
+        "rule list <empty project> must not write to stderr"
+    );
     assert_json_eq(
         &empty.stdout,
         serde_json::json!({"count": 0, "disabled": 0, "enabled": 0, "rules": []}),
@@ -118,7 +121,10 @@ fn cli_rule_success_paths_unchanged() {
 
     let added = run_cli(&["rule", "add", dir, VALID_RULE]);
     assert_eq!(added.code, Some(0), "rule add <valid rule> must exit 0");
-    assert_eq!(added.stderr, "", "rule add <valid rule> must not write to stderr");
+    assert_eq!(
+        added.stderr, "",
+        "rule add <valid rule> must not write to stderr"
+    );
     assert_json_eq(
         &added.stdout,
         serde_json::json!({"id": "r1", "rules_count": 1, "success": true}),
@@ -127,7 +133,10 @@ fn cli_rule_success_paths_unchanged() {
 
     let listed = run_cli(&["rule", "list", dir]);
     assert_eq!(listed.code, Some(0), "rule list <valid dir> must exit 0");
-    assert_eq!(listed.stderr, "", "rule list <valid dir> must not write to stderr");
+    assert_eq!(
+        listed.stderr, "",
+        "rule list <valid dir> must not write to stderr"
+    );
     assert_json_eq(
         &listed.stdout,
         serde_json::json!({
