@@ -102,6 +102,10 @@ impl EpisodeLog {
             // Pragmas for a write-heavy append log.
             c.pragma_update(None, "journal_mode", "WAL")
                 .map_err(store)?;
+            // Default busy handler is 0 ms: a second writer fails instantly
+            // rather than waiting for the first to commit.
+            c.pragma_update(None, "busy_timeout", 5000)
+                .map_err(store)?;
             c.pragma_update(None, "synchronous", "NORMAL")
                 .map_err(store)?;
             c.pragma_update(None, "foreign_keys", "ON").map_err(store)?;

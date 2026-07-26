@@ -13,7 +13,10 @@ mod recall_tools;
 mod transport;
 mod watcher;
 
-pub use transport::{run_socket, run_stdio, socket_path};
+pub use transport::{
+    RelayEnd, daemon_alive, is_store_lock_conflict, run_socket, run_stdio, run_stdio_proxy,
+    socket_path, wait_for_daemon,
+};
 pub(crate) use transport::handle_socket_conn;
 
 use std::path::{Path, PathBuf};
@@ -58,8 +61,10 @@ impl ResourceBundle {
         let store = StoreRoot::open(root).await?;
         let retrieve_cfg = RetrieveConfig::load_or_default(root).await;
         let indexer = Indexer::new(store.clone(), LanguageRegistry::new());
-        let retriever =
-            Retriever::new(store.clone()).with_markdown_boost(retrieve_cfg.rerank_markdown_boost);
+        let rerank_cfg = hoangsa_memory_retrieve::config::RerankConfig::load_or_default(root).await;
+        let retriever = Retriever::new(store.clone())
+            .with_markdown_boost(retrieve_cfg.rerank_markdown_boost)
+            .with_rerank(rerank_cfg);
         let graph = hoangsa_memory_graph::Graph::new(store.kv.clone());
         Ok(Self {
             store,

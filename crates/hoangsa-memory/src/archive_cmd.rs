@@ -2,7 +2,7 @@
 //!
 //! Conversation mining and exchange-pair chunking used to live here;
 //! the core pipeline now sits in [`hoangsa_memory_retrieve::archive`] so the MCP
-//! daemon can run ingests in-process (reusing its ChromaDB sidecar)
+//! daemon can run ingests in-process (reusing its loaded embedder)
 //! instead of each hook-spawned CLI subprocess starting its own. This
 //! file is now a thin CLI shell: argument parsing, advisory flock,
 //! stdout formatting.
@@ -12,7 +12,7 @@ use std::path::Path;
 
 #[derive(clap::Subcommand, Debug)]
 pub enum ArchiveCmd {
-    /// Ingest conversation sessions from Claude Code into ChromaDB.
+    /// Ingest conversation sessions from Claude Code into the archive.
     Ingest {
         /// Only ingest sessions from this project.
         #[arg(long)]
@@ -61,7 +61,7 @@ pub enum ArchiveCmd {
         text: Vec<String>,
     },
     /// Remove archived sessions. Either purge by age (`--older-than 30d`)
-    /// or nuke everything (`--all`). Frees up tracker rows; ChromaDB
+    /// or nuke everything (`--all`). Frees up tracker rows; the vector
     /// chunks for the removed sessions are deleted by best-effort metadata
     /// query — failures leave orphans but never abort the purge.
     Purge {
@@ -108,7 +108,7 @@ pub async fn cmd_archive_ingest(
     // so only one writer ever holds the embedder at a time. If the lock
     // is held we exit cleanly — the running command will pick up any
     // new turns on its next pass anyway, so there's nothing to retry.
-    let _lock: Option<std::fs::File> = match crate::acquire_vector_lock() {
+    let _lock: Option<std::fs::File> = match crate::acquire_vector_lock(std::time::Duration::from_secs(180)) {
         Ok(Some(l)) => Some(l),
         Ok(None) => {
             eprintln!(
@@ -442,7 +442,21 @@ async fn open_tracker(root: &Path) -> Result<ArchiveTracker> {
         .context("opening archive tracker")
 }
 
+/// Open the archive vector collection, honouring `[vector_store] enabled`.
+///
+/// This used to read only `data_path` from the config and never `enabled`, so
+/// a project (or a whole machine, via the `no-embed` marker) that had turned
+/// embeddings off still got the full ONNX model loaded and every transcript
+/// chunk embedded. The hook-spawned `archive ingest --refresh` runs detached
+/// with no console, so that showed up only as a nameless process at 700%+ CPU.
 async fn open_archive_vector_col(root: &Path) -> Result<std::sync::Arc<dyn VectorCol>> {
+    let cfg = hoangsa_memory_retrieve::VectorStoreConfig::load_or_default(root).await;
+    if !cfg.is_effectively_enabled() {
+        anyhow::bail!(
+            "vector store is disabled ([vector_store] enabled = false, or a `no-embed` marker) \
+             — archive ingest needs embeddings"
+        );
+    }
     let path = load_vectors_data_path(root).await;
     let store = EmbeddedVectorStore::open(&path)
         .await

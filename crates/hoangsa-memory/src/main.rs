@@ -252,6 +252,9 @@ async fn main() -> anyhow::Result<()> {
                     memory_cmd::run_lesson_feedback(&root, triggers, false, cli.json).await?
                 }
             },
+            memory_cmd::MemoryCmd::Dream { force, dry_run } => {
+                memory_cmd::run_dream(&root, force, dry_run, cli.json).await?
+            }
         },
         Cmd::Impact {
             fqn,
@@ -339,16 +342,12 @@ async fn main() -> anyhow::Result<()> {
 fn auto_register_cwd() {
     let Ok(cwd) = std::env::current_dir() else { return };
     let Ok(home) = default_hoangsa_home() else { return };
-    let mut registry = match Registry::load(&home) {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::debug!(error = %e, "projects registry load failed; skipping auto-register");
-            return;
-        }
-    };
-    registry.register(&cwd);
-    if let Err(e) = registry.save(&home) {
-        tracing::debug!(error = %e, "projects registry save failed");
+    // Locked read-modify-write: this runs on essentially every invocation,
+    // so unlocked it is the single busiest race in the tool.
+    if let Err(e) = Registry::update(&home, |registry| {
+        registry.register(&cwd);
+    }) {
+        tracing::debug!(error = %e, "projects registry auto-register failed");
     }
 }
 
@@ -383,7 +382,7 @@ pub(crate) fn build_synth(kind: Option<SynthKind>) -> anyhow::Result<Option<Arc<
 /// Read paths (`query`) intentionally do *not* acquire this lock: the
 /// point is preventing embedder pile-up on write-heavy commands, and
 /// queries already serialise through the in-process embedder mutex.
-pub(crate) fn acquire_vector_lock() -> anyhow::Result<Option<std::fs::File>> {
+pub(crate) fn acquire_vector_lock(wait: std::time::Duration) -> anyhow::Result<Option<std::fs::File>> {
     use anyhow::Context;
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
@@ -402,9 +401,28 @@ pub(crate) fn acquire_vector_lock() -> anyhow::Result<Option<std::fs::File>> {
         .open(&path)
         .with_context(|| format!("open vector lock {}", path.display()))?;
 
-    match file.try_lock() {
-        Ok(()) => Ok(Some(file)),
-        Err(_) => Ok(None),
+    // WAIT rather than degrade. The lock is deliberately machine-global —
+    // its job is to stop two ~300 MB ONNX embedders being resident at once —
+    // but returning `None` immediately meant the loser indexed with NO
+    // embeddings and said so in a single stderr line, which the bootstrap
+    // worker discards (`Stdio::null()`). Two projects bootstrapping together
+    // left one with a permanently empty vector index and no signal anywhere.
+    let deadline = std::time::Instant::now() + wait;
+    let mut informed = false;
+    loop {
+        if file.try_lock().is_ok() {
+            return Ok(Some(file));
+        }
+        if !informed {
+            eprintln!(
+                "hoangsa-memory: another project is embedding; waiting for the shared embedder…"
+            );
+            informed = true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(None);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
     }
 }
 

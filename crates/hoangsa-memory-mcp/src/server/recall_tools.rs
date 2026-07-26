@@ -60,7 +60,9 @@ impl Server {
         let scope_str = scope.as_deref().unwrap_or("curated");
         let mut q = Query {
             text: clean_query.clone(),
-            top_k: top_k.unwrap_or(8).max(1),
+            // Upper bound too, not just lower: the schema says maximum 64 and
+            // this value reaches `TopDocs::with_limit(k)` and `Vec::with_capacity(k)`.
+            top_k: top_k.unwrap_or(8).clamp(1, 64),
             min_score: min_score.unwrap_or(0.0).max(0.0),
             ..Query::text("")
         };
@@ -184,14 +186,44 @@ impl Server {
         Ok(ToolOutput::new(data, text))
     }
 
+    /// Resolve the `memory_index` source path.
+    ///
+    /// Containment to a computed "project root" was tried and reverted: for a
+    /// globally-rooted project the store lives at
+    /// `~/.hoangsa/memory/projects/<slug>/`, so walking two levels up lands on
+    /// `~/.hoangsa/memory/` — not the source tree at all. The `Server` does
+    /// not carry the registry mapping, so it cannot know the real project dir.
+    /// A guard anchored to the wrong directory rejects legitimate indexing
+    /// while proving nothing, and the threat it was aimed at (a prompt-injected
+    /// agent reading files) is not actually gated here — that agent already
+    /// has a Read tool.
+    ///
+    /// What IS fixed: a missing or unreadable path now fails loudly instead of
+    /// silently falling back to `.`, which in service mode is one working
+    /// directory shared by every project.
+    fn resolve_index_path(&self, requested: Option<&str>) -> anyhow::Result<PathBuf> {
+        let raw = match requested {
+            None | Some("") => return Ok(PathBuf::from(".")),
+            Some(p) => PathBuf::from(p),
+        };
+        if !raw.exists() {
+            anyhow::bail!("memory_index: {} does not exist", raw.display());
+        }
+        Ok(raw)
+    }
+
     pub(super) async fn tool_index(&self, args: Value) -> anyhow::Result<ToolOutput> {
         #[derive(Deserialize, Default)]
         struct Args {
             #[serde(default)]
             path: Option<String>,
         }
-        let Args { path } = serde_json::from_value(args).unwrap_or_default();
-        let src = PathBuf::from(path.unwrap_or_else(|| ".".to_string()));
+        // `unwrap_or_default()` swallowed a parse error and then indexed ".",
+        // so `{"path": 42}` silently indexed the daemon's working directory —
+        // which in service mode is one cwd shared by N projects.
+        let Args { path } = serde_json::from_value(args)
+            .map_err(|e| anyhow::anyhow!("memory_index: invalid arguments: {e}"))?;
+        let src = self.resolve_index_path(path.as_deref())?;
         // Serialise concurrent index calls — see `Inner::index_mutex`.
         // Released at the end of this function when `_index_guard` drops.
         let _index_guard = self.inner.index_mutex.lock().await;

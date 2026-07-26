@@ -20,6 +20,25 @@ pub struct SanitizeResult {
     pub method: &'static str,
 }
 
+/// Longest prefix of `s` that is at most `max` BYTES and ends on a char
+/// boundary.
+///
+/// Every `&s[..n]` in this crate is a display truncation of client- or
+/// model-supplied text, and a raw byte index panics the moment a multi-byte
+/// character straddles it. In the archive path the offending text is also
+/// *persisted*, so one CJK or Vietnamese turn made every later search
+/// re-crash the server.
+pub fn truncate_chars(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// Sanitize a recall query, stripping prompt contamination if detected.
 pub fn sanitize_query(raw: &str) -> SanitizeResult {
     let raw = raw.trim();
@@ -83,7 +102,7 @@ pub fn sanitize_query(raw: &str) -> SanitizeResult {
 
     // Step 4: tail truncation fallback
     let tail = if raw.len() > MAX_QUERY_LEN {
-        &raw[raw.len() - MAX_QUERY_LEN..]
+        &raw[char_boundary_at_or_after(raw, raw.len() - MAX_QUERY_LEN)..]
     } else {
         raw
     };
@@ -167,9 +186,23 @@ fn trim_candidate(s: &str) -> String {
             return p.to_string();
         }
     }
-    stripped[stripped.len().saturating_sub(MAX_QUERY_LEN)..]
-        .trim()
-        .to_string()
+    let start = char_boundary_at_or_after(stripped, stripped.len().saturating_sub(MAX_QUERY_LEN));
+    stripped[start..].trim().to_string()
+}
+
+/// First byte offset at or after `at` that is a char boundary.
+///
+/// `MAX_QUERY_LEN` is a byte budget but queries are arbitrary UTF-8, so
+/// slicing a tail at `len - MAX` panicked whenever that offset landed inside
+/// a multi-byte character — deterministic for CJK, a coin flip for
+/// Vietnamese. Moving forward drops the partial character and keeps the
+/// result within budget.
+fn char_boundary_at_or_after(s: &str, at: usize) -> usize {
+    let mut i = at.min(s.len());
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
 }
 
 #[cfg(test)]
@@ -256,5 +289,28 @@ mod tests {
         let r = sanitize_query(&query);
         assert!(r.was_sanitized);
         assert_eq!(r.clean_query, "How does auth work?");
+    }
+
+    /// `MAX_QUERY_LEN` is a byte budget; queries are arbitrary UTF-8.
+    /// Slicing the tail at `len - MAX` panicked whenever that offset fell
+    /// inside a multi-byte char — deterministic for CJK, a coin flip for
+    /// Vietnamese. `sanitize_query` runs on EVERY `memory_recall`.
+    #[test]
+    fn long_non_ascii_queries_do_not_panic() {
+        for q in [
+            "処".repeat(300),                    // 3-byte chars, 900 bytes
+            "日本\n".repeat(200),                // many short lines
+            "tìm chỗ xử lý lỗi xác thực ".repeat(20), // Vietnamese, 2-byte chars
+            "🎉".repeat(120),                    // 4-byte chars
+            "é".repeat(151),                     // straddles the budget by one byte
+        ] {
+            let out = sanitize_query(&q);
+            assert!(
+                out.clean_query.len() <= MAX_QUERY_LEN,
+                "{} bytes exceeds the budget", out.clean_query.len()
+            );
+            // The result must still be valid UTF-8 that round-trips.
+            assert_eq!(out.clean_query, out.clean_query.chars().collect::<String>());
+        }
     }
 }

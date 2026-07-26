@@ -31,6 +31,20 @@ pub enum MemoryCmd {
         #[command(subcommand)]
         cmd: LessonFeedbackCmd,
     },
+    /// Run the dream pass now — consolidate MEMORY.md / LESSONS.md /
+    /// USER.md with a model, dropping stale or contradictory entries.
+    ///
+    /// Normally this runs on its own from the daemon; this is the manual
+    /// trigger for when you want to watch it work.
+    Dream {
+        /// Run even when `[dream].enabled` is false or the
+        /// `min_interval_hours` floor has not elapsed.
+        #[arg(long)]
+        force: bool,
+        /// Consult the model and report its verdicts, but write nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -206,6 +220,55 @@ pub async fn run_lesson_feedback(
     // Output is JSON either way — machine consumers (stop-check) parse it
     let _ = json;
     println!("{}", serde_json::json!({ "bumped": bumped, "kind": kind }));
+    Ok(())
+}
+
+/// Run the dream pass in the foreground and print what it decided.
+///
+/// Unlike the other `memory` subcommands this deliberately does NOT route
+/// through the daemon: the pass spawns a model subprocess that can run for
+/// minutes, and tunnelling that through the MCP socket would block the
+/// daemon's request path for every other project. It only touches the
+/// markdown files (no redb), so running alongside a live daemon is safe.
+pub async fn run_dream(root: &Path, force: bool, dry_run: bool, json: bool) -> Result<()> {
+    if !root.exists() {
+        anyhow::bail!("{} not found — run `hoangsa-memory init` first", root.display());
+    }
+    let opts = hoangsa_memory_policy::DreamOpts { force, dry_run };
+    let report = hoangsa_memory_policy::dream_pass(root, opts).await?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "skipped": report.skipped,
+                "entries_reviewed": report.entries_reviewed,
+                "kept": report.kept,
+                "rewritten": report.rewritten,
+                "merged": report.merged,
+                "dropped": report.dropped,
+                "applied": report.applied,
+                "review_path": report.review_path,
+            })
+        );
+        return Ok(());
+    }
+
+    if let Some(reason) = &report.skipped {
+        println!("dream skipped: {reason}");
+        return Ok(());
+    }
+    println!(
+        "reviewed {} entries — {} rewritten, {} merged, {} dropped",
+        report.entries_reviewed, report.rewritten, report.merged, report.dropped
+    );
+    if dry_run {
+        println!("dry run — nothing written");
+    } else if report.applied {
+        println!("applied; dropped entries archived to *.dropped.md");
+    } else if let Some(path) = &report.review_path {
+        println!("proposals written to {}", path.display());
+    }
     Ok(())
 }
 

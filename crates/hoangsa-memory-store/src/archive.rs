@@ -1,9 +1,9 @@
 //! Archive session tracker, backed by SQLite.
 //!
-//! Tracks which conversation sessions have been ingested into the ChromaDB
-//! `hoangsa_memory_archive` ChromaDB collection. Verbatim content lives in ChromaDB; this DB
-//! only stores lightweight metadata to avoid re-processing and to support
-//! spatial queries (project / topic).
+//! Tracks which conversation sessions have been ingested into the
+//! `hoangsa_memory_archive` vector collection. Verbatim content lives in the
+//! vector store (`vectors.sqlite`); this DB only stores lightweight metadata
+//! to avoid re-processing and to support spatial queries (project / topic).
 //!
 //! ```sql
 //! CREATE TABLE archive_sessions (
@@ -82,6 +82,11 @@ impl ArchiveTracker {
             let c = Connection::open(&path).map_err(store)?;
             c.execute_batch(
                 "PRAGMA journal_mode = WAL;
+         -- Wait for a competing writer instead of failing instantly. Without
+         -- this the default busy handler is 0 ms, so any second writer gets
+         -- SQLITE_BUSY immediately — an `archive purge` running beside an
+         -- `archive ingest` errored out mid-purge with no retry.
+         PRAGMA busy_timeout = 5000;
                  PRAGMA synchronous = NORMAL;
                  PRAGMA cache_size = -20000;
                  PRAGMA temp_store = MEMORY;
@@ -198,7 +203,7 @@ impl ArchiveTracker {
 
     /// Delete every session whose `ingested_at` is older than `cutoff_unix`
     /// seconds. Returns the list of removed `session_id`s so the caller
-    /// can also purge the corresponding chunks from ChromaDB.
+    /// can also purge the corresponding chunks from the vector store.
     pub fn purge_older_than(&self, cutoff_unix: i64) -> Result<Vec<String>> {
         let conn = self.conn.lock();
         let mut stmt = conn

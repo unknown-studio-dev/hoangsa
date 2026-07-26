@@ -794,8 +794,11 @@ impl Server {
 
         let dir = parse_direction(direction.as_deref().unwrap_or("out"))?;
         let kinds = parse_edge_kinds(edge_kinds.as_deref())?;
-        let max_depth = max_depth.unwrap_or(3);
-        let max_nodes = max_nodes.unwrap_or(500);
+        // Client-supplied traversal bounds. The sibling tools in this file already
+        // clamp (lines 93 / 225 / 372 / 479); these four did not, so one oversized
+        // argument turned a bounded walk into an all-cores sweep.
+        let max_depth = max_depth.unwrap_or(3).clamp(1, 16);
+        let max_nodes = max_nodes.unwrap_or(500).clamp(1, 5_000);
         let use_dot = matches!(format.as_deref(), Some("dot"));
 
         let res = self.resources().await?;
@@ -853,7 +856,7 @@ impl Server {
 
         let dir = parse_direction(direction.as_deref().unwrap_or("out"))?;
         let kinds = parse_edge_kinds(edge_kinds.as_deref())?;
-        let max_depth = max_depth.unwrap_or(10);
+        let max_depth = max_depth.unwrap_or(10).clamp(1, 32);
 
         let res = self.resources().await?;
         let g = &res.graph;
@@ -971,11 +974,18 @@ impl Server {
             "query".to_string(),
         ];
 
-        let sources = match sources {
+        // Patterns are matched with `fqn.contains(p)`, and `contains("")` is
+        // always true — one empty element made EVERY node a source, so the
+        // max_findings early-exit never fired and the walk became N full BFS
+        // traversals. Drop blanks before the emptiness test.
+        let clean = |v: Vec<String>| -> Vec<String> {
+            v.into_iter().filter(|p| !p.trim().is_empty()).collect()
+        };
+        let sources = match sources.map(clean) {
             Some(v) if !v.is_empty() => v,
             _ => default_sources,
         };
-        let sinks = match sinks {
+        let sinks = match sinks.map(clean) {
             Some(v) if !v.is_empty() => v,
             _ => default_sinks,
         };
@@ -984,8 +994,8 @@ impl Server {
         let spec = TaintSpec {
             sources,
             sinks,
-            max_depth: max_depth.unwrap_or(12),
-            max_findings: max_findings.unwrap_or(50),
+            max_depth: max_depth.unwrap_or(12).clamp(1, 32),
+            max_findings: max_findings.unwrap_or(50).clamp(1, 500),
         };
 
         let res = self.resources().await?;
@@ -1028,7 +1038,7 @@ impl Server {
             max_depth,
             entry_globs,
         } = serde_json::from_value(args)?;
-        let max_depth = max_depth.unwrap_or(8);
+        let max_depth = max_depth.unwrap_or(8).clamp(1, 16);
         let entry_globs = entry_globs.unwrap_or_default();
 
         let res = self.resources().await?;

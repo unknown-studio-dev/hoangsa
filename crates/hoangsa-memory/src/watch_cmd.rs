@@ -65,7 +65,7 @@ pub async fn run_watch(root: &Path, src: &Path, debounce: Duration) -> Result<()
     // the watcher's lifetime so concurrent hook-triggered ingests
     // don't load a second copy of the fastembed ONNX model alongside
     // ours.
-    let _vector_lock = match crate::acquire_vector_lock() {
+    let _vector_lock = match crate::acquire_vector_lock(std::time::Duration::from_secs(180)) {
         Ok(Some(lock)) => {
             if let Some(col) = open_vector_store(&store).await {
                 idx = idx.with_vector_store(col);

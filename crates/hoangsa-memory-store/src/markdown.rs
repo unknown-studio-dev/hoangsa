@@ -126,8 +126,6 @@ impl From<&HistoryEntry> for HistoryEntryOnDisk {
 }
 
 use hoangsa_memory_core::{LESSONS_MD, MEMORY_MD, USER_MD};
-const MEMORY_PENDING_MD: &str = "MEMORY.pending.md";
-const LESSONS_PENDING_MD: &str = "LESSONS.pending.md";
 const LESSONS_QUARANTINED_MD: &str = "LESSONS.quarantined.md";
 const MEMORY_HISTORY_JSONL: &str = "memory-history.jsonl";
 /// Truncate `memory-history.jsonl` once it crosses this byte budget.
@@ -372,17 +370,80 @@ impl MarkdownStore {
         write_atomic(&path, &body).await
     }
 
+    /// Rewrite `USER.md` from scratch with the given preferences in order.
+    /// Used by the dream pass to drop or merge preferences. Atomic: writes
+    /// to a sibling temp file then renames.
+    pub async fn rewrite_preferences(&self, prefs: &[Preference]) -> Result<()> {
+        let path = self.root.join(USER_MD);
+        let mut body = String::from("# USER.md\n");
+        for p in prefs {
+            body.push_str(&render_preference(p));
+        }
+        write_atomic(&path, &body).await
+    }
+
     /// Increment `success_count` on every lesson whose `trigger` matches
     /// one of `triggers` (case-insensitive). No-op for unknown triggers.
     /// Returns the number of lessons bumped.
     pub async fn bump_lesson_success(&self, triggers: &[String]) -> Result<usize> {
-        self.bump_lesson_counters(triggers, true).await
+        self.with_surface_lock(LESSONS_MD, self.bump_lesson_counters(triggers, true))
+            .await
     }
 
     /// Increment `failure_count` on every lesson whose `trigger` matches
     /// one of `triggers`. Same contract as [`Self::bump_lesson_success`].
     pub async fn bump_lesson_failure(&self, triggers: &[String]) -> Result<usize> {
-        self.bump_lesson_counters(triggers, false).await
+        self.with_surface_lock(LESSONS_MD, self.bump_lesson_counters(triggers, false))
+            .await
+    }
+
+
+    /// Run a read-modify-write over one surface while holding an exclusive
+    /// lock on it.
+    ///
+    /// `write_atomic` makes the publish atomic, but load → mutate → save is
+    /// still a lost-update race between processes: the daemon's forget pass,
+    /// a hook-fired `lesson-feedback`, and an MCP `memory_remember_*` all
+    /// rewrite these files. Measured losing 9–11 of 12 concurrent updates.
+    ///
+    /// The closure receives nothing and is expected to do its own read and
+    /// write through `&self`; the lock only has to span both.
+    async fn with_surface_lock<T, F>(&self, file_name: &str, f: F) -> Result<T>
+    where
+        F: std::future::Future<Output = Result<T>>,
+    {
+        let path = self.root.join(file_name);
+        let lock_path = path.with_extension("md.lock");
+        let _ = tokio::fs::create_dir_all(&self.root).await;
+        let handle = tokio::task::spawn_blocking(move || {
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(false)
+                .open(&lock_path)
+                .ok()?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                if file.try_lock().is_ok() {
+                    return Some(file);
+                }
+                if std::time::Instant::now() >= deadline {
+                    // Proceed unlocked rather than fail: a lost update is
+                    // recoverable, a hung memory write blocks the agent.
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        })
+        .await
+        .ok()
+        .flatten();
+
+        let result = f.await;
+        if let Some(file) = handle {
+            let _ = file.unlock();
+        }
+        result
     }
 
     async fn bump_lesson_counters(&self, triggers: &[String], success: bool) -> Result<usize> {
@@ -414,180 +475,6 @@ impl MarkdownStore {
             self.rewrite_lessons(&lessons).await?;
         }
         Ok(bumped)
-    }
-
-    // -- staging (review mode) -----------------------------------------
-
-    /// Append a fact to the pending file instead of canonical `MEMORY.md`.
-    ///
-    /// Used in `memory_mode = "review"` — the user must then promote or
-    /// reject the entry via [`Self::promote_pending_fact`] or
-    /// [`Self::reject_pending_fact`].
-    pub async fn append_pending_fact(&self, f: &Fact) -> Result<()> {
-        let path = self.root.join(MEMORY_PENDING_MD);
-        append_atomic(&path, &render_fact(f)).await?;
-        self.append_history(&HistoryEntry {
-            op: "stage",
-            kind: "fact",
-            title: first_line(&f.text),
-            actor: None,
-            reason: None,
-        })
-        .await
-    }
-
-    /// Append a lesson to the pending file (see
-    /// [`Self::append_pending_fact`]).
-    pub async fn append_pending_lesson(&self, l: &Lesson) -> Result<()> {
-        let path = self.root.join(LESSONS_PENDING_MD);
-        append_atomic(&path, &render_lesson(l)).await?;
-        self.append_history(&HistoryEntry {
-            op: "stage",
-            kind: "lesson",
-            title: l.trigger.trim().to_string(),
-            actor: None,
-            reason: None,
-        })
-        .await
-    }
-
-    /// Read every pending fact (returns `Vec::new()` if the file is missing).
-    pub async fn read_pending_facts(&self) -> Result<Vec<Fact>> {
-        let path = self.root.join(MEMORY_PENDING_MD);
-        let text = read_or_empty(&path).await?;
-        Ok(parse_facts(&text))
-    }
-
-    /// Read every pending lesson.
-    pub async fn read_pending_lessons(&self) -> Result<Vec<Lesson>> {
-        let path = self.root.join(LESSONS_PENDING_MD);
-        let text = read_or_empty(&path).await?;
-        Ok(parse_lessons(&text))
-    }
-
-    /// Promote the pending fact at `index` (0-based) to `MEMORY.md`.
-    ///
-    /// Returns `Ok(None)` if the index is out of range. Both files are
-    /// rewritten atomically; on success an entry is appended to
-    /// `memory-history.jsonl`.
-    pub async fn promote_pending_fact(&self, index: usize) -> Result<Option<Fact>> {
-        let mut pending = self.read_pending_facts().await?;
-        if index >= pending.len() {
-            return Ok(None);
-        }
-        let fact = pending.remove(index);
-        self.append_fact_to_file(&fact).await?;
-        self.rewrite_pending_facts(&pending).await?;
-        self.append_history(&HistoryEntry {
-            op: "promote",
-            kind: "fact",
-            title: first_line(&fact.text),
-            actor: None,
-            reason: None,
-        })
-        .await?;
-        Ok(Some(fact))
-    }
-
-    /// Reject the pending fact at `index`. `reason` is recorded in the
-    /// history log but the fact is not retained.
-    pub async fn reject_pending_fact(
-        &self,
-        index: usize,
-        reason: Option<&str>,
-    ) -> Result<Option<Fact>> {
-        let mut pending = self.read_pending_facts().await?;
-        if index >= pending.len() {
-            return Ok(None);
-        }
-        let fact = pending.remove(index);
-        self.rewrite_pending_facts(&pending).await?;
-        self.append_history(&HistoryEntry {
-            op: "reject",
-            kind: "fact",
-            title: first_line(&fact.text),
-            actor: None,
-            reason: reason.map(|s| s.to_string()),
-        })
-        .await?;
-        Ok(Some(fact))
-    }
-
-    /// Promote the pending lesson at `index` to `LESSONS.md`.
-    pub async fn promote_pending_lesson(&self, index: usize) -> Result<Option<Lesson>> {
-        let mut pending = self.read_pending_lessons().await?;
-        if index >= pending.len() {
-            return Ok(None);
-        }
-        let lesson = pending.remove(index);
-        self.append_lesson_to_file(&lesson).await?;
-        self.rewrite_pending_lessons(&pending).await?;
-        self.append_history(&HistoryEntry {
-            op: "promote",
-            kind: "lesson",
-            title: lesson.trigger.trim().to_string(),
-            actor: None,
-            reason: None,
-        })
-        .await?;
-        Ok(Some(lesson))
-    }
-
-    /// Reject the pending lesson at `index`.
-    pub async fn reject_pending_lesson(
-        &self,
-        index: usize,
-        reason: Option<&str>,
-    ) -> Result<Option<Lesson>> {
-        let mut pending = self.read_pending_lessons().await?;
-        if index >= pending.len() {
-            return Ok(None);
-        }
-        let lesson = pending.remove(index);
-        self.rewrite_pending_lessons(&pending).await?;
-        self.append_history(&HistoryEntry {
-            op: "reject",
-            kind: "lesson",
-            title: lesson.trigger.trim().to_string(),
-            actor: None,
-            reason: reason.map(|s| s.to_string()),
-        })
-        .await?;
-        Ok(Some(lesson))
-    }
-
-    async fn rewrite_pending_facts(&self, facts: &[Fact]) -> Result<()> {
-        let path = self.root.join(MEMORY_PENDING_MD);
-        if facts.is_empty() {
-            match tokio::fs::remove_file(&path).await {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e.into()),
-            }
-            return Ok(());
-        }
-        let mut body = String::from("# MEMORY.pending.md\n");
-        for f in facts {
-            body.push_str(&render_fact(f));
-        }
-        write_atomic(&path, &body).await
-    }
-
-    async fn rewrite_pending_lessons(&self, lessons: &[Lesson]) -> Result<()> {
-        let path = self.root.join(LESSONS_PENDING_MD);
-        if lessons.is_empty() {
-            match tokio::fs::remove_file(&path).await {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e.into()),
-            }
-            return Ok(());
-        }
-        let mut body = String::from("# LESSONS.pending.md\n");
-        for l in lessons {
-            body.push_str(&render_lesson(l));
-        }
-        write_atomic(&path, &body).await
     }
 
     // -- quarantine -----------------------------------------------------
@@ -1056,7 +943,10 @@ async fn write_atomic(path: &Path, body: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    let tmp = path.with_extension("tmp");
+    // Unique per writer — a shared `<name>.tmp` lets two processes interleave
+    // inside the temp file and publish a spliced result (reproduced: one
+    // writer's 248 KB body with another's short body spliced in at byte 424).
+    let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
     tokio::fs::write(&tmp, body.as_bytes()).await?;
     tokio::fs::rename(&tmp, path).await?;
     Ok(())
@@ -1085,6 +975,29 @@ fn render_fact(f: &Fact) -> String {
     }
     if f.scope == FactScope::OnDemand {
         out.push_str("scope: on-demand\n");
+    }
+    out.push('\n');
+    out
+}
+
+/// Render a single [`Preference`] as a level-3 heading block. Same shape as
+/// [`render_fact`] minus the `scope:` line — preferences have no scope and
+/// no counters, so heading + body + `tags:` round-trips every field.
+fn render_preference(p: &Preference) -> String {
+    let title = first_line(&p.text);
+    let body = remainder(&p.text);
+    let mut out = String::new();
+    out.push_str("### ");
+    out.push_str(&title);
+    out.push('\n');
+    if !body.trim().is_empty() {
+        out.push_str(body.trim_end());
+        out.push('\n');
+    }
+    if !p.tags.is_empty() {
+        out.push_str("tags: ");
+        out.push_str(&p.tags.join(", "));
+        out.push('\n');
     }
     out.push('\n');
     out

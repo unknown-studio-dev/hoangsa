@@ -127,14 +127,100 @@ pub(crate) struct ConfigFile {
     pub(crate) memory: MemoryConfig,
     #[serde(default, alias = "discipline")]
     pub(crate) curation: CurationConfig,
+    pub(crate) dream: DreamConfig,
+}
+
+/// Knobs for the background **dream** pass — the LLM-driven consolidation
+/// sweep that re-reads `MEMORY.md` / `LESSONS.md` / `USER.md` and merges,
+/// drops, or flags entries that have gone stale or wrong.
+///
+/// Distinct from the deterministic forget pass ([`MemoryConfig`]): that one
+/// prunes on counters and clocks, this one reads the *content* and needs a
+/// model to do it. Both run from the same daemon loop.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(default)]
+pub struct DreamConfig {
+    /// Master switch. Default `false` — dreaming spends tokens, so it is
+    /// opt-in per project.
+    pub enabled: bool,
+    /// What the dream pass is allowed to do with its verdicts:
+    ///
+    /// - `"review"` (default) — write every proposal to `DREAM.md` and touch
+    ///   nothing else. The user reads it and applies what they agree with.
+    /// - `"auto"` — apply merges and drops directly, archiving each dropped
+    ///   entry to `<SURFACE>.dropped.md` with the model's reason, and logging
+    ///   every op to `memory-history.jsonl` so it can be audited or reverted.
+    pub mode: String,
+    /// Minimum idle time (minutes, no MCP request served) before the daemon
+    /// will start a dream. Keeps the sweep off the critical path while the
+    /// user is actively working.
+    pub idle_minutes: u64,
+    /// Floor on how often a project may dream, in hours. Also enforced
+    /// across daemon restarts via the `last_dream_at` marker file.
+    pub min_interval_hours: u64,
+    /// Skip the pass entirely when the three surfaces hold fewer than this
+    /// many entries combined — there is nothing to consolidate yet.
+    pub min_entries: usize,
+    /// Hard wall-clock limit for the model subprocess, in seconds.
+    pub timeout_secs: u64,
+    /// Explicit argv for the model subprocess, e.g.
+    /// `["claude", "-p", "--model", "claude-sonnet-5"]`. The prompt is
+    /// appended as the final argument. Empty (default) means auto-detect:
+    /// `claude` first, then `codex exec`.
+    pub command: Vec<String>,
+}
+
+impl Default for DreamConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode: "review".to_string(),
+            idle_minutes: 20,
+            min_interval_hours: 12,
+            min_entries: 8,
+            timeout_secs: 300,
+            command: Vec::new(),
+        }
+    }
+}
+
+impl DreamConfig {
+    /// `true` if the pass may write to the canonical surfaces itself.
+    /// Anything other than `"auto"` is treated as review — an unrecognised
+    /// mode must fail closed, not silently grant write access.
+    pub fn is_auto(&self) -> bool {
+        self.mode.eq_ignore_ascii_case("auto")
+    }
+
+    /// Load `<root>/config.toml`, falling back to defaults on a missing or
+    /// malformed file — same tolerant contract as the sibling loaders.
+    pub async fn load_or_default(root: &Path) -> Self {
+        let path = root.join("config.toml");
+        let text = match tokio::fs::read_to_string(&path).await {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Self::default(),
+            Err(e) => {
+                tracing::warn!(error = %e, path = %path.display(),
+                    "dream: could not read config.toml, using defaults");
+                return Self::default();
+            }
+        };
+        match toml::from_str::<ConfigFile>(&text) {
+            Ok(cf) => cf.dream,
+            Err(e) => {
+                tracing::warn!(error = %e, path = %path.display(),
+                    "dream: config.toml parse error, using defaults");
+                Self::default()
+            }
+        }
+    }
 }
 
 /// Live policy knobs for the memory-curation loop.
 ///
-/// Read by the MCP server to (a) decide whether `memory_remember_*` writes
-/// stage into `*.pending.md` (review mode) and (b) whether the
-/// `memory.grounding_check` prompt is advertised. Also consumed by the
-/// forget pass to quarantine lessons with a bad success ratio.
+/// Read by the MCP server to decide whether the `memory.grounding_check`
+/// prompt is advertised, and by the forget pass to quarantine lessons with
+/// a bad success ratio.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(default)]
 pub struct CurationConfig {
@@ -142,18 +228,6 @@ pub struct CurationConfig {
     /// in the assistant's response. Default `false` (opt-in — it's the
     /// slowest of the three).
     pub grounding_check: bool,
-    /// How new facts and lessons land in memory:
-    ///
-    /// - `"auto"` (default) — `memory_remember_fact` and
-    ///   `memory_remember_lesson` write straight to `MEMORY.md` / `LESSONS.md`.
-    /// - `"review"` — writes land in `MEMORY.pending.md` / `LESSONS.pending.md`
-    ///   and a human must run `memory_promote` (or the CLI equivalent)
-    ///   to accept them. Rejected entries are archived with a reason.
-    ///
-    /// Teams that want hard curation should switch to `"review"`; teams that
-    /// trust the agent can stay on `"auto"` and rely on the forget pass +
-    /// confidence counters to prune bad memory later.
-    pub memory_mode: String,
     /// Lessons whose `failure_count / (success_count + failure_count)`
     /// exceeds this ratio (once they have at least
     /// [`Self::quarantine_min_attempts`] attempts) are moved from
@@ -170,7 +244,6 @@ impl Default for CurationConfig {
     fn default() -> Self {
         Self {
             grounding_check: false,
-            memory_mode: "auto".to_string(),
             quarantine_failure_ratio: 0.66,
             quarantine_min_attempts: 5,
         }
@@ -178,12 +251,6 @@ impl Default for CurationConfig {
 }
 
 impl CurationConfig {
-    /// `true` if new memory should be staged (pending) instead of
-    /// auto-committed.
-    pub fn requires_review(&self) -> bool {
-        self.memory_mode.eq_ignore_ascii_case("review")
-    }
-
     /// Load `<root>/config.toml` if it exists, else return defaults.
     ///
     /// Same tolerant behaviour as [`MemoryConfig::load_or_default`]: missing

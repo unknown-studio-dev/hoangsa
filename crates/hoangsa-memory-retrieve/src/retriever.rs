@@ -49,6 +49,9 @@ pub struct Retriever {
     graph: Graph,
     vector_store: Option<Arc<dyn VectorCol>>,
     synthesizer: Option<Arc<dyn Synthesizer>>,
+    /// LLM rerank pass. Disabled unless a project opts in via
+    /// `[rerank] enabled` — see [`crate::rerank`].
+    rerank: crate::config::RerankConfig,
     /// Multiplier applied to the fused score of every
     /// `RetrievalSource::Markdown` hit after RRF, before top-K selection.
     /// `1.0` is the identity (no boost). Set via
@@ -67,6 +70,7 @@ impl Retriever {
             graph,
             vector_store: None,
             synthesizer: None,
+            rerank: Default::default(),
             markdown_boost: 1.0,
         }
     }
@@ -83,6 +87,7 @@ impl Retriever {
             graph,
             vector_store,
             synthesizer,
+            rerank: Default::default(),
             markdown_boost: 1.0,
         }
     }
@@ -102,6 +107,13 @@ impl Retriever {
     /// as-is — the config loader already clamps into `[0.0, 10.0]`.
     pub fn with_markdown_boost(mut self, boost: f32) -> Self {
         self.markdown_boost = boost;
+        self
+    }
+
+    /// Attach the LLM rerank config. Off unless the project opted in via
+    /// `[rerank] enabled` — see [`crate::rerank`].
+    pub fn with_rerank(mut self, cfg: crate::config::RerankConfig) -> Self {
+        self.rerank = cfg;
         self
     }
 
@@ -272,9 +284,33 @@ impl Retriever {
         // highest-scoring representative.
         let ranked = dedupe_by_path_symbol(ranked);
 
-        let mut chunks = Vec::with_capacity(k);
-        for row in ranked.into_iter().take(k) {
+        // Materialize a WINDOW rather than exactly k when reranking: the
+        // model can only reorder what it is shown, so a window of k would
+        // let it shuffle the top-k without ever rescuing the good hit sitting
+        // at k+1. Without reranking this is exactly the old `take(k)`.
+        let window = if self.rerank.enabled {
+            self.rerank.candidates.max(k)
+        } else {
+            k
+        };
+        let mut chunks = Vec::with_capacity(window.min(ranked.len()));
+        for row in ranked.into_iter().take(window) {
             chunks.push(self.materialize(row).await?);
+        }
+
+        if self.rerank.enabled {
+            // Run in the project dir (two levels up from the store root) so a
+            // harness CLI can look at the real code when a snippet is
+            // ambiguous. Fail-open: this never returns an error.
+            let cwd = self
+                .store
+                .path
+                .parent()
+                .and_then(std::path::Path::parent)
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| self.store.path.clone());
+            crate::rerank::rerank_chunks(&self.rerank, &cwd, &q.text, &mut chunks).await;
+            chunks.truncate(k);
         }
 
         // Enrich the top-K with graph context (callers/callees/imports/

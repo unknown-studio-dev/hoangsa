@@ -50,7 +50,7 @@ impl Server {
             .await?;
         let commit_fragment = commit_sha
             .as_ref()
-            .map(|s| format!(" @ {}", &s[..s.len().min(7)]))
+            .map(|s| format!(" @ {}", crate::sanitize::truncate_chars(s, 7)))
             .unwrap_or_default();
         let files_fragment = if file_paths.is_empty() {
             String::new()
@@ -79,7 +79,10 @@ impl Server {
             top_k: Option<usize>,
         }
         let Args { query, top_k } = serde_json::from_value(args)?;
-        let k = top_k.unwrap_or(10);
+        // Schema declares maximum 50, but nothing enforced it: `k as i64` made
+        // usize::MAX become -1, and SQLite reads a negative LIMIT as unbounded —
+        // one bad argument dumped the whole archive and pinned every core.
+        let k = top_k.unwrap_or(10).clamp(1, 50);
 
         let hits = self
             .resources()
@@ -115,10 +118,10 @@ impl Server {
                 ts,
                 t.role,
                 t.turn_number,
-                &t.session_id[..t.session_id.len().min(8)],
+                crate::sanitize::truncate_chars(&t.session_id, 8),
                 commit_tag,
                 paths_tag,
-                &t.content[..t.content.len().min(500)],
+                crate::sanitize::truncate_chars(&t.content, 500),
             ));
         }
         let data: Vec<Value> = hits
@@ -192,7 +195,7 @@ impl Server {
             .get("query")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
-        let top_k = args.get("top_k").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+        let top_k = (args.get("top_k").and_then(|v| v.as_u64()).unwrap_or(10) as usize).clamp(1, 50);
         let project = args.get("project").and_then(|v| v.as_str());
         let topic = args.get("topic").and_then(|v| v.as_str());
 

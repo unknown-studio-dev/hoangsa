@@ -145,11 +145,6 @@ pub(super) fn tools_catalog() -> Vec<Tool> {
                     "block_message": {
                         "type": "string",
                         "description": "Message shown via stderr when this lesson blocks a tool call (used once promoted to Block)."
-                    },
-                    "stage": {
-                        "type": "boolean",
-                        "default": false,
-                        "description": "Force staging to LESSONS.pending.md even in auto-commit mode."
                     }
                 },
                 "required": ["trigger", "advice"]

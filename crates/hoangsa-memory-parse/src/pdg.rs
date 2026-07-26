@@ -153,12 +153,21 @@ pub fn extract_pdg(chunk: &SourceChunk, symbols: &SymbolTable) -> PdgOutput {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+/// Cut `s` to at most `max` BYTES, stepping back to a char boundary.
+///
+/// `max` is a byte budget but `s` is arbitrary source text, so slicing at
+/// `max` directly panics whenever a multi-byte character straddles that
+/// offset — one accented character or emoji in a long statement was enough
+/// to abort a whole `--pdg` index run.
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
-        s.to_string()
-    } else {
-        s[..max].to_string()
+        return s.to_string();
     }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s[..end].to_string()
 }
 
 /// Recursively search the subtree for a function/method node whose row span
@@ -407,7 +416,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::{SourceChunk, Symbol, SymbolKind, SymbolTable};
-    use super::extract_pdg;
+    use super::{extract_pdg, truncate};
 
     fn make_chunk(language: &'static str, body: &str, start_line: u32) -> SourceChunk {
         let end_line = start_line + body.lines().count() as u32;
@@ -557,5 +566,27 @@ mod tests {
         assert!(out.nodes.is_empty());
         assert!(out.cfg.is_empty());
         assert!(out.data_dep.is_empty());
+    }
+
+    /// `truncate` takes a BYTE budget but source text is arbitrary UTF-8.
+    /// Slicing at that offset panicked whenever a multi-byte character
+    /// straddled it — one accented char in a long statement aborted the
+    /// whole PDG pass.
+    #[test]
+    fn truncate_never_splits_a_multibyte_char() {
+        // 'á' is 2 bytes, so byte 120 lands inside one.
+        let stmt = format!("let msg = \"{}\";", "á".repeat(80));
+        assert!(stmt.len() > 120);
+        assert!(!stmt.is_char_boundary(120));
+
+        let out = truncate(&stmt, 120);
+        assert!(out.len() <= 120, "must respect the byte budget");
+        assert!(stmt.starts_with(&out), "must be a prefix of the input");
+
+        // Short input is returned whole; a boundary-aligned cut is exact.
+        assert_eq!(truncate("abc", 120), "abc");
+        assert_eq!(truncate("abcdef", 3), "abc");
+        // A 4-byte char (emoji) straddling the budget backs off completely.
+        assert_eq!(truncate("ab🎉", 3), "ab");
     }
 }

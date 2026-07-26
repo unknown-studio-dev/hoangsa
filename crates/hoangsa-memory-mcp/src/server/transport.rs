@@ -65,6 +65,120 @@ pub fn socket_path(root: &Path) -> std::path::PathBuf {
     root.join("mcp.sock")
 }
 
+// ===========================================================================
+// Stdio → socket relay (second instance on the same project)
+// ===========================================================================
+
+/// True when `sock` has a live listener behind it.
+///
+/// A leftover socket *file* from a killed daemon refuses connections, so
+/// `connect()` succeeding is the same liveness signal [`run_socket`] uses
+/// before deciding another daemon owns the project.
+pub async fn daemon_alive(sock: &Path) -> bool {
+    tokio::net::UnixStream::connect(sock).await.is_ok()
+}
+
+/// Poll [`daemon_alive`] until it answers or `attempts` × `interval` elapse.
+///
+/// Used to settle the startup race: when two instances launch together,
+/// the loser's redb open fails a few milliseconds before the winner has
+/// finished binding its socket.
+pub async fn wait_for_daemon(
+    sock: &Path,
+    attempts: u32,
+    interval: std::time::Duration,
+) -> bool {
+    for _ in 0..attempts {
+        if daemon_alive(sock).await {
+            return true;
+        }
+        tokio::time::sleep(interval).await;
+    }
+    false
+}
+
+/// True when `err` is redb refusing a second exclusive lock on the store.
+///
+/// The message is carried as a string inside
+/// `hoangsa_memory_core::Error::Store`, so this has to match on text —
+/// redb offers no distinguishable typed variant by the time it reaches us.
+pub fn is_store_lock_conflict(err: &anyhow::Error) -> bool {
+    let text = format!("{err:#}");
+    text.contains("Cannot acquire lock") || text.contains("Database already open")
+}
+
+/// Why [`run_stdio_proxy`] stopped.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RelayEnd {
+    /// Our client closed stdin (or ctrl-c) — an ordinary shutdown.
+    StdinClosed,
+    /// The owning daemon dropped the connection. Our stdin read is still
+    /// parked in a blocking-pool thread that runtime shutdown would join
+    /// forever, so the caller must exit the process rather than return.
+    OwnerGone,
+}
+
+/// Relay this process's stdio to a daemon that already owns the project.
+///
+/// Both transports speak the same newline-delimited JSON-RPC, so this is a
+/// line pump in each direction — no parsing, which keeps notifications
+/// (requests with no response) correct for free.
+///
+/// Returns when stdin closes, ctrl-c arrives, or the daemon drops the
+/// connection. The caller must NOT unlink the socket afterwards: it
+/// belongs to the other process.
+pub async fn run_stdio_proxy(sock: &Path) -> anyhow::Result<RelayEnd> {
+    let stream = tokio::net::UnixStream::connect(sock).await?;
+    debug!(path = %sock.display(), "relaying stdio to existing daemon");
+    let (sock_reader, mut sock_writer) = stream.into_split();
+
+    // Daemon → stdout.
+    let down = tokio::spawn(async move {
+        let mut reader = BufReader::new(sock_reader);
+        let mut stdout = tokio::io::stdout();
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            if stdout.write_all(line.as_bytes()).await.is_err() || stdout.flush().await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Stdin → daemon. `down` is consumed by the select, so it is held in an
+    // Option: polling a completed JoinHandle again panics.
+    let mut down = Some(down);
+    let mut stdin = BufReader::new(tokio::io::stdin());
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = match down.as_mut() {
+            Some(handle) => tokio::select! {
+                res = stdin.read_line(&mut line) => res?,
+                _ = tokio::signal::ctrl_c() => 0,
+                _ = handle => return Ok(RelayEnd::OwnerGone),
+            },
+            None => tokio::select! {
+                res = stdin.read_line(&mut line) => res?,
+                _ = tokio::signal::ctrl_c() => 0,
+            },
+        };
+        if n == 0 {
+            break;
+        }
+        sock_writer.write_all(line.as_bytes()).await?;
+        sock_writer.flush().await?;
+    }
+    if let Some(handle) = down {
+        handle.abort();
+    }
+    Ok(RelayEnd::StdinClosed)
+}
+
 /// Run a Unix-socket sidecar alongside the stdio transport.
 ///
 /// Binds `.hoangsa/memory/mcp.sock` and accepts connections in a loop. Each

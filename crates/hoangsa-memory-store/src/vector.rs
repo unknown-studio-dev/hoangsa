@@ -356,9 +356,64 @@ pub fn embeddings_disabled_globally() -> bool {
 /// runtime `open` path in lockstep — otherwise they'd download into
 /// different directories and the prefetch would do nothing.
 fn default_init_options() -> InitOptions {
+    cap_onnx_threads();
     InitOptions::new(DEFAULT_MODEL)
         .with_cache_dir(fastembed_cache_dir())
         .with_show_download_progress(true)
+}
+
+/// Ceiling on ONNX Runtime's intra-op thread pool.
+///
+/// ORT sizes that pool to the core count, so one embed pass saturates the
+/// machine: a hook-spawned `archive ingest --refresh` was measured at
+/// **770% CPU on an 11-core box**, from a detached process with no console to
+/// explain where it came from. This is background maintenance; it has no
+/// business outbidding the editor and the compiler for cores.
+///
+/// Half the cores, min 1, max 4. `HOANGSA_ONNX_THREADS` overrides; `0`
+/// restores ORT's default.
+///
+/// Configured through ORT's *global* threading options rather than the
+/// session builder, because `fastembed` owns the session and exposes no
+/// thread knob. `ort::init()` must therefore win the race to create the
+/// process-wide `Environment` — hence `OnceLock`, and hence calling this
+/// before the first `TextEmbedding::try_new`. Environment variables
+/// (`OMP_NUM_THREADS`, `ORT_INTRA_OP_NUM_THREADS`) were tried first and
+/// measured to have no effect on this build: still 836%.
+fn cap_onnx_threads() {
+    static INIT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    INIT.get_or_init(|| {
+        let requested = std::env::var("HOANGSA_ONNX_THREADS")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok());
+        if requested == Some(0) {
+            return; // explicit opt-out: let ORT decide
+        }
+        let threads = requested.unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| (n.get() / 2).clamp(1, 4))
+                .unwrap_or(2)
+        });
+
+        let opts = match ort::environment::GlobalThreadPoolOptions::default()
+            .with_intra_threads(threads)
+            .and_then(|o| o.with_inter_threads(1))
+        {
+            Ok(o) => o,
+            Err(e) => {
+                tracing::debug!(error = %e, "could not build ORT threading options");
+                return;
+            }
+        };
+        // `commit()` returns false when an Environment already exists — we
+        // lost the race, so the cap does not apply. Not an error worth
+        // surfacing on a recall path, but worth a debug line.
+        if ort::init().with_global_thread_pool(opts).commit() {
+            tracing::debug!(threads, "capped ONNX intra-op threads");
+        } else {
+            tracing::debug!("ORT environment already initialised; thread cap not applied");
+        }
+    });
 }
 
 /// Download the default embedding model into the shared cache dir
@@ -947,6 +1002,11 @@ fn open_sqlite(path: &Path) -> Result<Connection> {
     // `temp_store = MEMORY` keeps small intermediates out of /tmp.
     conn.execute_batch(
         "PRAGMA journal_mode = WAL;
+         -- Wait for a competing writer instead of failing instantly. Without
+         -- this the default busy handler is 0 ms, so any second writer gets
+         -- SQLITE_BUSY immediately — an `archive purge` running beside an
+         -- `archive ingest` errored out mid-purge with no retry.
+         PRAGMA busy_timeout = 5000;
          PRAGMA synchronous = NORMAL;
          PRAGMA cache_size = -20000;
          PRAGMA temp_store = MEMORY;
