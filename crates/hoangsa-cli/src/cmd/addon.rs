@@ -197,6 +197,45 @@ pub struct MigrationReport {
     pub config_written: bool,
 }
 
+/// Test seam fired between the content comparison and the rename, so a test
+/// can interleave a write into that window or abort the pass part-way.
+/// Compiled out of every non-test build.
+#[cfg(test)]
+mod rename_hook {
+    use std::cell::RefCell;
+    use std::path::Path;
+
+    type Hook = Box<dyn Fn(&Path)>;
+
+    thread_local! {
+        static HOOK: RefCell<Option<Hook>> = const { RefCell::new(None) };
+    }
+
+    /// Clears the hook for this thread on drop, so a hook never leaks into
+    /// another test that happens to reuse the thread.
+    pub(super) struct Guard;
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            HOOK.with(|h| *h.borrow_mut() = None);
+        }
+    }
+
+    pub(super) fn install(f: impl Fn(&Path) + 'static) -> Guard {
+        HOOK.with(|h| *h.borrow_mut() = Some(Box::new(f)));
+        Guard
+    }
+
+    pub(super) fn fire(path: &Path) {
+        // Taken out of the cell so the callback runs without an active borrow.
+        let taken = HOOK.with(|h| h.borrow_mut().take());
+        if let Some(f) = taken {
+            f(path);
+            HOOK.with(|h| *h.borrow_mut() = Some(f));
+        }
+    }
+}
+
 /// Retire the project-tier addon copies this command used to write.
 ///
 /// A copy byte-identical to its root-tier original carries no user intent —
@@ -249,6 +288,8 @@ pub fn migrate_addon_copies(
             report.kept.push(path.to_string_lossy().to_string());
             continue;
         }
+        #[cfg(test)]
+        rename_hook::fire(&path);
         let mut bak = path.clone().into_os_string();
         bak.push(".bak");
         // Best-effort: a rename that fails leaves the file readable and inert,
@@ -691,6 +732,313 @@ mod tests {
         assert!(
             listing(&addons).is_empty(),
             "addon add must not copy any file into the project tier"
+        );
+    }
+
+    fn config_path(project: &Path) -> PathBuf {
+        project.join(".hoangsa/config.json")
+    }
+
+    fn read_config(project: &Path) -> Value {
+        serde_json::from_str(
+            &fs::read_to_string(config_path(project)).expect("read project config.json"),
+        )
+        .expect("config.json is valid JSON")
+    }
+
+    /// EC-04 — the file is replaced after the content comparison and before the
+    /// rename. The rename moves whatever is on disk at rename time, so the new
+    /// bytes must land in the `.bak` rather than being destroyed.
+    #[test]
+    fn migrate_rename_carries_content_written_after_the_comparison() {
+        let (_tmp, root, project) = fixture(&[("memory.md", MEMORY_ADDON)]);
+        let addons = project_addons(&project);
+        let copy = addons.join("memory.md");
+        fs::write(&copy, MEMORY_ADDON).expect("write project copy");
+
+        const RACED: &str = "---\nname: memory\n---\n\nWritten during the race.\n";
+        let report = {
+            let _hook = rename_hook::install(|path| {
+                fs::write(path, RACED).expect("interleaved write");
+            });
+            migrate(&project, &root)
+        };
+
+        assert_eq!(report.renamed, vec!["memory".to_string()]);
+        assert!(!copy.exists(), "the .md path must have been renamed away");
+        assert_eq!(
+            fs::read_to_string(addons.join("memory.md.bak")).expect("read retired copy"),
+            RACED,
+            "the bytes present at rename time must survive in the .bak"
+        );
+
+        // Re-running re-evaluates whatever state was left behind.
+        let second = migrate(&project, &root);
+        assert!(second.renamed.is_empty() && second.kept.is_empty());
+        assert_eq!(listing(&addons), vec!["memory.md.bak".to_string()]);
+    }
+
+    /// EC-05 — the pass is aborted part-way (a panic unwinds out of the loop
+    /// exactly as a kill would stop it). Already-renamed files stay renamed,
+    /// the rest are untouched, config.json is not written, and a second run
+    /// finishes the remaining renames.
+    #[test]
+    fn migrate_aborted_part_way_leaves_the_rest_untouched_and_resumes() {
+        let files: Vec<(String, String)> = ["a", "b", "c", "d"]
+            .iter()
+            .map(|n| {
+                (
+                    format!("{n}.md"),
+                    format!("---\nname: {n}\n---\n\nAddon {n}.\n"),
+                )
+            })
+            .collect();
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(n, b)| (n.as_str(), b.as_str()))
+            .collect();
+        let (_tmp, root, project) = fixture(&refs);
+        let addons = project_addons(&project);
+        for (name, body) in &files {
+            fs::write(addons.join(name), body).expect("write project copy");
+        }
+        let config_before = fs::read(config_path(&project)).expect("read config.json");
+
+        // The panic message below is expected test output.
+        let aborted = {
+            let _hook = rename_hook::install(|path| {
+                if path.file_name().and_then(|n| n.to_str()) == Some("c.md") {
+                    panic!("simulated kill mid-migration");
+                }
+            });
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                migrate_addon_copies(
+                    project.to_str().expect("project path is utf-8"),
+                    root.to_str().expect("root path is utf-8"),
+                )
+            }))
+        };
+        assert!(aborted.is_err(), "the pass must have been aborted");
+
+        assert_eq!(
+            listing(&addons),
+            vec![
+                "a.md.bak".to_string(),
+                "b.md.bak".to_string(),
+                "c.md".to_string(),
+                "d.md".to_string(),
+            ],
+            "renames before the abort stand; the rest must be untouched"
+        );
+        assert_eq!(
+            fs::read(config_path(&project)).expect("read config.json"),
+            config_before,
+            "config.json must not be written by an aborted pass"
+        );
+
+        let resumed = migrate(&project, &root);
+        assert_eq!(resumed.renamed, vec!["c".to_string(), "d".to_string()]);
+        assert_eq!(
+            listing(&addons),
+            vec![
+                "a.md.bak".to_string(),
+                "b.md.bak".to_string(),
+                "c.md.bak".to_string(),
+                "d.md.bak".to_string(),
+            ],
+            "the second run must finish the remaining renames"
+        );
+    }
+
+    /// EC-12 — a config.json with no `codebase.active_addons`. Root addons are
+    /// still discoverable, and the key appears only once an identical copy is
+    /// actually retired.
+    #[test]
+    fn migrate_adds_active_addons_key_only_when_a_copy_is_retired() {
+        let (_tmp, root, project) = fixture(&[("memory.md", MEMORY_ADDON)]);
+        fs::write(
+            config_path(&project),
+            r#"{"codebase":{"tech_stack":["rust"]}}"#,
+        )
+        .expect("write config without active_addons");
+
+        assert!(
+            scan_available_addons(root.to_str().expect("root path is utf-8"))
+                .iter()
+                .any(|a| a["name"] == "memory"),
+            "root addons must still be discoverable without the config key"
+        );
+        assert!(
+            get_active_addons(project.to_str().expect("project path is utf-8")).is_empty(),
+            "a missing key must read as no active addons"
+        );
+
+        let addons = project_addons(&project);
+        let untouched = migrate(&project, &root);
+        assert!(!untouched.config_written);
+        assert!(
+            read_config(&project)["codebase"]
+                .get("active_addons")
+                .is_none(),
+            "nothing was retired, so the key must not be created"
+        );
+
+        fs::write(addons.join("memory.md"), MEMORY_ADDON).expect("write project copy");
+        let retired = migrate(&project, &root);
+
+        assert!(retired.config_written);
+        let config = read_config(&project);
+        assert_eq!(config["codebase"]["active_addons"], json!(["memory"]));
+        assert_eq!(
+            config["codebase"]["tech_stack"],
+            json!(["rust"]),
+            "the rest of the config must be preserved"
+        );
+    }
+
+    /// EC-17 — a project addon that cannot be read counts as differing: it is
+    /// kept, warned about, and never renamed.
+    #[cfg(unix)]
+    #[test]
+    fn migrate_keeps_unreadable_project_file() {
+        let (_tmp, root, project) = fixture(&[("memory.md", MEMORY_ADDON)]);
+        let addons = project_addons(&project);
+        let copy = addons.join("memory.md");
+        fs::write(&copy, MEMORY_ADDON).expect("write project copy");
+        let _mode = ModeGuard::apply(&copy, 0o000);
+
+        let report = migrate(&project, &root);
+
+        assert!(
+            report.renamed.is_empty(),
+            "an unreadable file must never be treated as an identical copy"
+        );
+        assert_eq!(report.kept, vec![copy.to_string_lossy().to_string()]);
+        assert_eq!(listing(&addons), vec!["memory.md".to_string()]);
+    }
+
+    /// Restores a path's original mode on drop, so an assertion failure cannot
+    /// leave the temp tree unwritable.
+    #[cfg(unix)]
+    struct ModeGuard(PathBuf, u32);
+
+    #[cfg(unix)]
+    impl ModeGuard {
+        fn apply(path: &Path, mode: u32) -> Self {
+            use std::os::unix::fs::PermissionsExt;
+            let original = fs::metadata(path).expect("metadata").permissions().mode();
+            let guard = ModeGuard(path.to_path_buf(), original);
+            fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+                .expect("set permissions");
+            guard
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for ModeGuard {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&self.0, std::fs::Permissions::from_mode(self.1));
+        }
+    }
+
+    /// The built `hoangsa-cli` binary. Unit tests get no `CARGO_BIN_EXE_*`, so
+    /// it is located relative to the test executable in `target/<profile>/deps`.
+    fn cli_bin() -> PathBuf {
+        let mut dir = std::env::current_exe().expect("current_exe");
+        dir.pop();
+        if dir.file_name().and_then(|n| n.to_str()) == Some("deps") {
+            dir.pop();
+        }
+        let bin = dir.join("hoangsa-cli");
+        assert!(bin.is_file(), "hoangsa-cli binary not built at {bin:?}");
+        bin
+    }
+
+    fn run_addon_add(project: &Path, root: &Path, addons_json: &str) -> std::process::Output {
+        std::process::Command::new(cli_bin())
+            .args([
+                "addon",
+                "add",
+                project.to_str().expect("project path is utf-8"),
+                addons_json,
+            ])
+            .env("HOANGSA_ROOT", root)
+            .output()
+            .expect("run hoangsa-cli addon add")
+    }
+
+    /// EC-15 — the addons directory is read-only, so every rename fails. Each
+    /// failure is warned about by path, the remaining files are still
+    /// processed, and the command exits 0.
+    #[cfg(unix)]
+    #[test]
+    fn migrate_warns_and_continues_when_rename_fails() {
+        let (_tmp, root, project) = fixture(&[("memory.md", MEMORY_ADDON), ("rust.md", RUST_ADDON)]);
+        let addons = project_addons(&project);
+        fs::write(addons.join("memory.md"), MEMORY_ADDON).expect("write project copy");
+        fs::write(addons.join("rust.md"), RUST_ADDON).expect("write project copy");
+        let _mode = ModeGuard::apply(&addons, 0o555);
+
+        let output = run_addon_add(&project, &root, r#"["rust"]"#);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "a failed rename must not fail the command; stderr: {stderr}"
+        );
+        for name in ["memory.md", "rust.md"] {
+            let path = addons.join(name).to_string_lossy().to_string();
+            assert!(
+                stderr.contains(&path),
+                "the warning must name {path}; stderr: {stderr}"
+            );
+        }
+        assert_eq!(
+            listing(&addons),
+            vec!["memory.md".to_string(), "rust.md".to_string()],
+            "a file whose rename failed must be left exactly as it was"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("\"success\""),
+            "the command must still report success"
+        );
+    }
+
+    /// EC-16 — the rename lands but `.hoangsa/` is not writable, so
+    /// `active_addons` cannot be recorded. That is fatal: error on stderr,
+    /// exit 1, and config.json left alone.
+    ///
+    /// The unwritable target must be the *directory*: `atomic_write_string`
+    /// writes a temp file and renames it over the config, so a merely
+    /// read-only `config.json` inside a writable directory still succeeds.
+    #[cfg(unix)]
+    #[test]
+    fn migrate_exits_1_when_config_cannot_be_written() {
+        let (_tmp, root, project) = fixture(&[("memory.md", MEMORY_ADDON)]);
+        let addons = project_addons(&project);
+        fs::write(addons.join("memory.md"), MEMORY_ADDON).expect("write project copy");
+        let config_before = fs::read(config_path(&project)).expect("read config.json");
+        let _mode = ModeGuard::apply(&project.join(".hoangsa"), 0o555);
+
+        let output = run_addon_add(&project, &root, r#"["memory"]"#);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "an unrecorded active_addons must be fatal; stderr: {stderr}"
+        );
+        assert!(
+            stderr.contains("config.json"),
+            "the error must name the config it could not write; stderr: {stderr}"
+        );
+        drop(_mode);
+        assert_eq!(
+            fs::read(config_path(&project)).expect("read config.json"),
+            config_before,
+            "config.json must be exactly as it was"
         );
     }
 }
