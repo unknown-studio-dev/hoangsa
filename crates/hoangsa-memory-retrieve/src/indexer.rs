@@ -1141,16 +1141,14 @@ mod root_canonicalisation_tests {
 
     const SRC: &str = "pub fn alpha() -> u32 { 1 }\n";
 
-    /// Index `src_dir` through `spelling` and return every distinct path
-    /// the symbol table now holds for `a.rs`.
+    /// Index the tree through `spelling` and return every distinct path the
+    /// symbol table now holds for `a.rs`.
     async fn stored_paths_after(
         store: &StoreRoot,
-        src_dir: &Path,
         spelling: std::path::PathBuf,
     ) -> HashSet<std::path::PathBuf> {
         let idx = Indexer::new(store.clone(), LanguageRegistry::new());
         idx.index_path(&spelling).await.unwrap();
-        let _ = src_dir;
         store
             .kv
             .symbols_for_path_like(Path::new("a.rs"))
@@ -1180,8 +1178,8 @@ mod root_canonicalisation_tests {
         let mem = tempfile::tempdir().unwrap();
         let store = StoreRoot::open(mem.path()).await.unwrap();
 
-        let via_link = stored_paths_after(&store, src.path(), link).await;
-        let real = stored_paths_after(&store, src.path(), src.path().to_path_buf()).await;
+        let via_link = stored_paths_after(&store, link).await;
+        let real = stored_paths_after(&store, src.path().to_path_buf()).await;
         assert_eq!(
             via_link, real,
             "a symlinked root must store the real path, not a second flavour of it"
@@ -1198,9 +1196,9 @@ mod root_canonicalisation_tests {
         let mem = tempfile::tempdir().unwrap();
         let store = StoreRoot::open(mem.path()).await.unwrap();
 
-        let plain = stored_paths_after(&store, src.path(), src.path().to_path_buf()).await;
+        let plain = stored_paths_after(&store, src.path().to_path_buf()).await;
         let via_parent =
-            stored_paths_after(&store, src.path(), src.path().join("sub").join("..")).await;
+            stored_paths_after(&store, src.path().join("sub").join("..")).await;
         assert_eq!(
             via_parent, plain,
             "`sub/..` must resolve to the same stored path as the plain root"
