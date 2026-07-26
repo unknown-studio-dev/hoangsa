@@ -177,7 +177,7 @@ enum Cmd {
 
     /// Download the default embedding model into the shared fastembed
     /// cache dir. Used by the installer so the first `index` / `query` /
-    /// `archive ingest` call doesn't stall on a 118 MB HuggingFace fetch.
+    /// `archive ingest` call doesn't stall on a ~465 MB HuggingFace fetch.
     /// No-op on subsequent runs (fastembed short-circuits when the
     /// weights are already present).
     PrefetchEmbed,
@@ -499,7 +499,7 @@ pub(crate) async fn open_vector_store(
         Ok(v) => v,
         Err(e) => {
             eprintln!(
-                "hoangsa-memory: vector_store enabled in config but failed to start — embeddings disabled for this run.\n  cause: {e}\n  hint:  first run downloads the `multilingual-e5-small` ONNX weights (~118MB). \
+                "hoangsa-memory: vector_store enabled in config but failed to start — embeddings disabled for this run.\n  cause: {e}\n  hint:  first run downloads the `multilingual-e5-small` ONNX weights (~465 MB). \
                  Check network + disk, or set `[vector_store] enabled = false` to silence this warning."
             );
             return None;
