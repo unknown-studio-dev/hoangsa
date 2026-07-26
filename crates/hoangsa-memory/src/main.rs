@@ -480,6 +480,13 @@ pub(crate) async fn acquire_store_lock(
     }
 }
 
+/// Hint printed when `[vector_store] enabled = true` but the store fails to
+/// start. Held as a const so a drift test can pin the model-cache figure:
+/// the same stale `~118 MB` number was wrong in the seeded config, in this
+/// hint, and in `prefetch-embed --help` at the same time.
+const VECTOR_STORE_START_HINT: &str = "first run downloads the `multilingual-e5-small` ONNX weights (~465 MB). \
+     Check network + disk, or set `[vector_store] enabled = false` to silence this warning.";
+
 pub(crate) async fn open_vector_store(
     store: &StoreRoot,
 ) -> Option<Arc<dyn VectorCol>> {
@@ -499,8 +506,7 @@ pub(crate) async fn open_vector_store(
         Ok(v) => v,
         Err(e) => {
             eprintln!(
-                "hoangsa-memory: vector_store enabled in config but failed to start — embeddings disabled for this run.\n  cause: {e}\n  hint:  first run downloads the `multilingual-e5-small` ONNX weights (~465 MB). \
-                 Check network + disk, or set `[vector_store] enabled = false` to silence this warning."
+                "hoangsa-memory: vector_store enabled in config but failed to start — embeddings disabled for this run.\n  cause: {e}\n  hint:  {VECTOR_STORE_START_HINT}"
             );
             return None;
         }
@@ -521,6 +527,44 @@ mod tests {
     use super::*;
     use std::time::{Duration, Instant};
     use tempfile::tempdir;
+
+    /// `prefetch-embed --help` is the one place a user is told what the
+    /// download costs before they pay for it, and it quoted the pre-e5 figure.
+    /// Render the help clap will actually print rather than trusting the doc
+    /// comment to stay right.
+    #[test]
+    fn prefetch_embed_help_states_real_model_size() {
+        use clap::CommandFactory;
+        let cmd = Cli::command();
+        let mut sub = cmd
+            .get_subcommands()
+            .find(|c| c.get_name() == "prefetch-embed")
+            .expect("prefetch-embed subcommand must exist")
+            .clone();
+        let help = sub.render_long_help().to_string();
+        assert!(
+            help.contains("465 MB"),
+            "prefetch-embed help must state the real cache size; got:\n{help}"
+        );
+        assert!(
+            !help.contains("118"),
+            "prefetch-embed help carries the stale ~118 MB figure; got:\n{help}"
+        );
+    }
+
+    /// Same figure, third surface: the hint printed when the vector store is
+    /// enabled but fails to start.
+    #[test]
+    fn vector_store_start_hint_states_real_model_size() {
+        assert!(
+            VECTOR_STORE_START_HINT.contains("465 MB"),
+            "start hint must state the real cache size"
+        );
+        assert!(
+            !VECTOR_STORE_START_HINT.contains("118"),
+            "start hint carries the stale ~118 MB figure"
+        );
+    }
 
     #[tokio::test]
     async fn store_lock_serialises_contenders() {
