@@ -93,6 +93,16 @@ fn install_dir() -> PathBuf {
 /// installer's own transport and keeps the CLI free of an HTTP stack it needs
 /// nowhere else.
 fn latest_tag() -> Result<String, String> {
+    // Debug-only seam. Without it `cmd_update` cannot be driven by a test at
+    // all — this call needs api.github.com. Gated on `debug_assertions` so a
+    // released binary can never be told which release it is upgrading to by an
+    // environment variable.
+    #[cfg(debug_assertions)]
+    if let Ok(tag) = std::env::var("HOANGSA_UPDATE_LATEST_TAG")
+        && !tag.is_empty()
+    {
+        return Ok(tag);
+    }
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
     let out = Command::new("curl")
         .args([
@@ -160,6 +170,15 @@ pub fn installer_argv(tag: &str, local: bool) -> Result<Vec<String>, String> {
 }
 
 fn installer_url(tag: &str) -> String {
+    // Debug-only seam, same gate and same reason as in `latest_tag`: the file
+    // this URL yields is executed, so a release binary must not accept a new
+    // source for it from the environment.
+    #[cfg(debug_assertions)]
+    if let Ok(base) = std::env::var("HOANGSA_UPDATE_BASE_URL")
+        && !base.is_empty()
+    {
+        return format!("{base}/{tag}/install.sh");
+    }
     format!("https://github.com/{REPO}/releases/download/{tag}/install.sh")
 }
 
