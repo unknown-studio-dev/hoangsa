@@ -46,7 +46,6 @@ pub fn parse_flags(args: &[&str]) -> Result<Flags, String> {
     Ok(f)
 }
 
-
 /// Compare two dotted versions numerically. `v` prefixes and any pre-release
 /// suffix are ignored — a tag is `v0.6.0` and a manifest says `0.6.0`, and
 /// comparing those as strings would report an upgrade forever.
@@ -237,11 +236,15 @@ pub fn cmd_update(args: &[&str]) {
             }));
         }
         Ok(s) => {
-            out(&json!({"status": "error", "error": format!("installer exited {s}"), "command": command}));
+            out(
+                &json!({"status": "error", "error": format!("installer exited {s}"), "command": command}),
+            );
             std::process::exit(1);
         }
         Err(e) => {
-            out(&json!({"status": "error", "error": format!("could not run installer: {e}"), "command": command}));
+            out(
+                &json!({"status": "error", "error": format!("could not run installer: {e}"), "command": command}),
+            );
             std::process::exit(1);
         }
     }

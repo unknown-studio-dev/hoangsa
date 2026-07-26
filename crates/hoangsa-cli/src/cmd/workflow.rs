@@ -36,11 +36,7 @@ pub fn candidates(name: &str, cwd: &str) -> Vec<PathBuf> {
     {
         out.push(Path::new(&root).join("workflows").join(&file));
     }
-    out.push(
-        Path::new(cwd)
-            .join(".claude/hoangsa/workflows")
-            .join(&file),
-    );
+    out.push(Path::new(cwd).join(".claude/hoangsa/workflows").join(&file));
     for base in claude_config_dirs() {
         out.push(base.join("hoangsa/workflows").join(&file));
     }

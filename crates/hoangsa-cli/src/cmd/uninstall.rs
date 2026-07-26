@@ -89,7 +89,6 @@ impl Actions {
     }
 }
 
-
 pub fn cmd_uninstall(args: &[&str], cwd: &Path) {
     let flags = match parse_flags(args) {
         Ok(f) => f,
@@ -112,7 +111,11 @@ pub fn cmd_uninstall(args: &[&str], cwd: &Path) {
         (dst.clone(), dst.join("settings.json"), mcp)
     } else {
         let dst = cwd.join(".claude");
-        (dst.clone(), dst.join("settings.json"), cwd.join(".mcp.json"))
+        (
+            dst.clone(),
+            dst.join("settings.json"),
+            cwd.join(".mcp.json"),
+        )
     };
 
     let manifest = install_dir.join("manifest.json");
@@ -204,7 +207,9 @@ fn rm_file(p: &Path, dry: bool, acts: &mut Actions) {
 }
 
 fn rmdir_if_empty(d: &Path, dry: bool, acts: &mut Actions) {
-    let empty = fs::read_dir(d).map(|mut it| it.next().is_none()).unwrap_or(false);
+    let empty = fs::read_dir(d)
+        .map(|mut it| it.next().is_none())
+        .unwrap_or(false);
     if !empty {
         return;
     }
@@ -221,10 +226,7 @@ fn rmdir_if_empty(d: &Path, dry: bool, acts: &mut Actions) {
 /// settings.json costs the user their whole Claude Code configuration, and
 /// this command exists to leave the machine tidy.
 fn write_atomic(path: &Path, body: &str) -> std::io::Result<()> {
-    let tmp = path.with_extension(format!(
-        "hoangsa.tmp.{}",
-        std::process::id()
-    ));
+    let tmp = path.with_extension(format!("hoangsa.tmp.{}", std::process::id()));
     {
         let mut f = fs::File::create(&tmp)?;
         f.write_all(body.as_bytes())?;
@@ -381,7 +383,10 @@ fn strip_managed_hooks(settings: &Path, dry: bool, acts: &mut Actions) {
     let doc: Value = match serde_json::from_str(&body) {
         Ok(v) => v,
         Err(e) => {
-            acts.skipped(format!("{}: not valid JSON ({e}) — left alone", settings.display()));
+            acts.skipped(format!(
+                "{}: not valid JSON ({e}) — left alone",
+                settings.display()
+            ));
             return;
         }
     };
@@ -425,7 +430,10 @@ fn strip_mcp_entry(mcp: &Path, dry: bool, acts: &mut Actions) {
     let doc: Value = match serde_json::from_str(&body) {
         Ok(v) => v,
         Err(e) => {
-            acts.skipped(format!("{}: not valid JSON ({e}) — left alone", mcp.display()));
+            acts.skipped(format!(
+                "{}: not valid JSON ({e}) — left alone",
+                mcp.display()
+            ));
             return;
         }
     };
@@ -617,7 +625,10 @@ mod tests {
             routed_rel("commands/hoangsa/cook.md"),
             "commands/hoangsa/cook.md"
         );
-        assert_eq!(routed_rel("agents/hoangsa-reviewer.md"), "agents/hoangsa-reviewer.md");
+        assert_eq!(
+            routed_rel("agents/hoangsa-reviewer.md"),
+            "agents/hoangsa-reviewer.md"
+        );
     }
 
     #[test]
@@ -666,7 +677,8 @@ mod tests {
     #[test]
     fn drops_the_hooks_key_when_the_strip_empties_it() {
         let doc: Value =
-            serde_json::from_str(r#"{"a":1,"hooks":{"Stop":[{"_hoangsa_managed":true}]}}"#).unwrap();
+            serde_json::from_str(r#"{"a":1,"hooks":{"Stop":[{"_hoangsa_managed":true}]}}"#)
+                .unwrap();
         let new = strip_hooks(&doc).expect("changed");
         assert!(new.get("hooks").is_none(), "got {new}");
         assert_eq!(new["a"], 1);
