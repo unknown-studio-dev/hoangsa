@@ -1,4 +1,4 @@
-use crate::helpers::{out, parse_frontmatter, read_json, require_arg};
+use crate::helpers::{atomic_write_string, out, parse_frontmatter, read_json, require_arg};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
@@ -182,38 +182,114 @@ fn set_active_addons(project_dir: &str, addons: &[String]) -> bool {
         );
     }
 
-    fs::write(
-        &config_file,
-        serde_json::to_string_pretty(&config).unwrap(),
-    )
-    .is_ok()
+    atomic_write_string(&config_file, &serde_json::to_string_pretty(&config).unwrap()).is_ok()
 }
 
-/// Copy addon .md file from HOANGSA_ROOT to project-level .hoangsa/worker-rules/addons/.
-fn copy_addon_file(hoangsa_root: &str, addon_name: &str, project_dir: &str) -> bool {
-    let source = Path::new(hoangsa_root)
-        .join("workflows/worker-rules/addons")
-        .join(format!("{addon_name}.md"));
-    if !source.exists() {
-        return false;
-    }
-    let target_dir = Path::new(project_dir).join(".hoangsa/worker-rules/addons");
-    if fs::create_dir_all(&target_dir).is_err() {
-        return false;
-    }
-    let target = target_dir.join(format!("{addon_name}.md"));
-    fs::copy(&source, &target).is_ok()
+/// Outcome of one migration pass over the project-tier addons directory.
+#[derive(Default)]
+pub struct MigrationReport {
+    /// Addon names whose project copy was byte-identical to the root tier and
+    /// was therefore renamed to `<name>.md.bak`.
+    pub renamed: Vec<String>,
+    /// Paths kept in place because they are not tooling copies — each one was
+    /// warned about.
+    pub kept: Vec<String>,
+    pub config_written: bool,
 }
 
-/// Remove addon .md file from project-level .hoangsa/worker-rules/addons/.
-fn remove_addon_file(addon_name: &str, project_dir: &str) -> bool {
-    let target = Path::new(project_dir)
-        .join(".hoangsa/worker-rules/addons")
-        .join(format!("{addon_name}.md"));
-    if !target.exists() {
-        return false;
+/// Retire the project-tier addon copies this command used to write.
+///
+/// A copy byte-identical to its root-tier original carries no user intent —
+/// it is a tooling artifact that only drifts as the root file is updated. It
+/// is renamed to `<name>.md.bak`; `load_addons` picks up `.md` only, so the
+/// copy stops taking part in composition without anything being deleted.
+/// Anything that differs, has no root counterpart, or cannot be read is a
+/// user-authored file: kept in place, and warned about once.
+///
+/// Renames happen one at a time and the config write comes last, so a process
+/// killed part-way leaves the remaining files untouched and `active_addons`
+/// unchanged — re-running finishes the job.
+pub fn migrate_addon_copies(
+    project_dir: &str,
+    hoangsa_root: &str,
+) -> Result<MigrationReport, String> {
+    let dir = Path::new(project_dir).join(".hoangsa/worker-rules/addons");
+    let mut report = MigrationReport::default();
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Ok(report);
+    };
+
+    let root_dir = Path::new(hoangsa_root).join("workflows/worker-rules/addons");
+    let mut paths: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("md"))
+        .collect();
+    paths.sort();
+
+    for path in paths {
+        let Some(name) = path
+            .file_stem()
+            .and_then(|n| n.to_str())
+            .map(String::from)
+        else {
+            continue;
+        };
+        // An unreadable project file, or a missing root counterpart, counts as
+        // "differs" — never as "identical".
+        let identical = match (fs::read(&path), fs::read(root_dir.join(format!("{name}.md")))) {
+            (Ok(project), Ok(root)) => project == root,
+            _ => false,
+        };
+        if !identical {
+            eprintln!(
+                "warning: keeping {} — it differs from the root-tier addon or could not be read",
+                path.display()
+            );
+            report.kept.push(path.to_string_lossy().to_string());
+            continue;
+        }
+        let mut bak = path.clone().into_os_string();
+        bak.push(".bak");
+        // Best-effort: a rename that fails leaves the file readable and inert,
+        // so the remaining files are still worth processing.
+        if let Err(e) = fs::rename(&path, std::path::PathBuf::from(bak)) {
+            eprintln!("warning: could not retire {}: {e}", path.display());
+            continue;
+        }
+        report.renamed.push(name);
     }
-    fs::remove_file(&target).is_ok()
+
+    if report.renamed.is_empty() {
+        return Ok(report);
+    }
+
+    let mut active = get_active_addons(project_dir);
+    let missing: Vec<&String> = report
+        .renamed
+        .iter()
+        .filter(|n| !active.contains(n))
+        .collect();
+    if !missing.is_empty() {
+        active.extend(missing.into_iter().cloned());
+        active.sort();
+        if !set_active_addons(project_dir, &active) {
+            return Err(format!(
+                "cannot write {project_dir}/.hoangsa/config.json — active_addons was NOT updated"
+            ));
+        }
+        report.config_written = true;
+    }
+    Ok(report)
+}
+
+/// Run the migration for a command entry point. A failed config write is fatal:
+/// the user must not be left believing `active_addons` was updated.
+fn migrate_or_exit(project_dir: &str, hoangsa_root: &str) {
+    if let Err(e) = migrate_addon_copies(project_dir, hoangsa_root) {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    }
 }
 
 /// Regenerate .hoangsa/worker-rules.md with updated addon list.
@@ -271,6 +347,8 @@ pub fn cmd_list(project_dir: Option<&str>) {
         }
     };
 
+    migrate_or_exit(project_dir, &hoangsa_root);
+
     let available = scan_available_addons(&hoangsa_root);
     let active = get_active_addons(project_dir);
 
@@ -319,28 +397,25 @@ pub fn cmd_add(project_dir: Option<&str>, addons_json: Option<&str>) {
         }
     };
 
-    let available = scan_available_addons(&hoangsa_root);
-    let available_names: Vec<String> = available
-        .iter()
-        .filter_map(|a| a["name"].as_str().map(String::from))
-        .collect();
+    migrate_or_exit(project_dir, &hoangsa_root);
 
-    // Validate all requested addons exist
+    let root_addons = Path::new(&hoangsa_root).join("workflows/worker-rules/addons");
     for name in &requested {
-        if !available_names.contains(name) {
-            out(&json!({ "error": format!("Addon not found: {}. Available: {}", name, available_names.join(", ")) }));
-            return;
+        if !root_addons.join(format!("{name}.md")).is_file() {
+            out(&json!({ "error": format!("addon '{name}' not found in {hoangsa_root}") }));
+            std::process::exit(1);
         }
     }
 
+    let available = scan_available_addons(&hoangsa_root);
     let mut active = get_active_addons(project_dir);
 
-    // Add requested addons (dedup)
+    // Enabling an addon is a config edit only — the root-tier file is read
+    // where it lives, never copied into the project.
     for name in &requested {
         if !active.contains(name) {
             active.push(name.clone());
         }
-        copy_addon_file(&hoangsa_root, name, project_dir);
     }
 
     active.sort();
@@ -397,11 +472,12 @@ pub fn cmd_remove(project_dir: Option<&str>, addons_json: Option<&str>) {
         }
     };
 
+    migrate_or_exit(project_dir, &hoangsa_root);
+
     let mut active = get_active_addons(project_dir);
 
     for name in &requested {
         active.retain(|a| a != name);
-        remove_addon_file(name, project_dir);
     }
 
     if !set_active_addons(project_dir, &active) {
@@ -427,4 +503,194 @@ pub fn cmd_remove(project_dir: Option<&str>, addons_json: Option<&str>) {
         "active_addons": active,
         "synced": ["config.json", "worker-rules.md"],
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    const MEMORY_ADDON: &str = "---\nname: memory\nframeworks: [\"*\"]\n---\n\nRecall first.\n";
+    const RUST_ADDON: &str = "---\nname: rust\nframeworks: [\"rust\"]\n---\n\nUse expect().\n";
+
+    /// A root tier holding `addon_files`, plus a project with an empty
+    /// `active_addons`. The `TempDir` is returned so it outlives the test.
+    fn fixture(addon_files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("root");
+        let project = tmp.path().join("project");
+        let root_addons = root.join("workflows/worker-rules/addons");
+        fs::create_dir_all(&root_addons).expect("create root addons dir");
+        for (name, body) in addon_files {
+            fs::write(root_addons.join(name), body).expect("write root addon");
+        }
+        fs::create_dir_all(project.join(".hoangsa")).expect("create project .hoangsa");
+        fs::write(
+            project.join(".hoangsa/config.json"),
+            r#"{"codebase":{"active_addons":[]}}"#,
+        )
+        .expect("write project config.json");
+        (tmp, root, project)
+    }
+
+    /// Create `<project>/.hoangsa/worker-rules/addons/` and return it.
+    fn project_addons(project: &Path) -> PathBuf {
+        let dir = project.join(".hoangsa/worker-rules/addons");
+        fs::create_dir_all(&dir).expect("create project addons dir");
+        dir
+    }
+
+    fn listing(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .expect("read project addons dir")
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn migrate(project: &Path, root: &Path) -> MigrationReport {
+        migrate_addon_copies(
+            project.to_str().expect("project path is utf-8"),
+            root.to_str().expect("root path is utf-8"),
+        )
+        .expect("migration must succeed")
+    }
+
+    #[test]
+    fn migrate_renames_identical_copy() {
+        let (_tmp, root, project) = fixture(&[("memory.md", MEMORY_ADDON)]);
+        let addons = project_addons(&project);
+        fs::write(addons.join("memory.md"), MEMORY_ADDON).expect("write project copy");
+
+        let report = migrate(&project, &root);
+
+        assert_eq!(report.renamed, vec!["memory".to_string()]);
+        assert!(
+            addons.join("memory.md.bak").is_file(),
+            "an identical copy must be retired to .bak"
+        );
+        assert!(
+            !addons.join("memory.md").exists(),
+            "the .md copy must no longer be visible to load_addons"
+        );
+        assert!(
+            get_active_addons(project.to_str().expect("project path is utf-8"))
+                .contains(&"memory".to_string()),
+            "the retired addon must be recorded in active_addons"
+        );
+    }
+
+    #[test]
+    fn migrate_keeps_and_warns_on_differing_copy() {
+        let (_tmp, root, project) = fixture(&[("memory.md", MEMORY_ADDON)]);
+        let addons = project_addons(&project);
+        let mine = addons.join("memory.md");
+        fs::write(&mine, format!("{MEMORY_ADDON}One extra project rule.\n"))
+            .expect("write project copy");
+
+        let report = migrate(&project, &root);
+
+        assert!(
+            report.renamed.is_empty(),
+            "a user-authored addon must not be renamed"
+        );
+        assert_eq!(
+            report.kept,
+            vec![mine.to_string_lossy().to_string()],
+            "the warning must name the kept path"
+        );
+        assert!(mine.is_file(), "a user-authored addon must stay in place");
+        assert!(
+            !addons.join("memory.md.bak").exists(),
+            "no .bak may be created for a differing file"
+        );
+        assert!(
+            !report.config_written,
+            "active_addons must be left untouched"
+        );
+        assert!(
+            get_active_addons(project.to_str().expect("project path is utf-8")).is_empty(),
+            "active_addons must be left untouched"
+        );
+    }
+
+    #[test]
+    fn migrate_is_idempotent() {
+        let (_tmp, root, project) = fixture(&[("memory.md", MEMORY_ADDON)]);
+        let addons = project_addons(&project);
+        fs::write(addons.join("memory.md"), MEMORY_ADDON).expect("write project copy");
+
+        let first = migrate(&project, &root);
+        let after_first = listing(&addons);
+        let second = migrate(&project, &root);
+        let after_second = listing(&addons);
+
+        assert_eq!(first.renamed, vec!["memory".to_string()]);
+        assert!(
+            second.renamed.is_empty(),
+            "the second run must rename nothing"
+        );
+        assert!(
+            second.kept.is_empty(),
+            "a .bak file is not an addon and must not be warned about"
+        );
+        assert!(
+            !second.config_written,
+            "the second run must not write config.json"
+        );
+        assert_eq!(
+            after_first, after_second,
+            "the directory must be unchanged by the second run"
+        );
+    }
+
+    #[test]
+    fn migrate_no_ops_on_empty_and_absent_dir() {
+        let (_tmp, root, project) = fixture(&[("memory.md", MEMORY_ADDON)]);
+
+        let absent = migrate(&project, &root);
+        assert!(absent.renamed.is_empty() && absent.kept.is_empty() && !absent.config_written);
+        assert!(
+            !project.join(".hoangsa/worker-rules/addons").exists(),
+            "migration must not create the directory"
+        );
+
+        let addons = project_addons(&project);
+        let empty = migrate(&project, &root);
+        assert!(empty.renamed.is_empty() && empty.kept.is_empty() && !empty.config_written);
+        assert!(listing(&addons).is_empty());
+    }
+
+    #[test]
+    fn addon_add_does_not_copy_files() {
+        let (_tmp, root, project) = fixture(&[("rust.md", RUST_ADDON)]);
+        let addons = project_addons(&project);
+
+        struct EnvGuard(Option<std::ffi::OsString>);
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(v) => unsafe { std::env::set_var("HOANGSA_ROOT", v) },
+                    None => unsafe { std::env::remove_var("HOANGSA_ROOT") },
+                }
+            }
+        }
+        let _guard = EnvGuard(std::env::var_os("HOANGSA_ROOT"));
+        // SAFETY: restored on drop; no other test in this crate reads HOANGSA_ROOT.
+        unsafe { std::env::set_var("HOANGSA_ROOT", &root) };
+
+        cmd_add(project.to_str(), Some(r#"["rust"]"#));
+
+        assert!(
+            get_active_addons(project.to_str().expect("project path is utf-8"))
+                .contains(&"rust".to_string()),
+            "addon add must record the addon in active_addons"
+        );
+        assert!(
+            listing(&addons).is_empty(),
+            "addon add must not copy any file into the project tier"
+        );
+    }
 }
