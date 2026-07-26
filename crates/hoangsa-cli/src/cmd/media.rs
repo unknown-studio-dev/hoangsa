@@ -128,12 +128,12 @@ pub fn cmd_check_ffmpeg() {
                 })
                 .unwrap_or_default();
 
-            out(&json!({
-                "available": true,
-                "path": ffmpeg_path,
-                "version": version_str,
-                "source": "system"
-            }));
+            emit_status(FfmpegStatus {
+                available: true,
+                path: ffmpeg_path,
+                version: version_str,
+                source: "system".into(),
+            });
             return;
         }
 
@@ -148,22 +148,30 @@ pub fn cmd_check_ffmpeg() {
         && output.status.success() {
             let ffmpeg_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !ffmpeg_path.is_empty() && ffmpeg_path != "null" {
-                out(&json!({
-                    "available": true,
-                    "path": ffmpeg_path,
-                    "version": "",
-                    "source": "ffmpeg-static"
-                }));
+                emit_status(FfmpegStatus {
+                    available: true,
+                    path: ffmpeg_path,
+                    version: String::new(),
+                    source: "ffmpeg-static".into(),
+                });
                 return;
             }
         }
 
-    out(&json!({
-        "available": false,
-        "path": "",
-        "version": "",
-        "source": ""
-    }));
+    emit_status(FfmpegStatus {
+        available: false,
+        path: String::new(),
+        version: String::new(),
+        source: String::new(),
+    });
+}
+
+/// Serialize the declared shape rather than hand-rolling `json!` at each exit.
+/// The three branches above used to spell the same four keys out separately,
+/// so `FfmpegStatus` documented a contract nothing checked: adding a field
+/// left every caller emitting the old shape, silently.
+fn emit_status(status: FfmpegStatus) {
+    out(&serde_json::to_value(&status).unwrap_or(json!({ "error": "serialization failed" })));
 }
 
 // ── FFmpeg install ────────────────────────────────────────────────────────────
@@ -403,12 +411,13 @@ pub fn cmd_frames(args: &[String]) {
                 .unwrap_or(frame_count);
             frame_count = actual_count;
 
-            out(&json!({
-                "video": video_path,
-                "frames_dir": output_dir,
-                "frame_count": frame_count,
-                "interval_secs": interval
-            }));
+            let result = FrameExtractResult {
+                video: video_path.to_string(),
+                frames_dir: output_dir.to_string(),
+                frame_count,
+                interval_secs: interval,
+            };
+            out(&serde_json::to_value(&result).unwrap_or(json!({ "error": "serialization failed" })));
         }
         Ok(_) => {
             out(&json!({ "error": "ffmpeg exited with non-zero status" }));
@@ -741,55 +750,9 @@ pub fn cmd_diff(args: &[&str]) {
             let a = &frames_rgba[idx];
             let b = &frames_rgba[idx + 1];
 
-            // Ensure same dimensions (both were resized to CELL_W x cell_h, so they match)
-            let w = a.width().min(b.width());
-            let h = a.height().min(b.height());
-
-            let mut overlay = RgbaImage::new(CELL_W, cell_h);
-
-            for y in 0..h {
-                for x in 0..w {
-                    let pa = a.get_pixel(x, y);
-                    let pb = b.get_pixel(x, y);
-
-                    let r1 = pa[0];
-                    let g1 = pa[1];
-                    let b1 = pa[2];
-
-                    let r2 = pb[0];
-                    let g2 = pb[1];
-                    let b2 = pb[2];
-
-                    let diff = (r1.abs_diff(r2) as u16
-                        + g1.abs_diff(g2) as u16
-                        + b1.abs_diff(b2) as u16) as u32;
-
-                    let pixel = if diff > 30 {
-                        // Changed: red tint overlay
-                        let r = ((r1 as f32 * 0.6) + (255.0 * 0.4)) as u8;
-                        let g = (g1 as f32 * 0.6) as u8;
-                        let b = (b1 as f32 * 0.6) as u8;
-                        Rgba([r, g, b, 255])
-                    } else {
-                        // Unchanged: dim
-                        let r = (r1 as f32 * 0.7) as u8;
-                        let g = (g1 as f32 * 0.7) as u8;
-                        let b = (b1 as f32 * 0.7) as u8;
-                        Rgba([r, g, b, 255])
-                    };
-
-                    overlay.put_pixel(x, y, pixel);
-                }
-            }
-
-            // Fill any out-of-bounds area (if dimensions differed) with gray
-            for y in 0..cell_h {
-                for x in 0..CELL_W {
-                    if x >= w || y >= h {
-                        overlay.put_pixel(x, y, Rgba([100u8, 100, 100, 255]));
-                    }
-                }
-            }
+            // Both frames were resized to CELL_W x cell_h above, so the
+            // overlay comes back at exactly the cell size.
+            let overlay = compute_diff_overlay(a, b);
 
             diff_overlays.push(overlay);
         } else {
@@ -854,7 +817,13 @@ pub fn cmd_diff(args: &[&str]) {
 }
 
 /// Compute a diff overlay between two RGBA images.
-/// Returns a new RgbaImage where changed pixels are red-tinted and unchanged pixels are dimmed.
+/// Returns a new RgbaImage where changed pixels are red-tinted and unchanged
+/// pixels are dimmed. Pixels outside the overlap of the two sizes are gray.
+///
+/// `cmd_diff` carried a byte-for-byte copy of this loop — same threshold, same
+/// tint and dim coefficients — while this function was reachable only from its
+/// own tests. Two copies of one algorithm means the tests were covering the
+/// copy nobody ran.
 pub(crate) fn compute_diff_overlay(a: &RgbaImage, b: &RgbaImage) -> RgbaImage {
     let w = a.width().min(b.width());
     let h = a.height().min(b.height());

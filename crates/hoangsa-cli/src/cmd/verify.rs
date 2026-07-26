@@ -1108,7 +1108,7 @@ fn test_integration_templates(t: &mut TestRunner) {
                 );
                 t.check(
                     &format!("cook.md spawns {agent}"),
-                    cook.contains(agent.as_ref() as &str),
+                    cook.contains(agent),
                     "shipped as a Gate-4 analyzer but cook.md never names it",
                 );
             }
