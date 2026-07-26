@@ -159,18 +159,26 @@ pub fn installer_argv(tag: &str, local: bool) -> Result<Vec<String>, String> {
     ])
 }
 
-/// Fetch the release's install.sh to `dest`. `-f` makes curl fail on a 4xx/5xx
-/// rather than write the error page into the file we are about to run.
+fn installer_url(tag: &str) -> String {
+    format!("https://github.com/{REPO}/releases/download/{tag}/install.sh")
+}
+
 fn download_installer(tag: &str, dest: &Path) -> Result<(), String> {
+    fetch_to_file(&installer_url(tag), dest)
+}
+
+/// Fetch `url` to `dest`. `-f` makes curl fail on a 4xx/5xx rather than write
+/// the error page into the file we are about to run. Split from
+/// `download_installer` so a test can point it at a server that fails.
+fn fetch_to_file(url: &str, dest: &Path) -> Result<(), String> {
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
     }
-    let url = format!("https://github.com/{REPO}/releases/download/{tag}/install.sh");
     let out = Command::new("curl")
         .args(["-fsSL", "--retry", "2", "--max-time", "60", "-o"])
         .arg(dest)
-        .arg(&url)
+        .arg(url)
         .output()
         .map_err(|e| format!("could not run curl: {e}"))?;
     if !out.status.success() {
@@ -436,6 +444,87 @@ mod tests {
                 .expect("a well-formed tag builds an argv")
                 .contains(&"--local".to_string())
         );
+    }
+
+    /// `download_installer` was split into a URL and a fetch so the fetch could
+    /// be pointed at a failing server. This keeps the URL itself under test —
+    /// the half the split would otherwise stop covering.
+    #[test]
+    fn installer_url_targets_the_release_asset() {
+        assert_eq!(
+            installer_url("v0.6.0"),
+            format!("https://github.com/{REPO}/releases/download/v0.6.0/install.sh")
+        );
+    }
+
+    /// EC-10. The download is the last thing between a release tag and `sh`
+    /// running a file, so a 5xx must become an error rather than a script:
+    /// curl's `-f` must refuse to write the error page, and the partial output
+    /// must be removed. Anything left at that path is what the next run
+    /// executes.
+    #[test]
+    fn installer_download_failure_leaves_nothing_to_run() {
+        use std::io::{Read as _, Write as _};
+        use std::net::{TcpListener, TcpStream};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback port");
+        let addr = listener.local_addr().expect("read the bound port");
+        let stop = Arc::new(AtomicBool::new(false));
+        let served = Arc::new(AtomicBool::new(false));
+
+        let (s, v) = (Arc::clone(&stop), Arc::clone(&served));
+        let server = std::thread::spawn(move || {
+            // `--retry` means curl may come back more than once; answer 500
+            // every time until the test tells the loop to stop.
+            for stream in listener.incoming() {
+                if s.load(Ordering::SeqCst) {
+                    break;
+                }
+                let mut stream = match stream {
+                    Ok(c) => c,
+                    Err(_) => break,
+                };
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 4\r\nConnection: close\r\n\r\nboom",
+                );
+                let _ = stream.flush();
+                v.store(true, Ordering::SeqCst);
+            }
+        });
+
+        let dir = std::env::temp_dir().join(format!("hoangsa-ec10-{}", std::process::id()));
+        let dest = dir.join("install-v0.6.0.sh");
+        std::fs::create_dir_all(&dir).expect("create the download dir");
+        // curl opens `-o` before it knows the transfer failed, so stand in a
+        // partial file: the assertion below is about the cleanup, not about
+        // whether curl happened to touch the path.
+        std::fs::write(&dest, "#!/bin/sh\necho partial\n").expect("seed a partial download");
+
+        let err = fetch_to_file(&format!("http://{addr}/install.sh"), &dest)
+            .expect_err("an HTTP 500 must not be reported as a successful download");
+
+        stop.store(true, Ordering::SeqCst);
+        let _ = TcpStream::connect(addr);
+        let _ = server.join();
+
+        assert!(
+            served.load(Ordering::SeqCst),
+            "the failing server was never reached — the test proved nothing"
+        );
+        assert!(
+            err.contains("installer download failed"),
+            "a 5xx must surface as a download failure: {err}"
+        );
+        assert!(
+            !dest.exists(),
+            "a failed download must leave no installer at {} for anything to execute",
+            dest.display()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
