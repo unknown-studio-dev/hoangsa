@@ -510,14 +510,7 @@ impl Server {
             // `hoangsa-memory index /abs/path`). Go through the lenient lookup so a
             // PR pre-check actually finds the symbols instead of silently
             // returning "no overlap".
-            // The indexer stores canonical absolute paths, so resolve the
-            // needle the same way when it names a file that exists — a
-            // symlinked spelling (`/var/...` for `/private/var/...`) shares no
-            // component suffix with its canonical form, and the lenient match
-            // below would miss it. A repo-relative diff path does not resolve
-            // from here; that falls through to the suffix match as before.
-            let path_buf = std::path::PathBuf::from(path);
-            let path_buf = path_buf.canonicalize().unwrap_or(path_buf);
+            let path_buf = resolve_diff_needle(path);
             let sym_rows = match store.kv.symbols_for_path_like(&path_buf).await {
                 Ok(r) => r,
                 Err(_) => continue,
@@ -1118,6 +1111,75 @@ fn parse_edge_kinds(kinds: Option<&[String]>) -> anyhow::Result<Option<Vec<EdgeK
         }
     }
     Ok(Some(out))
+}
+
+/// Resolve a diff path into the flavour the symbol table stores.
+///
+/// The indexer stores canonical absolute paths, so an absolute needle is
+/// canonicalised too — a symlinked spelling (`/var/…` for `/private/var/…`)
+/// shares no component suffix with its canonical form, and the lenient
+/// lookup would miss it.
+///
+/// A **relative** needle is returned untouched. `canonicalize` would resolve
+/// it against this process's cwd, which in service mode is one directory
+/// shared by every project the daemon serves; a `crates/x.rs` from someone
+/// else's `git diff` could then name a real file in an unrelated repo and
+/// turn a hit into a silent "no overlap". Relative paths are exactly what the
+/// component-suffix match in `symbols_for_path_like` handles correctly.
+fn resolve_diff_needle(path: &str) -> std::path::PathBuf {
+    let p = std::path::PathBuf::from(path);
+    if p.is_absolute() {
+        p.canonicalize().unwrap_or(p)
+    } else {
+        p
+    }
+}
+
+#[cfg(test)]
+mod needle_tests {
+    use super::resolve_diff_needle;
+    use std::path::{Path, PathBuf};
+
+    /// `Cargo.toml` exists relative to the crate dir the test runs in, so an
+    /// implementation that canonicalised unconditionally would return an
+    /// absolute path here. It must come back exactly as given.
+    #[test]
+    fn relative_needle_is_never_resolved_against_cwd() {
+        assert!(
+            Path::new("Cargo.toml").exists(),
+            "test assumes cwd is the crate dir"
+        );
+        assert_eq!(
+            resolve_diff_needle("Cargo.toml"),
+            PathBuf::from("Cargo.toml"),
+            "a relative diff path must not be resolved against the daemon's cwd"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn absolute_symlinked_needle_resolves_to_the_real_path() {
+        let real = tempfile::tempdir().unwrap();
+        std::fs::write(real.path().join("m.rs"), "pub fn a() {}\n").unwrap();
+        let link_parent = tempfile::tempdir().unwrap();
+        let link = link_parent.path().join("link");
+        std::os::unix::fs::symlink(real.path(), &link).unwrap();
+
+        let resolved = resolve_diff_needle(&link.join("m.rs").to_string_lossy());
+        assert_eq!(
+            resolved,
+            real.path().canonicalize().unwrap().join("m.rs"),
+            "an absolute needle must resolve to the path the indexer stores"
+        );
+    }
+
+    /// An absolute path that does not exist cannot be canonicalised; it must
+    /// fall through unchanged rather than panicking or emptying out.
+    #[test]
+    fn absolute_needle_that_does_not_exist_falls_through() {
+        let p = "/hoangsa/definitely/not/here/m.rs";
+        assert_eq!(resolve_diff_needle(p), PathBuf::from(p));
+    }
 }
 
 // ---- spec-named tests (T-04) -----------------------------------------------
