@@ -123,11 +123,65 @@ fn latest_tag() -> Result<String, String> {
         .ok_or_else(|| "release JSON has no tag_name".to_string())
 }
 
-pub fn installer_command(tag: &str, local: bool) -> String {
+/// A release tag is attacker-influenced input — it arrives inside a GitHub API
+/// response. Anything outside this charset cannot be a real tag, and a tag that
+/// is not a real tag is somebody else's command line.
+fn tag_is_safe(tag: &str) -> bool {
+    !tag.is_empty()
+        && tag
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'))
+}
+
+/// Where the downloaded installer lands: its own per-process directory, so the
+/// script we are about to execute is one we wrote rather than one that happened
+/// to be sitting at a guessable path in a world-writable /tmp.
+fn installer_temp_path(tag: &str) -> PathBuf {
+    std::env::temp_dir()
+        .join(format!("hoangsa-update-{}", std::process::id()))
+        .join(format!("install-{tag}.sh"))
+}
+
+/// The installer invocation as argv, never as a shell string. The tag reaches
+/// the child process as one filename component and nothing else, so no value
+/// from the releases API can be read as syntax.
+pub fn installer_argv(tag: &str, local: bool) -> Result<Vec<String>, String> {
+    if !tag_is_safe(tag) {
+        return Err(format!(
+            "refusing to run installer for suspicious release tag '{tag}'"
+        ));
+    }
     let scope = if local { "--local" } else { "--global" };
-    format!(
-        "curl -fsSL https://github.com/{REPO}/releases/download/{tag}/install.sh | sh -s -- {scope}"
-    )
+    Ok(vec![
+        "sh".to_string(),
+        installer_temp_path(tag).display().to_string(),
+        scope.to_string(),
+    ])
+}
+
+/// Fetch the release's install.sh to `dest`. `-f` makes curl fail on a 4xx/5xx
+/// rather than write the error page into the file we are about to run.
+fn download_installer(tag: &str, dest: &Path) -> Result<(), String> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+    }
+    let url = format!("https://github.com/{REPO}/releases/download/{tag}/install.sh");
+    let out = Command::new("curl")
+        .args(["-fsSL", "--retry", "2", "--max-time", "60", "-o"])
+        .arg(dest)
+        .arg(&url)
+        .output()
+        .map_err(|e| format!("could not run curl: {e}"))?;
+    if !out.status.success() {
+        // Leave nothing half-written behind for the next run to execute.
+        let _ = std::fs::remove_file(dest);
+        return Err(format!(
+            "installer download failed ({}) for {url}",
+            out.status
+        ));
+    }
+    Ok(())
 }
 
 pub fn cmd_update(args: &[&str]) {
@@ -164,14 +218,30 @@ pub fn cmd_update(args: &[&str]) {
                 "status": "error",
                 "error": e,
                 "current": current,
-                "hint": format!("update manually: {}", installer_command("latest", flags.local)),
+                "hint": format!(
+                    "update manually: curl -fsSL https://github.com/{REPO}/releases/download/latest/install.sh | sh -s -- {}",
+                    if flags.local { "--local" } else { "--global" }
+                ),
             }));
             std::process::exit(1);
         }
     };
 
     let available = is_newer(&latest, &current);
-    let command = installer_command(&latest, flags.local);
+    // Validate before anything else touches the tag: a refused tag must not
+    // reach a URL, a filename, or a process argument.
+    let argv = match installer_argv(&latest, flags.local) {
+        Ok(a) => a,
+        Err(e) => {
+            out(&json!({
+                "status": "error",
+                "error": e,
+                "current": current,
+                "latest": latest,
+            }));
+            std::process::exit(1);
+        }
+    };
 
     if flags.check {
         out(&json!({
@@ -179,7 +249,7 @@ pub fn cmd_update(args: &[&str]) {
             "current": current,
             "latest": latest,
             "update_available": available,
-            "command": command,
+            "command": argv,
         }));
         if available {
             std::process::exit(10);
@@ -204,7 +274,7 @@ pub fn cmd_update(args: &[&str]) {
             "dry_run": true,
             "current": current,
             "latest": latest,
-            "command": command,
+            "command": argv,
         }));
         return;
     }
@@ -222,7 +292,21 @@ pub fn cmd_update(args: &[&str]) {
         }
     }
 
-    let status = Command::new("sh").arg("-c").arg(&command).status();
+    // argv is [sh, <installer path>, <scope>] — download to exactly the path we
+    // are going to execute, so the file that ran is the file that was fetched.
+    let installer = PathBuf::from(&argv[1]);
+    if let Err(e) = download_installer(&latest, &installer) {
+        out(&json!({
+            "status": "error",
+            "error": e,
+            "current": current,
+            "latest": latest,
+        }));
+        std::process::exit(1);
+    }
+
+    let status = Command::new(&argv[0]).args(&argv[1..]).status();
+    let _ = std::fs::remove_file(&installer);
     match status {
         Ok(s) if s.success() => {
             // The statusline reads this cache; a stale entry keeps showing an
@@ -237,13 +321,13 @@ pub fn cmd_update(args: &[&str]) {
         }
         Ok(s) => {
             out(
-                &json!({"status": "error", "error": format!("installer exited {s}"), "command": command}),
+                &json!({"status": "error", "error": format!("installer exited {s}"), "command": argv}),
             );
             std::process::exit(1);
         }
         Err(e) => {
             out(
-                &json!({"status": "error", "error": format!("could not run installer: {e}"), "command": command}),
+                &json!({"status": "error", "error": format!("could not run installer: {e}"), "command": argv}),
             );
             std::process::exit(1);
         }
@@ -306,11 +390,52 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The tag comes out of a GitHub API response. The old code pasted it into
+    /// a `sh -c` string, so a release named `v1.0"; touch /tmp/PWNED #` ran as a
+    /// command on every machine that checked for an update.
     #[test]
-    fn installer_command_targets_the_requested_scope() {
-        assert!(installer_command("v0.6.0", false).contains("--global"));
-        assert!(installer_command("v0.6.0", true).contains("--local"));
-        assert!(installer_command("v0.6.0", false).contains("releases/download/v0.6.0/install.sh"));
+    fn installer_argv_rejects_hostile_tags() {
+        for tag in [
+            "v1.0\"; touch /tmp/PWNED #",
+            "v1.0\"; touch /tmp/x #",
+            "v1|id",
+            "v1`id`",
+            "v1$(id)",
+            "v1 && id",
+        ] {
+            let err = installer_argv(tag, false)
+                .expect_err("a hostile tag must not produce a command at all");
+            assert_eq!(
+                err,
+                format!("refusing to run installer for suspicious release tag '{tag}'")
+            );
+        }
+        assert!(
+            !Path::new("/tmp/PWNED").exists(),
+            "the refusal must happen before anything is executed"
+        );
+    }
+
+    #[test]
+    fn installer_argv_accepts_clean_tag() {
+        let argv = installer_argv("v0.6.0", false).expect("a well-formed tag builds an argv");
+        assert!(
+            argv.contains(&installer_temp_path("v0.6.0").display().to_string()),
+            "the downloaded installer must be its own argv element: {argv:?}"
+        );
+        assert!(
+            argv.contains(&"--global".to_string()),
+            "the scope flag must be its own argv element: {argv:?}"
+        );
+        assert!(
+            !argv.iter().any(|a| a.contains("-c")),
+            "nothing may be handed to a shell as `-c`: {argv:?}"
+        );
+        assert!(
+            installer_argv("v0.6.0", true)
+                .expect("a well-formed tag builds an argv")
+                .contains(&"--local".to_string())
+        );
     }
 
     #[test]
