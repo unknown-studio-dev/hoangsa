@@ -245,9 +245,18 @@ mod rename_hook {
 /// Anything that differs, has no root counterpart, or cannot be read is a
 /// user-authored file: kept in place, and warned about once.
 ///
-/// Renames happen one at a time and the config write comes last, so a process
-/// killed part-way leaves the remaining files untouched and `active_addons`
-/// unchanged — re-running finishes the job.
+/// Order matters: every candidate is recorded in `active_addons` *before* the
+/// first rename, because a rename is the one step that destroys the evidence
+/// the next run scans for — `load_addons` and this migration both see `.md`
+/// only, so a name renamed to `.bak` without being recorded is gone for good.
+/// Writing first inverts the failure: a process killed between the config write
+/// and a rename leaves a still-visible `.md` that the next run simply
+/// re-evaluates, which costs one redundant pass and loses nothing.
+///
+/// This is an ordering guarantee, not a transaction. A kill can still leave a
+/// name recorded in `active_addons` while its file is not yet retired, and the
+/// config write itself is atomic only as far as `atomic_write_string` is; the
+/// claim is only that no reachable interruption drops an addon.
 pub fn migrate_addon_copies(
     project_dir: &str,
     hoangsa_root: &str,
@@ -266,6 +275,9 @@ pub fn migrate_addon_copies(
         .collect();
     paths.sort();
 
+    // Pass 1 — classify only. Nothing on disk moves until every name that is
+    // about to disappear from the `.md` scan has been recorded.
+    let mut candidates: Vec<(std::path::PathBuf, String)> = Vec::new();
     for path in paths {
         let Some(name) = path
             .file_stem()
@@ -288,6 +300,35 @@ pub fn migrate_addon_copies(
             report.kept.push(path.to_string_lossy().to_string());
             continue;
         }
+        candidates.push((path, name));
+    }
+
+    if candidates.is_empty() {
+        return Ok(report);
+    }
+
+    // Pass 2 — record the names. A candidate is byte-identical to its root
+    // original, so it composes the same whether or not its file is retired;
+    // recording it is safe even for a rename that later fails.
+    let mut active = get_active_addons(project_dir);
+    let missing: Vec<String> = candidates
+        .iter()
+        .filter(|(_, name)| !active.contains(name))
+        .map(|(_, name)| name.clone())
+        .collect();
+    if !missing.is_empty() {
+        active.extend(missing);
+        active.sort();
+        if !set_active_addons(project_dir, &active) {
+            return Err(format!(
+                "cannot write {project_dir}/.hoangsa/config.json — active_addons was NOT updated"
+            ));
+        }
+        report.config_written = true;
+    }
+
+    // Pass 3 — the irreversible step, last and one file at a time.
+    for (path, name) in candidates {
         #[cfg(test)]
         rename_hook::fire(&path);
         let mut bak = path.clone().into_os_string();
@@ -301,26 +342,6 @@ pub fn migrate_addon_copies(
         report.renamed.push(name);
     }
 
-    if report.renamed.is_empty() {
-        return Ok(report);
-    }
-
-    let mut active = get_active_addons(project_dir);
-    let missing: Vec<&String> = report
-        .renamed
-        .iter()
-        .filter(|n| !active.contains(n))
-        .collect();
-    if !missing.is_empty() {
-        active.extend(missing.into_iter().cloned());
-        active.sort();
-        if !set_active_addons(project_dir, &active) {
-            return Err(format!(
-                "cannot write {project_dir}/.hoangsa/config.json — active_addons was NOT updated"
-            ));
-        }
-        report.config_written = true;
-    }
     Ok(report)
 }
 
@@ -780,8 +801,9 @@ mod tests {
 
     /// EC-05 — the pass is aborted part-way (a panic unwinds out of the loop
     /// exactly as a kill would stop it). Already-renamed files stay renamed,
-    /// the rest are untouched, config.json is not written, and a second run
-    /// finishes the remaining renames.
+    /// the rest are untouched, and a second run finishes the remaining renames.
+    /// config.json already names all four: the write precedes every rename, so
+    /// an abort that has retired `a` and `b` necessarily happened after it.
     #[test]
     fn migrate_aborted_part_way_leaves_the_rest_untouched_and_resumes() {
         let files: Vec<(String, String)> = ["a", "b", "c", "d"]
@@ -802,7 +824,6 @@ mod tests {
         for (name, body) in &files {
             fs::write(addons.join(name), body).expect("write project copy");
         }
-        let config_before = fs::read(config_path(&project)).expect("read config.json");
 
         // The panic message below is expected test output.
         let aborted = {
@@ -831,13 +852,18 @@ mod tests {
             "renames before the abort stand; the rest must be untouched"
         );
         assert_eq!(
-            fs::read(config_path(&project)).expect("read config.json"),
-            config_before,
-            "config.json must not be written by an aborted pass"
+            read_config(&project)["codebase"]["active_addons"],
+            json!(["a", "b", "c", "d"]),
+            "every candidate must already be recorded, including a and b — the \
+             abort left them with no .md for a later run to rediscover"
         );
 
         let resumed = migrate(&project, &root);
         assert_eq!(resumed.renamed, vec!["c".to_string(), "d".to_string()]);
+        assert!(
+            !resumed.config_written,
+            "the aborted pass already recorded every name"
+        );
         assert_eq!(
             listing(&addons),
             vec![
@@ -847,6 +873,68 @@ mod tests {
                 "d.md.bak".to_string(),
             ],
             "the second run must finish the remaining renames"
+        );
+    }
+
+    /// EC-26 — the pass is killed after `active_addons` has been recorded but
+    /// before the renames finish. This is the case the old ordering lost: a
+    /// name whose `.md` is already a `.bak` is invisible to the next scan, so
+    /// if it was not recorded first it can never be recovered.
+    #[test]
+    fn migrate_records_active_addons_before_renaming() {
+        let (_tmp, root, project) = fixture(&[("memory.md", MEMORY_ADDON), ("rust.md", RUST_ADDON)]);
+        let addons = project_addons(&project);
+        fs::write(addons.join("memory.md"), MEMORY_ADDON).expect("write project copy");
+        fs::write(addons.join("rust.md"), RUST_ADDON).expect("write project copy");
+
+        // Paths are processed in sorted order, so `memory` is already retired
+        // when the kill lands on `rust`. The panic message below is expected
+        // test output.
+        let aborted = {
+            let _hook = rename_hook::install(|path| {
+                if path.file_name().and_then(|n| n.to_str()) == Some("rust.md") {
+                    panic!("simulated kill mid-migration");
+                }
+            });
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                migrate_addon_copies(
+                    project.to_str().expect("project path is utf-8"),
+                    root.to_str().expect("root path is utf-8"),
+                )
+            }))
+        };
+        assert!(aborted.is_err(), "the pass must have been aborted");
+
+        assert_eq!(
+            get_active_addons(project.to_str().expect("project path is utf-8")),
+            vec!["memory".to_string(), "rust".to_string()],
+            "both candidates must be recorded before the first rename runs"
+        );
+        assert_eq!(
+            listing(&addons),
+            vec!["memory.md.bak".to_string(), "rust.md".to_string()],
+            "the rename that had not run yet leaves its .md in place"
+        );
+
+        let resumed = migrate(&project, &root);
+
+        assert_eq!(
+            resumed.renamed,
+            vec!["rust".to_string()],
+            "the second run finishes the outstanding rename"
+        );
+        assert!(
+            !resumed.config_written,
+            "the names were already recorded, so config.json needs no rewrite"
+        );
+        assert_eq!(
+            get_active_addons(project.to_str().expect("project path is utf-8")),
+            vec!["memory".to_string(), "rust".to_string()],
+            "nothing may be dropped from active_addons by the resumed run"
+        );
+        assert_eq!(
+            listing(&addons),
+            vec!["memory.md.bak".to_string(), "rust.md.bak".to_string()]
         );
     }
 
@@ -1039,6 +1127,37 @@ mod tests {
             fs::read(config_path(&project)).expect("read config.json"),
             config_before,
             "config.json must be exactly as it was"
+        );
+    }
+
+    /// The other half of EC-16: because the config write now precedes the
+    /// renames, a config that cannot be written aborts the pass with every
+    /// project `.md` still in place — the user keeps a directory the next run
+    /// can migrate cleanly.
+    #[cfg(unix)]
+    #[test]
+    fn migrate_config_write_failure_leaves_files_unrenamed() {
+        let (_tmp, root, project) = fixture(&[("memory.md", MEMORY_ADDON), ("rust.md", RUST_ADDON)]);
+        let addons = project_addons(&project);
+        fs::write(addons.join("memory.md"), MEMORY_ADDON).expect("write project copy");
+        fs::write(addons.join("rust.md"), RUST_ADDON).expect("write project copy");
+        // Only `.hoangsa/` itself is sealed; `addons/` stays writable, so a
+        // rename would succeed here if one were attempted.
+        let _mode = ModeGuard::apply(&project.join(".hoangsa"), 0o555);
+
+        let output = run_addon_add(&project, &root, r#"["memory"]"#);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "an unrecorded active_addons must be fatal; stderr: {stderr}"
+        );
+        drop(_mode);
+        assert_eq!(
+            listing(&addons),
+            vec!["memory.md".to_string(), "rust.md".to_string()],
+            "no file may be retired once recording the names has failed"
         );
     }
 }
