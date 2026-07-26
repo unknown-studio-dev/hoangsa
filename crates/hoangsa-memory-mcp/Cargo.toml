@@ -45,3 +45,6 @@ tikv-jemallocator = { workspace = true }
 [dev-dependencies]
 tempfile             = { workspace = true }
 hoangsa-memory-policy         = { workspace = true }
+# `test-util` gives the paused clock that lets the socket idle test skip ten
+# virtual minutes instead of sleeping through them.
+tokio                = { workspace = true, features = ["test-util"] }
