@@ -1276,6 +1276,35 @@ mod tests {
             );
             assert_eq!(got, expected, "pattern {pattern:?} against {input:?}");
         }
+
+        // The table above passes whether the regex is compiled at load or
+        // recompiled on every call — both produce the same verdicts. What
+        // separates them is which text the verdict comes from: rewrite the
+        // condition's pattern after load and a per-call implementation would
+        // pick up the new text, while a load-compiled one cannot.
+        let mut stale = compiled(&make_rule(
+            "Bash",
+            vec![make_condition("command", ConditionOp::Regex, "^never-matches$")],
+        ));
+        stale.conditions[0].condition.value = "git".to_string();
+        assert!(
+            !evaluate_rule_conditions(&stale, &json!({ "command": "git stash" })),
+            "evaluation followed the rewritten pattern text — the regex is being recompiled per call"
+        );
+
+        // Same invariant on the failure side: a pattern that did not compile
+        // stays disabled for the life of the load, even if its text is later
+        // replaced by one that would compile and match.
+        let mut repaired = compiled(&make_rule(
+            "Bash",
+            vec![make_condition("command", ConditionOp::Regex, "(")],
+        ));
+        assert!(repaired.conditions[0].regex.is_none());
+        repaired.conditions[0].condition.value = "git".to_string();
+        assert!(
+            !evaluate_rule_conditions(&repaired, &json!({ "command": "git stash" })),
+            "a condition whose pattern failed to compile at load must never match"
+        );
     }
 
     // ── default rule builder refactor (REQ-08) ────────────────────────────────
