@@ -33,7 +33,7 @@ touch the code — so the edit plan is grounded, not guessed.
 5. Apply edits in order: callees first, then callers
 6. Re-index if needed: memory_index
 7. Verify: repeat memory_impact, confirm 0 stale refs
-8. memory_lesson_outcome on the triggers you followed
+8. Persist anything durable the refactor taught you
 ```
 
 ### 1. Pin the FQN
@@ -115,16 +115,6 @@ dependent count matches what you expected from step 2.
 Run the test suite. If it passes, the refactor held.
 
 ### 8. Reflect
-
-If a lesson guided the refactor (e.g. "use `RetryPolicy` not reqwest
-middleware"), call:
-
-```
-memory_lesson_outcome {
-  signal: "success",
-  triggers: ["adding a retry to an HTTP call"]
-}
-```
 
 If the refactor surfaced a recurring pattern (e.g. "this repo never
 changes a public trait without adding a blanket impl"), persist it:

@@ -15,7 +15,7 @@ Quản lý rules của HOANGSA — thêm, xóa, hoặc xem danh sách rules qua 
 Lấy danh sách rules hiện tại:
 
 ```bash
-RULE_LIST=$("$HOANGSA_ROOT/bin/hoangsa-cli" rule list .)
+RULE_LIST=$("$HOANGSA_BIN" rule list .)
 echo "$RULE_LIST"
 ```
 
@@ -164,13 +164,13 @@ Nếu user không chọn gì → báo "Không có thay đổi." và dừng.
 Với mỗi rule được chọn:
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" rule remove . "<RULE_ID>"
+"$HOANGSA_BIN" rule remove . "<RULE_ID>"
 ```
 
 Sau đó sync:
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" rule sync .
+"$HOANGSA_BIN" rule sync .
 ```
 
 Goto Step 4.
@@ -203,7 +203,7 @@ Dừng sau khi hiển thị.
 Generate và thêm rule mới từ dữ liệu wizard (Steps 2a–2g):
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" rule add . \
+"$HOANGSA_BIN" rule add . \
   --type "$RULE_TYPE" \
   --tool "$RULE_TOOL" \
   --field "$RULE_FIELD" \
@@ -218,7 +218,7 @@ Nếu lệnh thành công → lấy rule ID từ output.
 Sync config:
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" rule sync .
+"$HOANGSA_BIN" rule sync .
 ```
 
 ---

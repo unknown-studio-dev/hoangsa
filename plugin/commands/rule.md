@@ -11,10 +11,15 @@ Manage HOANGSA rules interactively — add new rules via guided wizard, remove e
 </objective>
 
 <execution_context>
-Resolve HOANGSA install path — check local first, then global:
-1. `${CLAUDE_PLUGIN_ROOT}/workflows/rule.md`
-2. `${CLAUDE_PLUGIN_ROOT}/workflows/rule.md`
-Read the first path that exists.
+Load the workflow:
+
+```bash
+hoangsa-cli workflow show rule
+```
+
+Its stdout IS the workflow — follow it. The command searches the
+project-local install, `$CLAUDE_CONFIG_DIR`, then the default profile,
+and lists every path it tried if nothing matched.
 </execution_context>
 
 <process>

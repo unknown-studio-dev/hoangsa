@@ -40,9 +40,17 @@ language: "<same as DESIGN-SPEC>"
 - **Verify**: `<runnable command — playwright / maestro / curl script / CLI>`
 
 ## Edge Cases
-<!-- MUST be non-empty (`validate tests` fails an empty table). Pull every boundary,
-     error path, and weird input from the Step 3d deep-dive. A REQ with truly no
-     edge case gets a waiver row: | None for REQ-xx | — | — | <reason> | -->
+<!-- MUST be non-empty (`validate tests` fails an empty table), and MUST be derived from
+     the DESIGN-SPEC ## Risk Sweep: every row marked APPLIES there needs ≥1 row here.
+     Also cover the error paths in ## Behavior / Logic. A REQ with truly no edge case
+     gets a waiver row: | None for REQ-xx | — | — | <reason> |
+
+     Concurrency rows must say how to FORCE the interleaving — "handles concurrency" is
+     not a test. Spell out the two actors and the moment they collide, e.g.
+     | two writers, same key | 2 concurrent create(k) | exactly one wins, other gets Conflict | REQ-02 |
+     | TOCTOU on config file | replace file between stat() and open() | operation aborts, no partial write | REQ-03 |
+     | replayed request | POST same idempotency key twice | one row created, both return 200 | REQ-04 |
+     | killed mid-write | SIGKILL after step 2 of 3 | no half-written state on restart | REQ-05 | -->
 | Case | Input | Expected | Covers |
 |------|-------|----------|--------|
 

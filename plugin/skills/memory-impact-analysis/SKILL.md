@@ -98,11 +98,11 @@ returns their upstream callers in one call — cheaper than running
 `memory_impact` per symbol. Use it as the first pass, then drill in
 with `memory_impact` on anything risky.
 
-Compose with `pr-review-toolkit:review-pr` (or `code-reviewer` /
-`silent-failure-hunter`) if installed — hoangsa-memory covers the **graph** side
-of PR review (blast radius, orphan symbols, test coverage gaps on
-touched callers); the toolkit covers style, error handling, and type
-design.
+Compose with the Gate-4 analyzers (`hoangsa-analyzer-failure`,
+`hoangsa-analyzer-types`, `hoangsa-analyzer-claims`), which ship with
+HOANGSA — hoangsa-memory covers the **graph** side of PR review (blast
+radius, orphan symbols, test coverage gaps on touched callers); the
+analyzers cover error handling, type design, and comment accuracy.
 
 ## Anti-patterns
 

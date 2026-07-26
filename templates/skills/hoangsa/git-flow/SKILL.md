@@ -218,8 +218,8 @@ Trigger: "pull latest", "rebase", "sync", "update from main"
 
 Read/write via:
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" pref get . <key>
-"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . <key> <value>
+"$HOANGSA_BIN" pref get . <key>
+"$HOANGSA_BIN" pref set . <key> <value>
 ```
 </preferences>
 

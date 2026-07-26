@@ -11,8 +11,8 @@ You are the committer. Mission: stage changed files and commit with a convention
 ## Step 0b: Model selection + config metadata
 
 ```bash
-COMMITTER_MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model committer)
-CONFIG=$("$HOANGSA_ROOT/bin/hoangsa-cli" config get .)
+COMMITTER_MODEL=$("$HOANGSA_BIN" resolve-model committer)
+CONFIG=$("$HOANGSA_BIN" config get .)
 ```
 
 Use the `committer` model for commit message generation. The `committer` role is lightweight (default: haiku in balanced profile).
@@ -124,7 +124,7 @@ Always chain to `/hoangsa:serve` in push mode — the user linked a task, so the
 Read chain preference from project config:
 
 ```bash
-AUTO_SERVE=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . auto_serve)
+AUTO_SERVE=$("$HOANGSA_BIN" pref get . auto_serve)
 ```
 
 - If `auto_serve` value is `true` → automatically chain to `/hoangsa:serve`
@@ -154,7 +154,7 @@ AUTO_SERVE=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . auto_serve)
   Save immediately:
 
   ```bash
-  "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . auto_serve true
+  "$HOANGSA_BIN" pref set . auto_serve true
   # or: pref set . auto_serve false
   ```
 

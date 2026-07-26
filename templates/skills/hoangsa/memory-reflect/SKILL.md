@@ -151,9 +151,10 @@ positives pollute the store faster than missing entries hurt.
 - **Diary-style dumps.** "Today we fixed the parser." Not a fact. Skip.
 - **Overly specific code lines.** The code graph already holds that.
   Facts should live at a higher level than symbols.
-- **Duplicate lessons.** Check existing LESSONS.md first; if the trigger
-  already exists, bump its confidence via `memory_lesson_outcome` instead
-  of appending a near-duplicate.
+- **Duplicate lessons.** Check existing LESSONS.md first — a
+  `memory_remember_lesson` on an existing trigger is rejected outright.
+  If your advice supersedes it, use `memory_replace`; otherwise leave the
+  existing lesson alone.
 - **Lessons for one-off bugs.** A lesson earns its place by being likely
   to recur across sessions.
 - **Project facts saved as preferences.** If it's specific to this

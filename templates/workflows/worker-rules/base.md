@@ -14,6 +14,7 @@ These rules are non-negotiable unless explicitly overridden by project config.
 - **No refactoring outside scope.** Do not "improve" surrounding code, rename variables in untouched functions, or clean up imports you didn't add.
 - **No new dependencies** unless the DESIGN-SPEC explicitly requires them. If you believe a dependency is needed, report it as a blocker.
 - **Do not delete or modify existing tests** unless the task explicitly covers test changes. Adding new tests is fine; breaking existing ones is not.
+- **Do not weaken tests you own either.** Loosening an assertion, widening a tolerance, replacing a value check with a truthiness check, or marking a test `skip`/`xfail`/`ignore` to get a green run is a contract change, not a fix — report it as a blocker instead.
 - **No feature creep.** Implement exactly what the task describes. No "while I'm here" additions.
 
 ---
@@ -56,6 +57,30 @@ These rules are non-negotiable unless explicitly overridden by project config.
   3. Attempt 3 — try alternative approach
 - **If all 3 attempts fail:** stop, report the failure with full error details (command, stdout, stderr). Do NOT keep retrying.
 
+### The contract is an input, not a variable
+
+The acceptance command, the `expected` values in your test cases and edge
+cases, and the behavior-contract steps are **given to you**. Retrying means
+changing your implementation until it satisfies them — never changing them
+until they accept your implementation. These are all contract changes, and
+every one of them is a blocker report, not a retry:
+
+- weakening or deleting an assertion, or skipping/ignoring a test
+- stubbing, mocking, or short-circuiting the very thing under test
+- swallowing an error or returning a default so the failing path stops failing
+- dropping an edge case, or narrowing it until it passes
+- editing the acceptance command to run something easier
+
+**Expected outcomes come from the spec, never from observed output.** If the
+production code disagrees with the `expected` value you were given, that is a
+finding — report which one you believe is wrong and why. Writing the test to
+assert whatever the code currently does converts a real bug into a green run,
+and everything downstream then trusts it.
+
+A blocker reported honestly is a good outcome. A green run that was bought by
+relaxing the contract is the single most expensive failure mode in this
+pipeline, because every later gate inherits the lie.
+
 ---
 
 ## 6. Context Hygiene
@@ -68,7 +93,90 @@ These rules are non-negotiable unless explicitly overridden by project config.
 
 ---
 
-## 7. Communication
+## 7. Claim Discipline
+
+Every load-bearing statement you make is one of four kinds. **The grammar you
+use must match the kind** — because a hallucination is a guess wearing the
+grammar of an observation, and the grammar is the only tell a reader gets.
+
+| Kind | You have | Say it like |
+|------|----------|-------------|
+| **OBSERVED** | ran it, read it, measured it — this task | "X returns …", "the file has …" |
+| **DERIVED** | follows from something OBSERVED, via a stated mechanism | "X will …, because <chain>" |
+| **PRIOR** | training knowledge, a comment, a doc, a name | "X is typically …" — and verify it if the task depends on it |
+| **ASSUMED** | unverified, but your work needs it to be true | "I assume X; if wrong, <consequence>" |
+
+Three rules:
+
+- **Never promote without evidence.** A comment saying `// pinned on purpose`
+  is PRIOR, not OBSERVED. A README's number is PRIOR. Reading a claim is not
+  checking it.
+- **If it is load-bearing, spend the check.** When your implementation depends
+  on a PRIOR being true, run the one command that settles it. Cheap checks you
+  skipped are the most expensive thing in this file.
+- **Confidence tracks evidence, not effort.** Time spent, code written, and
+  how fluent the explanation sounds move confidence not at all. If you cannot
+  name what raised it, it did not rise.
+
+"I don't know, and <this> would settle it" is a complete, acceptable answer.
+Inventing a confident one is not.
+
+## 8. Before an expensive or irreversible action
+
+Run this before any command that takes real time, spawns processes, writes
+outside your task's files, or cannot be undone:
+
+1. **What does this command measure?** Name it in one clause.
+2. **Can my change alter that?** If the answer is no — a docs edit before a
+   test run, a version bump before a full build — skip it and say why.
+3. **What if it runs long?** Anything you background or spawn, you own. Know
+   how you will stop it.
+4. **Is it reversible?** If not, and it is not clearly inside your task's
+   scope, report a blocker instead. Deleting, overwriting, force-pushing and
+   mass-reformatting are never "probably fine".
+
+The cheapest kill-test beats the most elegant theory. When something is
+misbehaving, measure it before explaining it — one `ps`, one `--version`, one
+`ls` outranks a paragraph of reasoning about what is probably happening.
+
+## 9. Communication
+
+### Completion report (required format)
+
+You are the only witness to what you actually did — the orchestrator sees a
+diff and an exit code. Close every task with this block, before anything else:
+
+```
+Task: <task.id> — <acceptance: PASS | FAIL>
+
+Behavior contract:
+  1. <step, abbreviated> → <path/to/file.rs:120-134>
+  2. <step> → <path:line>
+  3. <step> → ⚠️ DEVIATED: <what you did instead and why>
+  (or: none given)
+
+Edge cases:
+  - <case> → handled at <path:line>
+  - <case> → ⚠️ NOT HANDLED: <why>
+
+Files changed: <list — must match task.files>
+Blockers: <none | list>
+```
+
+Rules for this block:
+
+- **Every behavior step and every edge case gets a line.** No aggregation
+  ("all handled"), no omissions. A step you skipped or implemented differently
+  is a `⚠️` line, not a missing line — silence reads as done and that is how a
+  dropped step reaches production.
+- **`path:line` must be where the logic actually lives**, so a reviewer can
+  check it in one jump. If a step is spread over several places, list them.
+- **A `⚠️` line is not a failure** — it's information the orchestrator needs.
+  Guessing and staying quiet is the failure.
+- If the acceptance command passed but you know the implementation is
+  incomplete against the contract, say so. `PASS` refers to the command only.
+
+### General
 
 - **Report, don't guess.** If something is ambiguous, unclear, or missing from the spec — report it as a blocker. Do not make assumptions about intended behavior.
 - **On failure, provide evidence:** the exact command run, full stdout/stderr, and what you tried. Do not summarize or truncate error output.

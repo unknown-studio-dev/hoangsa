@@ -23,10 +23,15 @@ Creates a RESEARCH.md that includes:
 </objective>
 
 <execution_context>
-Resolve HOANGSA install path — check local first, then global:
-1. `./.claude/hoangsa/workflows/research.md`
-2. `~/.claude/hoangsa/workflows/research.md`
-Read the first path that exists.
+Load the workflow:
+
+```bash
+hoangsa-cli workflow show research
+```
+
+Its stdout IS the workflow — follow it. The command searches the
+project-local install, `$CLAUDE_CONFIG_DIR`, then the default profile,
+and lists every path it tried if nothing matched.
 </execution_context>
 
 <process>

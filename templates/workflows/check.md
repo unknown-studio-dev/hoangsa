@@ -11,7 +11,7 @@ You are the status reporter. Mission: show the current session's task progress o
 ## Step 1: Locate active session
 
 ```bash
-SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)
+SESSION=$("$HOANGSA_BIN" session latest)
 ```
 
 If `found: false` → inform the user that no active session was found and stop.
@@ -33,7 +33,7 @@ If no plan.json exists, determine partial session state as follows:
 ## Step 3: Compute waves and tally statuses
 
 ```bash
-WAVES=$("$HOANGSA_ROOT/bin/hoangsa-cli" dag waves "$SESSION_DIR/plan.json")
+WAVES=$("$HOANGSA_BIN" dag waves "$SESSION_DIR/plan.json")
 echo $WAVES
 ```
 
@@ -122,9 +122,8 @@ If `.hoangsa/memory/` directory exists, show hoangsa-memory memory health:
 # Count facts and lessons
 FACTS=$(grep -c '^### ' .hoangsa/memory/MEMORY.md 2>/dev/null || echo 0)
 LESSONS=$(grep -c '^### ' .hoangsa/memory/LESSONS.md 2>/dev/null || echo 0)
-PENDING_F=$(grep -c '^### ' .hoangsa/memory/MEMORY.pending.md 2>/dev/null || echo 0)
-PENDING_L=$(grep -c '^### ' .hoangsa/memory/LESSONS.pending.md 2>/dev/null || echo 0)
 QUARANTINED=$(grep -c '^### ' .hoangsa/memory/LESSONS.quarantined.md 2>/dev/null || echo 0)
+DREAM=$(grep -c '^## ' .hoangsa/memory/DREAM.md 2>/dev/null || echo 0)
 
 # Reflection debt (if gate.jsonl exists)
 if [ -f ".hoangsa/memory/gate.jsonl" ] && [ -f ".hoangsa/memory/.session-start" ]; then
@@ -141,8 +140,8 @@ Display (adapt labels to `$LANG_PREF`):
 ```
 hoangsa-memory Memory:
   Facts: <FACTS>  |  Lessons: <LESSONS>
-  Pending: <PENDING_F>F / <PENDING_L>L
   Quarantined: <QUARANTINED>
+  Dream proposals: <DREAM>
   Reflection debt: <DEBT> (nudge: 10, block: 20)
 ```
 
@@ -196,7 +195,7 @@ Artifacts:
 ## Step 5b: Effectiveness snapshot
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" stats report "$SESSION_DIR"
+"$HOANGSA_BIN" stats report "$SESSION_DIR"
 ```
 
 Show the numbers that answer "is the harness paying for itself" (skip the

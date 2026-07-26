@@ -4,6 +4,8 @@ description: QC — take a spec, design test cases, execute them, and report ver
 allowed-tools:
   - Read
   - Bash
+  - Write
+  - Edit
   - Task
   - AskUserQuestion
 ---
@@ -15,10 +17,15 @@ Every verdict must link captured evidence on disk; a pass without evidence is re
 </objective>
 
 <execution_context>
-Resolve HOANGSA install path — check local first, then global:
-1. `./.claude/hoangsa/workflows/qc.md`
-2. `~/.claude/hoangsa/workflows/qc.md`
-Read the first path that exists.
+Load the workflow:
+
+```bash
+hoangsa-cli workflow show qc
+```
+
+Its stdout IS the workflow — follow it. The command searches the
+project-local install, `$CLAUDE_CONFIG_DIR`, then the default profile,
+and lists every path it tried if nothing matched.
 </execution_context>
 
 <process>

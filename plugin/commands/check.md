@@ -3,6 +3,8 @@ description: Status — show session progress with wave structure, budget usage,
 allowed-tools:
   - Read
   - Bash
+  - mcp__hoangsa-memory__memory_archive_status
+  - mcp__hoangsa-memory__memory_skills_list
 ---
 
 <objective>
@@ -10,10 +12,15 @@ Read the active session's state and display a rich progress overview: session ID
 </objective>
 
 <execution_context>
-Resolve HOANGSA install path — check local first, then global:
-1. `${CLAUDE_PLUGIN_ROOT}/workflows/check.md`
-2. `${CLAUDE_PLUGIN_ROOT}/workflows/check.md`
-Read the first path that exists.
+Load the workflow:
+
+```bash
+hoangsa-cli workflow show check
+```
+
+Its stdout IS the workflow — follow it. The command searches the
+project-local install, `$CLAUDE_CONFIG_DIR`, then the default profile,
+and lists every path it tried if nothing matched.
 </execution_context>
 
 <process>

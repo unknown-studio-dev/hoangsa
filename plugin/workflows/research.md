@@ -15,7 +15,7 @@ Conduct deep research on a topic — codebase structure, patterns, or external k
 Detect whether an active session exists:
 
 ```bash
-SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)
+SESSION=$("$HOANGSA_BIN" session latest)
 ```
 
 - If `SESSION` is non-empty → extract `SESSION_DIR` from the result and use it as the output directory.
@@ -23,7 +23,7 @@ SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)
 
 ```bash
 # SLUG auto-derived from topic (e.g. "auth-patterns", "logging-architecture")
-SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session init docs "$SLUG")
+SESSION=$("$HOANGSA_BIN" session init docs "$SLUG")
 # Extract SESSION_DIR from the result
 ```
 
@@ -36,7 +36,7 @@ This makes the workflow flexible — it works both inside a full HOANGSA session
 ### 2a. Load saved preferences
 
 ```bash
-PREFS=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get .)
+PREFS=$("$HOANGSA_BIN" pref get .)
 ```
 
 Extract `research_scope` and `research_mode` from preferences.
@@ -74,7 +74,7 @@ If `research_scope` is `null` (first time):
   Save immediately:
 
   ```bash
-  "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . research_scope "both"
+  "$HOANGSA_BIN" pref set . research_scope "both"
   ```
 
 If already saved → use it. Show briefly:
@@ -100,7 +100,7 @@ If `research_mode` is `null` (first time):
   Save immediately:
 
   ```bash
-  "$HOANGSA_ROOT/bin/hoangsa-cli" pref set . research_mode "auto"
+  "$HOANGSA_BIN" pref set . research_mode "auto"
   ```
 
 If already saved → use it.
@@ -124,7 +124,7 @@ Store result as `MEMORY_STATUS`.
 ### Model selection
 
 ```bash
-MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model researcher)
+MODEL=$("$HOANGSA_BIN" resolve-model researcher)
 ```
 
 Use the resolved model for spawning research agents.

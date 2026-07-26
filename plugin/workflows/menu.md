@@ -14,10 +14,11 @@ Take the user from an idea to validated, user-approved `DESIGN-SPEC.md` + `TEST-
 
 | # | Gate | Check |
 |---|------|-------|
-| 1 | Spec valid | `validate spec "$SESSION_DIR/DESIGN-SPEC.md"` |
+| 1 | Spec valid | `validate spec "$SESSION_DIR/DESIGN-SPEC.md"` — for `category: code` this enforces a non-empty `## Behavior / Logic`, a `## Risk Sweep` covering all 8 risk classes, and every `## Open Questions` row carrying `RESOLVED` or `DEFERRED` |
 | 2 | Tests valid | `validate tests "$SESSION_DIR/TEST-SPEC.md"` (enforces Edge Cases non-empty; `surface: ui\|api\|cli` ⇒ `## E2E Tests`; `ui` ⇒ `## Visual Verification`) |
-| 3 | Cross-check | TEST-SPEC `component` == DESIGN-SPEC `component`; every `[REQ-xx]` in TEST-SPEC exists in DESIGN-SPEC |
-| 4 | User approval | user approved both documents (review loop below — revisable indefinitely) |
+| 3 | Cross-check | TEST-SPEC `component` == DESIGN-SPEC `component`; every `[REQ-xx]` in TEST-SPEC exists in DESIGN-SPEC; every `## Risk Sweep` row marked APPLIES has ≥1 `## Edge Cases` row proving it; every `## Behavior / Logic` error path has a test or an edge case |
+| 4 | Open questions surfaced | Step 6c ran — no unresolved question and no silent assumption survives into the spec |
+| 5 | User approval | user approved both documents (review loop below — revisable indefinitely) |
 
 ## Express lane — triage BEFORE any ceremony
 
@@ -33,7 +34,7 @@ Use AskUserQuestion:
 
 **Express path** (all gates still apply — express cuts questions, never quality):
 1. Create session (§Session creation below) + git context.
-2. Write a minimal DESIGN-SPEC (frontmatter + Overview with 1–3 REQs + Acceptance Criteria) and TEST-SPEC (frontmatter with correct `category`/`surface`; Unit Tests and/or E2E per surface; `## Edge Cases` with ≥1 real row or explicit waiver; `## Visual Verification` when `surface: ui`) — Gates 1–3 must pass.
+2. Write a minimal DESIGN-SPEC (frontmatter + Overview with 1–3 REQs + `## Behavior / Logic` for the one thing that changes + `## Risk Sweep` — mostly N/A rows, but each N/A carries a reason + Acceptance Criteria) and TEST-SPEC (frontmatter with correct `category`/`surface`; Unit Tests and/or E2E per surface; `## Edge Cases` with ≥1 real row or explicit waiver; `## Visual Verification` when `surface: ui`) — Gates 1–3 must pass. Express is where the Risk Sweep is cheapest and most valuable: if any class comes back APPLIES with a real race or migration concern, the task was never express — switch to Full menu.
 3. Write `plan.json` directly (schema: `prepare.md §plan.json schema` — `type`, `ui`, embedded `test_cases`/`edge_cases` included) — must pass `validate plan --tests "$SESSION_DIR/TEST-SPEC.md"` + `dag check`.
 4. ONE combined confirmation (spec + plan on one screen) → on approval chain straight to `/hoangsa:cook`, skipping `/hoangsa:prepare`.
 
@@ -49,7 +50,7 @@ yourself — 2-4 key words from the description, hyphenated, lowercase (e.g.
 
 ```bash
 # SLUG is auto-derived from user's description — NEVER ask them to type it
-SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session init "$TASK_TYPE" "$SLUG")
+SESSION=$("$HOANGSA_BIN" session init "$TASK_TYPE" "$SLUG")
 # → { "id": "feat/api-authentication", "type": "feat", "name": "api-authentication", "dir": "..." }
 ```
 
@@ -58,7 +59,7 @@ Extract `SESSION_ID`, `SESSION_DIR`, and `SESSION_TYPE` from JSON output.
 Initialize state for this session:
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" state init "$SESSION_DIR"
+"$HOANGSA_BIN" state init "$SESSION_DIR"
 # → creates state.json in SESSION_DIR with status: "pending"
 ```
 
@@ -79,7 +80,7 @@ The expected branch is derived from `SESSION_ID` (e.g., `feat/api-authentication
 Load project-level preferences from config.json. These persist across sessions — only ask what's missing.
 
 ```bash
-PREFS=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get .)
+PREFS=$("$HOANGSA_BIN" pref get .)
 # → { "lang": "vi", "spec_lang": "vi", "tech_stack": ["typescript"], ... }
 ```
 
@@ -119,7 +120,7 @@ Detected tech stack: [TypeScript, Python]
 After user confirms → save immediately:
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . tech_stack '["typescript","python"]'
+"$HOANGSA_BIN" pref set . tech_stack '["typescript","python"]'
 ```
 
 ### 2b. Language preferences (if not saved)
@@ -137,7 +138,7 @@ Use AskUserQuestion:
 After user answers → save immediately:
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . lang "vi"
+"$HOANGSA_BIN" pref set . lang "vi"
 ```
 
 If `spec_lang` is `null`:
@@ -154,7 +155,7 @@ Use AskUserQuestion:
 After user answers → save immediately:
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . spec_lang "vi"
+"$HOANGSA_BIN" pref set . spec_lang "vi"
 ```
 
 ### 2c. Show saved preferences summary (if all already set)
@@ -179,15 +180,22 @@ Then move directly to Step 3 — no further questions about basics.
 Check if a brainstorm session produced a `BRAINSTORM.md` that should feed into this design.
 
 ```bash
-BRAINSTORM_SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)
+BRAINSTORM_SESSION=$("$HOANGSA_BIN" session latest)
 ```
 
 If `type` is `"brainstorm"` and `files` contains `"BRAINSTORM.md"` → read it
 and pre-fill: **Idea** → Step 3c description; **Chosen approach** → design
-direction; **Decisions** → LOCKED decisions in DESIGN-SPEC; **Open questions**
-→ Step 3d deep-dive; **Out of scope** → CONTEXT.md. Show what was found
-(`🧠 Brainstorm detected: <id> — idea / approach / N decisions`), then continue
-to Step 2e — the user can still override everything. Otherwise skip.
+direction; **Decisions** → LOCKED decisions in DESIGN-SPEC; **Out of scope** →
+CONTEXT.md; **Risk Seeds** → seed rows of the Step 3d-2 Risk Sweep. Show what
+was found (`🧠 Brainstorm detected: <id> — idea / approach / N decisions`), then
+continue to Step 2e — the user can still override everything. Otherwise skip.
+
+**Open questions carried in are debt, not context.** Every row in the
+BRAINSTORM.md `## Open Questions` table that is `DEFERRED` (and every
+assumption it records) enters this session as an unresolved question: it must be
+answered in Step 3d or explicitly re-deferred by the user in Step 6c. Menu is
+the last phase where a design question is cheap to answer — never let one ride
+into `plan.json`.
 
 ---
 
@@ -305,11 +313,57 @@ Still ask one question at a time. Adapt questions to the task type — different
 
 Match question count to complexity: 1-2 for simple tasks, 3-5 for complex ones.
 
+**The unknown ledger.** Keep a running list of everything you do not know for
+certain about this task. Three outcomes only, one per entry: **answered from the
+codebase/research** (cite the file), **answered by the user** (ask), or
+**assumption** — and an assumption is never silent: it goes into the DESIGN-SPEC
+`## Open Questions` table with what breaks if it's wrong, and gets surfaced in
+Step 6c. The question budget above bounds *exploratory* questions; a question
+whose answer changes the design or the data model is blocking — ask it even if
+you're over budget. Guessing to stay under a question count is the failure mode
+this ledger exists to prevent.
+
 If the user's choices reveal strong design preferences (e.g., "always use interfaces", "prefer functional over OOP", "no magic strings"):
 
 ```
 memory_remember_preference({text: "<preference>"})
 ```
+
+### 3d-2. Risk sweep (mandatory for code tasks)
+
+Deep-dive questions follow the shape of the feature; this sweep follows the
+shape of the *failures*. Walk all 8 classes in order — this is the table that
+lands in DESIGN-SPEC `## Risk Sweep`, and `validate spec` fails if a class is
+missing:
+
+| # | Class | The question to actually answer |
+|---|-------|--------------------------------|
+| 1 | Boundary / empty input | zero items, one item, max, empty string, null — what does each return? |
+| 2 | Invalid / malformed input | wrong type, unicode, oversized, truncated payload, hostile input |
+| 3 | **Concurrency & TOCTOU** | list every check-then-act on shared state — file, DB row, cache, env var, global, session dir. For each: what happens if a second actor mutates it between the check and the act? Name the guard (lock, transaction, atomic rename via temp+rename, CAS, unique index, single-writer) |
+| 4 | Idempotency & retry | the same call arrives twice (retry, double-click, at-least-once queue) — same result, or duplicate side effect? |
+| 5 | Partial failure & rollback | a multi-step write dies after step 2 of 3 — what state is on disk, who cleans it up, is it recoverable on restart? |
+| 6 | Auth & permission | who may call this, what does an unauthorized caller observe? |
+| 7 | Limits | max payload, dependency timeout, unbounded loop/growth, rate limit |
+| 8 | Backward compat / migration | old data, old callers, old config files still exist — do they keep working? |
+
+Resolve each class in this order — **research first, ask second, never guess**:
+
+1. **Answer from the code.** `memory_recall` / `memory_symbol_context` on the
+   symbols being touched, plus the Step 4 research: does the surrounding code
+   already have a lock, a transaction, a unique constraint, a retry wrapper? An
+   existing guard is the answer — cite it in the Handling column.
+2. **Ask the user** when the answer is a product/behavior decision, not a code
+   fact ("hai người sửa cùng lúc thì ai thắng?", "job chạy lại có được phép
+   ghi đè không?"). One AskUserQuestion per class that needs it, options with
+   real trade-offs, one at a time.
+3. **N/A with a reason** — genuinely inapplicable (a pure function has no TOCTOU;
+   a new file has no migration). Bare "N/A" is a defect; write why.
+
+Concurrency is the class that gets skipped, so hold it to a higher bar: if the
+task reads state and then writes based on what it read, class 3 is APPLIES until
+proven otherwise. Every APPLIES row must produce ≥1 `## Edge Cases` row in the
+TEST-SPEC (Gate 3) — a risk acknowledged but untested is a risk shipped.
 
 ### 3e. Write CONTEXT.md
 
@@ -354,7 +408,7 @@ Save to `$SESSION_DIR/CONTEXT.md`:
 ## Step 3f: Load codebase metadata from config
 
 ```bash
-CONFIG=$("$HOANGSA_ROOT/bin/hoangsa-cli" config get .)
+CONFIG=$("$HOANGSA_BIN" config get .)
 ```
 
 Extract from config and pass to research step:
@@ -372,7 +426,7 @@ This avoids re-detecting what init already discovered. Research agents should us
 First, read the `research_mode` preference to determine how to run this step:
 
 ```bash
-RESEARCH_MODE=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . research_mode | python3 -c "import sys,json; print(json.load(sys.stdin).get('value','') or 'inline')")
+RESEARCH_MODE=$("$HOANGSA_BIN" pref get . research_mode | python3 -c "import sys,json; print(json.load(sys.stdin).get('value','') or 'inline')")
 ```
 
 **`"full"`:** invoke /hoangsa:research with Topic = task description from
@@ -406,7 +460,9 @@ Synthesize CONTEXT + RESEARCH. Write specs in the `spec_lang` from preferences.
 **Code tasks** (feat, fix, refactor, perf, test):
 - `## Types / Data Models` — define types/schemas for the stack
 - `## Interfaces / APIs` — function signatures, endpoints, contracts
-- `## Implementations` — LOCKED/FLEXIBLE decisions, affected files, flow/logic
+- `## Behavior / Logic` — **required** (Gate 1). Per REQ: trigger, preconditions, numbered steps, postconditions, decision table for non-trivial branching, error-path table, state transitions. This is the section the fresh-context worker implements from; `prepare` copies it into each impl task's `behavior` field. A signature with no logic means the worker invents the logic — that is the defect this section exists to kill. Write the steps at the level where a reader could disagree with you: "validate then insert" is not logic, "reject if `email` fails RFC5322 → 400 `INVALID_EMAIL`; else insert with `ON CONFLICT (email) DO NOTHING`; 0 rows affected → 409" is
+- `## Risk Sweep` — **required** (Gate 1). The 8-class table from Step 3d-2, verbatim, no class dropped
+- `## Implementations` — LOCKED/FLEXIBLE decisions, affected files
 - Acceptance = **runnable test commands**
 
 **Ops tasks** (ci, infra, chore, deploy):
@@ -444,7 +500,7 @@ Read `$HOANGSA_ROOT/workflows/spec-templates/design-spec.md` and instantiate it 
 Then check `review_style` preference:
 
 ```bash
-REVIEW=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . review_style)
+REVIEW=$("$HOANGSA_BIN" pref get . review_style)
 ```
 
 ### If `review_style` is "whole_document" or null (default):
@@ -483,7 +539,7 @@ For each section in [Overview, Types/Data Models, Interfaces/APIs, Implementatio
 If `review_style` is `null` → after the first review round, save based on behavior:
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . review_style "whole_document"
+"$HOANGSA_BIN" pref set . review_style "whole_document"
 ```
 
 Architectural choices (interfaces, dependencies) belong in the DESIGN-SPEC's Architecture / Interfaces sections — that document is the canonical record.
@@ -570,25 +626,62 @@ Read `$HOANGSA_ROOT/workflows/spec-templates/test-spec-content.md` and instantia
 
 Review using the same `review_style` as Step 5 (whole_document or section_by_section), applied to the relevant sections for the task category.
 
+### 6c. Open-questions gate (blocking — Gate 4)
+
+Both documents are drafted; this is the last moment where a wrong assumption is
+cheap. Collect, from the whole session:
+
+- every entry in the Step 3d **unknown ledger** still marked *assumption*
+- every `DEFERRED` row carried in from BRAINSTORM.md (Step 2d)
+- every `## Risk Sweep` row you answered yourself where the answer was a
+  product decision rather than a code fact
+- every place you wrote "TBD", "assume", "probably", or "for now" in either spec
+
+Nothing collected → say so (`✅ Không còn open question`) and go to Step 7.
+
+Otherwise **you must ask** — never write an unanswered question into the spec
+and move on. One AskUserQuestion per question, most consequential first, max 4
+rounds; anything left after 4 gets DEFERRED in one final round:
+
+Use AskUserQuestion:
+  question: "<the open question, in concrete terms>"
+  header: "<topic, max 12 chars>"
+  options: (the real candidate answers, with consequences)
+    - label: "<Answer A>", description: "<what this makes true — and what it costs>"
+    - label: "<Answer B>", description: "<...>"
+    - label: "Để sau (deferred)", description: "Đi tiếp với giả định: <assumption>. Nếu sai thì: <impact>"
+  multiSelect: false
+
+Record each outcome in the DESIGN-SPEC `## Open Questions` table:
+`RESOLVED` + the answer, or `DEFERRED` + the assumption we proceed under and its
+blast radius. Then apply the answer to the rest of the spec — an answer that
+changes behavior means editing `## Behavior / Logic`, `## Risk Sweep` and the
+TEST-SPEC, then re-running the Step 5/6 review for what changed. `validate spec`
+fails on any row with neither status, so this gate cannot be silently skipped.
+
 ---
 
 ## Step 7: Validate
 
 ```bash
-SPEC_RESULT=$("$HOANGSA_ROOT/bin/hoangsa-cli" validate spec \
+SPEC_RESULT=$("$HOANGSA_BIN" validate spec \
   "$SESSION_DIR/DESIGN-SPEC.md")
 echo $SPEC_RESULT
 
-TEST_RESULT=$("$HOANGSA_ROOT/bin/hoangsa-cli" validate tests \
+TEST_RESULT=$("$HOANGSA_BIN" validate tests \
   "$SESSION_DIR/TEST-SPEC.md")
 echo $TEST_RESULT
 ```
 
 If errors → fix and re-validate before proceeding.
 
-Manual cross-check:
+Manual cross-check (Gate 3 — string matching can't catch mangled meaning):
 - `component` in TEST-SPEC == `component` in DESIGN-SPEC ✓
 - All `[REQ-xx]` in TEST-SPEC exist in DESIGN-SPEC ✓
+- Every `## Risk Sweep` row marked APPLIES → ≥1 `## Edge Cases` row that actually
+  exercises it (a concurrency row needs two colliding actors, not "handles races") ✓
+- Every error path in `## Behavior / Logic` → a test or an edge case ✓
+- Every `## Open Questions` row carries RESOLVED or DEFERRED ✓
 
 ---
 
@@ -603,11 +696,11 @@ Save all files to `$SESSION_DIR/`:
 Update state to reflect design is complete:
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" state update "$SESSION_ID" '{"status":"design"}'
+"$HOANGSA_BIN" state update "$SESSION_ID" '{"status":"design"}'
 ```
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" commit \
+"$HOANGSA_BIN" commit \
   "menu(<scope>): complete spec for <component>" \
   --files \
     $SESSION_DIR/CONTEXT.md \
@@ -638,10 +731,12 @@ Before Step 8, emit the `common.md` self-verification table with rows:
 | 0. Setup (lang + hoangsa-memory) | ... |
 | 1. Init session | ... |
 | 2. Gather input | ... |
-| 3. Create CONTEXT.md | ... |
+| 3. Deep dive + risk sweep (8 classes) | ... |
+| 3b. Create CONTEXT.md | ... |
 | 4. Research | ... |
-| 5. DESIGN-SPEC.md | ... |
+| 5. DESIGN-SPEC.md (incl. Behavior / Logic + Risk Sweep) | ... |
 | 6. TEST-SPEC.md | ... |
+| 6c. Open-questions gate (asked, not assumed) | ... |
 | 7. Validate specs | ... |
 | 8. Save + commit | ... |
 ```
@@ -656,6 +751,10 @@ Universal rules live in `common.md §Universal rules`. Menu-specific additions:
 |------|--------|
 | **DON'T skip discussion** | Ask before deciding — except on the express lane, where there's nothing to decide |
 | **Express cuts questions, not gates** | Express specs/plans pass the same validate commands |
+| **No silent assumptions** | Every gap is answered from code, answered by the user, or written into `## Open Questions` with its blast radius — never guessed quietly |
+| **Blocking questions ignore the budget** | Question counts bound exploration; a question whose answer changes the design gets asked regardless |
+| **Behavior before signatures** | Code specs carry `## Behavior / Logic` with per-REQ steps, decisions and error paths — the worker implements this, not the function name |
+| **Risk sweep, all 8 classes** | Concurrency/TOCTOU, idempotency and partial failure are answered explicitly, not skipped; APPLIES ⇒ an Edge Cases row |
 | **≥3 options** | For every important decision |
 | **Language-agnostic** | Use the actual stack's syntax |
 | **Acceptance = command** | Runnable, not prose |

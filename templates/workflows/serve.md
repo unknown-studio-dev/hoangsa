@@ -192,7 +192,7 @@ Save the context to `$SESSION_DIR/EXTERNAL-TASK.md` (if session exists) or hold 
 Also store the task reference in session state for push-back later:
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" state update "$SESSION_ID" '{
+"$HOANGSA_BIN" state update "$SESSION_ID" '{
   "external_task": {
     "provider": "<provider>",
     "task_id": "<id>",
@@ -247,7 +247,7 @@ Read the current session state to gather:
 4. **Commits** — git log for session commits
 
 ```bash
-SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)
+SESSION=$("$HOANGSA_BIN" session latest)
 ```
 
 Read `$SESSION_DIR/state.json` for task completion data.

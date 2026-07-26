@@ -24,9 +24,9 @@ Session (`session latest`) with `DESIGN-SPEC.md` + `TEST-SPEC.md`. Missing → s
 | 2 | DAG sound | `dag check "$SESSION_DIR/plan.json"` |
 | 3 | Budget sane | per-task ≤ 45k tokens (`budget estimate` per task); over → split the task |
 
-Gate 1's `--tests` machine-checks: every Edge Cases row embedded in ≥1 impl task AND ≥1 test task; every spec test in some task's `test_cases`; `## E2E Tests` → an e2e task exists; `surface: ui` → ≥1 task flagged `ui: true`. On errors: auto-fix what's mechanical (paths, budget sums), recreate broken tasks, re-run gates — loop until green.
+Gate 1 machine-checks: every `type: impl` task has a non-empty `behavior`; every Edge Cases row embedded in ≥1 impl task AND ≥1 test task (`--tests`); every spec test in some task's `test_cases`; `## E2E Tests` → an e2e task exists; `surface: ui` → ≥1 task flagged `ui: true`. On errors: auto-fix what's mechanical (paths, budget sums), recreate broken tasks, re-run gates — loop until green.
 
-Manual review on top (string matching can't catch mangled meaning): acceptance commands runnable for THIS stack; `context_pointers` sufficient for an isolated worker; every edge_case has concrete input + expected (no vague "handles errors"); no orphan tasks.
+Manual review on top (string matching can't catch mangled meaning): acceptance commands runnable for THIS stack; `context_pointers` sufficient for an isolated worker; every edge_case has concrete input + expected (no vague "handles errors"); `behavior` steps specific enough that two engineers would write the same branches (no "validate then save"); no orphan tasks.
 
 ## plan.json schema
 
@@ -50,6 +50,9 @@ Manual review on top (string matching can't catch mangled meaning): acceptance c
       "depends_on": ["<task ids>"],
       "context_pointers": ["<absolute/path/file:L1-L2>"],
       "covers": ["<REQ-xx>"],
+      "behavior": [
+        "<one step, verbatim from DESIGN-SPEC ## Behavior / Logic for the REQs this task covers — including branch conditions and error paths>"
+      ],
       "test_cases": [
         { "name": "<from TEST-SPEC>", "covers": "REQ-xx", "expected": "<exact outcome>", "verify": "<runnable command>" }
       ],
@@ -65,7 +68,8 @@ Manual review on top (string matching can't catch mangled meaning): acceptance c
 ## Decomposition rules
 
 - **Coverage:** every `[REQ-xx]` → ≥1 task (`covers`). Every TEST-SPEC test → assigned to a task; test tasks `depends_on` their implementation tasks.
-- **Embed, don't reference — workers never read TEST-SPEC.** Copy each test case into `test_cases` and each `## Edge Cases` row into `edge_cases` of BOTH the implementing task and its test task, verbatim with concrete inputs. An envelope without its edge cases is how they get silently dropped.
+- **Embed, don't reference — workers never read the specs.** Copy each test case into `test_cases` and each `## Edge Cases` row into `edge_cases` of BOTH the implementing task and its test task, verbatim with concrete inputs. An envelope without its edge cases is how they get silently dropped.
+- **Behavior is embedded too.** Every `type: impl` task carries `behavior`: the numbered steps, branch conditions and error paths from DESIGN-SPEC `## Behavior / Logic` for the REQs it covers — verbatim, not summarized. A worker that receives a signature and a test name but no logic invents the logic; that is the single largest source of "implemented, passes tests, wrong". A task with genuinely no logic (pure type/constant definitions) carries one explicit waiver entry: `"N/A — <reason>"`. `validate plan` errors on an impl task with an empty `behavior`.
 - **E2E:** every `## E2E Tests` test becomes a Phase 6 task (`"type": "e2e"`) — never folded into other tasks, never dropped.
 - **UI flag:** `surface: ui` → every task implementing a screen/component from `## Visual Verification` gets `"ui": true`. The flag (not filename heuristics) triggers run-and-observe in cook/taste.
 - **Phases:** 1 types/schemas → 2 interfaces → 3 implementations → 4 unit tests → 5 integration tests → 6 e2e. Within a phase maximize parallelism; `depends_on` encodes the order.

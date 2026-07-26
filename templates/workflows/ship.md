@@ -11,8 +11,8 @@ You are the ship orchestrator. Mission: review code changes (code + security) in
 ## Step 0b: Model selection + config metadata
 
 ```bash
-REVIEWER_MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model reviewer)
-CONFIG=$("$HOANGSA_ROOT/bin/hoangsa-cli" config get .)
+REVIEWER_MODEL=$("$HOANGSA_BIN" resolve-model reviewer)
+CONFIG=$("$HOANGSA_BIN" config get .)
 ```
 
 Use the `reviewer` model for code and security review agents. Extract `codebase.ci` from config — used in Step 5 to hint user to check CI after push.
@@ -75,7 +75,7 @@ If any d=1 dependents exist for changed symbols, flag them in the review as "hig
 
 ## Step 2: Parallel review
 
-Launch 2 agents in parallel using the Agent tool:
+Launch 2 agents in parallel using the Task tool:
 
 **Agent A — Code Review:**
 Spawn a subagent that:
@@ -233,7 +233,7 @@ Follow the plate→serve chaining pattern:
 
 ```bash
 # Check if external task is linked
-STATE=$("$HOANGSA_ROOT/bin/hoangsa-cli" state get "$SESSION_DIR")
+STATE=$("$HOANGSA_BIN" state get "$SESSION_DIR")
 # Parse external_task from state
 ```
 

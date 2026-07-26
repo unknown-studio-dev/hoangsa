@@ -1,45 +1,33 @@
 ---
 name: memory-cli
 description: >
-  Use when the user needs to run hoangsa-memory CLI commands — setup / index /
-  query / watch / impact / context / changes / graph / memory / skills / eval
-  / uninstall. Examples: "index this repo", "show memory", "trace the
-  graph", "find taint paths", "uninstall hoangsa-memory".
+  Use when the user needs to run hoangsa-memory CLI commands — init / index /
+  query / watch / memory / archive / impact / context / changes / graph /
+  projects. Examples: "index this repo", "show memory", "trace the graph",
+  "find taint paths", "consolidate memory".
 metadata:
   version: "0.0.1"
 ---
 
 # hoangsa-memory CLI Reference
 
-Every hoangsa-memory MCP tool has a CLI equivalent, plus a few CLI-only
-commands (setup, watch, eval). Run from the repo root unless noted —
-the CLI defaults `--root` to `./.hoangsa/memory`.
+Most hoangsa-memory MCP tools have a CLI equivalent, plus a few CLI-only
+commands (init, watch, prefetch-embed). Run from the repo root unless
+noted — the CLI defaults `--root` to `./.hoangsa/memory`.
 
 ## Bootstrap
 
-### `hoangsa-memory setup`
+### `hoangsa-memory init`
 
-One-shot install. Writes `./.hoangsa/memory/config.toml`, seeds `MEMORY.md` +
-`LESSONS.md`, merges hoangsa-memory hooks + skills + MCP server into
-`.claude/settings.json` (or `~/.claude/settings.json` with
-`--scope user`). Re-run any time to reconfigure / self-heal.
+Create a bare `./.hoangsa/memory/`: seeds `MEMORY.md`, `LESSONS.md`, and a
+fully commented `config.toml`. Idempotent — existing files are preserved.
+Higher-level install (hooks, MCP registration, skills) is `hoangsa-cli
+install`, not this.
 
-```bash
-hoangsa-memory setup                # interactive
-hoangsa-memory setup --yes          # accept defaults (CI / scripts)
-hoangsa-memory setup --status       # show install state, don't modify
-```
+### `hoangsa-memory prefetch-embed`
 
-### `hoangsa-memory uninstall`
-
-Removes hoangsa-memory's managed hooks + skills + MCP entry from
-`.claude/settings.json` and `.mcp.json`. Leaves the `.hoangsa/memory/` data
-directory intact — delete it manually if you want a hard reset.
-
-```bash
-hoangsa-memory uninstall                    # project scope
-hoangsa-memory uninstall --scope user       # user scope
-```
+Download the default embedding model (~118 MB) into the shared fastembed
+cache so the first `index` / `query` doesn't stall. No-op once cached.
 
 ## Indexing
 
@@ -191,94 +179,48 @@ hoangsa-memory memory lesson \
   Use the existing RetryPolicy in crates/net/retry.rs.
 ```
 
-### `hoangsa-memory memory pending`
+### `hoangsa-memory memory lesson-feedback success|failure <trigger...>`
 
-List entries staged in `MEMORY.pending.md` / `LESSONS.pending.md`
-(only populated when `memory_mode = "review"` or on lesson conflicts).
-
-### `hoangsa-memory memory promote <kind> <index>`
-
-Accept a staged entry. `kind` is `fact` or `lesson`; `index` is 0-based
-from `hoangsa-memory memory pending`.
+Bump a lesson's success / failure counter. The forget pass drops lessons
+below `lesson_floor` and quarantines those past `quarantine_failure_ratio`,
+so these counters are what eventually prunes bad advice.
 
 ```bash
-hoangsa-memory memory promote lesson 2
+hoangsa-memory memory lesson-feedback failure "when editing migrations"
 ```
 
-### `hoangsa-memory memory reject <kind> <index> [--reason ...]`
+### `hoangsa-memory memory dream [--force] [--dry-run]`
 
-Drop a staged entry without promoting.
+Run the consolidation pass now: hand `MEMORY.md` / `LESSONS.md` /
+`USER.md` to a model that merges duplicates, rewrites stale entries, and
+drops ones the code no longer supports. `--dry-run` reports its verdicts
+without writing. `--force` ignores `[dream].enabled` and the
+`min_interval_hours` floor. Normally the daemon runs this on its own when
+the project goes idle.
 
 ```bash
-hoangsa-memory memory reject fact 0 --reason "duplicate of existing fact"
+hoangsa-memory memory dream --dry-run     # see what it would change
+hoangsa-memory memory dream --force       # run it now regardless of config
 ```
 
-### `hoangsa-memory memory forget`
+## Archive
 
-Run the TTL / capacity sweep. Quarantines lessons whose failure ratio
-exceeds `quarantine_failure_ratio`.
+### `hoangsa-memory archive <ingest|search|status|topics|purge>`
 
-### `hoangsa-memory memory log [--limit N]`
+Verbatim conversation archive, separate from curated memory. `ingest` is
+normally hook-driven (PreCompact / SessionEnd). `purge` takes either
+`--older-than 30d` or `--all`. See `hoangsa-memory archive --help`.
 
-Tail `memory-history.jsonl` — the audit trail of every stage /
-promote / reject / quarantine / propose event.
+## Projects
 
-### `hoangsa-memory memory nudge [--window N]`
+### `hoangsa-memory projects <list|rename|remove|show>`
 
-Mode::Full only. Asks the synthesizer to propose new lessons from
-recent episodes.
-
-## Skills
-
-### `hoangsa-memory skills list`
-
-Enumerate installed skills (under `.claude/skills/`).
-
-### `hoangsa-memory skills install [PATH]`
-
-Without `PATH`: (re)installs the bundled skills (`memory-discipline`,
-`memory-reflect`, `memory-guide`, `memory-exploring`, `memory-debugging`,
-`memory-impact-analysis`, `memory-refactoring`, `memory-cli`).
-
-With a `PATH` pointing at a `<slug>.draft/` directory (produced by
-the agent's `memory_skill_propose` MCP tool): promotes the draft into
-a live skill and removes the draft.
-
-```bash
-hoangsa-memory skills install                                  # bundled
-hoangsa-memory skills install .hoangsa/memory/skills/my-skill.draft     # promote draft
-hoangsa-memory skills install --scope user                     # ~/.claude/skills/
-```
-
-## Evaluation
-
-### `hoangsa-memory eval --gold <file>`
-
-Run precision@k over a gold query set (TOML). Reports P@k, MRR, and
-per-query latency.
-
-```bash
-hoangsa-memory eval --gold eval/gold.toml
-hoangsa-memory eval --gold eval/gold.toml --mode full -k 16
-hoangsa-memory eval --gold eval/gold.toml --mode both    # side-by-side Zero vs Full
-```
-
-`--mode full` / `both` requires `--embedder` and/or `--synth`, plus a
-stopped daemon (the redb lock is exclusive).
-
-## Domain memory
-
-### `hoangsa-memory domain sync --source <adapter>`
-
-Pull business rules from an external source (`file`, `notion`,
-`asana`, …) into `<root>/domain/<context>/_remote/<source>/`. See
-`hoangsa-memory domain sync --help` for per-adapter flags.
+Manage the registry at `~/.hoangsa/projects.json`. Every CLI invocation
+auto-registers the cwd; these subcommands edit that.
 
 ## Global flags
 
 - `--root PATH` — defaults to `./.hoangsa/memory`. Point at `~/.hoangsa/memory` for
   user-global memory.
 - `--json` — machine-readable output (for subcommands that support it).
-- `--embedder <voyage|openai|cohere>` — Mode::Full semantic search.
-- `--synth <anthropic|…>` — Mode::Full LLM synthesizer.
 - `-v` / `-vv` / `-vvv` — tracing verbosity.

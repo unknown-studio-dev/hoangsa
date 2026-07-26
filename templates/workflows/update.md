@@ -4,127 +4,46 @@
 
 You are the update agent. Mission: check for HOANGSA updates, show changelog, obtain user confirmation, and execute clean installation.
 
-**Principles:** Always show what changed before updating. Never update without confirmation. Detect install type (local vs global) automatically. Installation is driven by the native `curl | sh` installer — **no Node, no npm, no cargo**.
+**Principles:** Always show what changed before updating. Never update without confirmation. Version detection and the upgrade itself are `hoangsa-cli update` — this workflow decides *whether* to run it and shows the user *why*. Installation is driven by the native `curl | sh` installer — **no Node, no npm, no cargo**.
 
 ---
 
-## Step 1: Detect installed version
+## Step 1: Check for an update
 
-Detect whether HOANGSA is installed locally or globally by checking both locations and validating install integrity:
+One call. `hoangsa-cli update --check` reads the installed version from
+`<install dir>/manifest.json` — the file the installer actually writes — and
+resolves the latest release tag:
 
 ```bash
-# Check local first (takes priority only if valid)
-LOCAL_VERSION_FILE="" LOCAL_MARKER_FILE="" LOCAL_DIR=""
-if [ -f "./.claude/hoangsa/VERSION" ]; then
-  LOCAL_VERSION_FILE="./.claude/hoangsa/VERSION"
-  LOCAL_MARKER_FILE="./.claude/hoangsa/workflows/update.md"
-  LOCAL_DIR="$(cd "./.claude" 2>/dev/null && pwd)"
-fi
-GLOBAL_VERSION_FILE="" GLOBAL_MARKER_FILE="" GLOBAL_DIR=""
-if [ -f "$HOME/.claude/hoangsa/VERSION" ]; then
-  GLOBAL_VERSION_FILE="$HOME/.claude/hoangsa/VERSION"
-  GLOBAL_MARKER_FILE="$HOME/.claude/hoangsa/workflows/update.md"
-  GLOBAL_DIR="$(cd "$HOME/.claude" 2>/dev/null && pwd)"
-fi
-
-# Only treat as LOCAL if the resolved paths differ (prevents misdetection when CWD=$HOME)
-IS_LOCAL=false
-if [ -n "$LOCAL_VERSION_FILE" ] && [ -f "$LOCAL_VERSION_FILE" ] && [ -f "$LOCAL_MARKER_FILE" ] && grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+' "$LOCAL_VERSION_FILE"; then
-  if [ -z "$GLOBAL_DIR" ] || [ "$LOCAL_DIR" != "$GLOBAL_DIR" ]; then
-    IS_LOCAL=true
-  fi
-fi
-
-if [ "$IS_LOCAL" = true ]; then
-  cat "$LOCAL_VERSION_FILE"
-  echo "LOCAL"
-elif [ -n "$GLOBAL_VERSION_FILE" ] && [ -f "$GLOBAL_VERSION_FILE" ] && [ -f "$GLOBAL_MARKER_FILE" ] && grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+' "$GLOBAL_VERSION_FILE"; then
-  cat "$GLOBAL_VERSION_FILE"
-  echo "GLOBAL"
-else
-  echo "UNKNOWN"
-fi
+"$HOANGSA_BIN" update --check
 ```
 
-Parse output:
-- If last line is "LOCAL": local install is valid; installed version is first line; use `--local`
-- If last line is "GLOBAL": local missing/invalid, global install is valid; installed version is first line; use `--global`
-- If "UNKNOWN": proceed to install step (treat as version 0.0.0)
+It prints JSON and exits **10** when an update is available, 0 when up to date,
+1 on failure:
 
-**If VERSION file missing:**
-```
-## HOANGSA Update
-
-**Installed version:** Unknown
-
-Your installation doesn't include version tracking.
-
-Running fresh install...
+```json
+{ "status": "ok", "current": "0.6.0", "latest": "v0.7.0",
+  "update_available": true,
+  "command": "curl -fsSL .../install.sh | sh -s -- --global" }
 ```
 
-Proceed to install step (treat as version 0.0.0 for comparison).
+Add `--local` to check a project install instead of the global one.
+
+**Do not reimplement this check in shell.** The version used to be read from
+`<config>/hoangsa/VERSION`, a file nothing has ever written, against a
+hardcoded `~/.claude` that is wrong for anyone using `CLAUDE_CONFIG_DIR`. The
+result was a checker that reported "not installed" everywhere, in a shape
+indistinguishable from a real missing install.
+
+**If `status` is `error`:** show `error` and the `hint` field, then exit.
+
+**If `update_available` is false:** tell the user they are on `current` and
+exit. `current` ahead of `latest` means a development build — say so, do not
+offer a downgrade.
 
 ---
 
-## Step 2: Check latest version
-
-Resolve the latest GitHub release tag via the public API (no auth required for public repos, subject to the anonymous rate limit):
-
-```bash
-HOANGSA_REPO="${HOANGSA_REPO:-unknown-studio-dev/hoangsa}"
-LATEST_TAG=$(curl -fsSL --retry 3 --retry-delay 2 \
-  "https://api.github.com/repos/$HOANGSA_REPO/releases/latest" \
-  | grep -E '"tag_name"[[:space:]]*:' \
-  | head -n 1 \
-  | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
-# Strip leading "v" for comparison with VERSION file contents.
-LATEST_VERSION="${LATEST_TAG#v}"
-printf '%s\n' "$LATEST_VERSION"
-```
-
-**If the check fails** (network down, rate limited, empty response):
-```
-Couldn't check for updates (offline or GitHub API unavailable).
-
-To update manually:
-  curl -fsSL https://github.com/unknown-studio-dev/hoangsa/releases/latest/download/install.sh | sh
-```
-
-Exit.
-
----
-
-## Step 3: Compare versions
-
-Compare installed vs latest:
-
-**If installed == latest:**
-```
-## HOANGSA Update
-
-**Installed:** X.Y.Z
-**Latest:** X.Y.Z
-
-You're already on the latest version.
-```
-
-Exit.
-
-**If installed > latest:**
-```
-## HOANGSA Update
-
-**Installed:** X.Y.Z
-**Latest:** A.B.C
-
-You're ahead of the latest release (development version?).
-```
-
-Exit.
-
----
-
-## Step 4: Show changes and confirm
+## Step 2: Show changes and confirm
 
 **If update available**, fetch and show what's new BEFORE updating:
 
@@ -158,7 +77,7 @@ Exit.
 - `hoangsa/` will be wiped and replaced
 - `agents/hoangsa-*` files will be replaced
 
-(Paths are relative to your install location: `~/.claude/` for global, `./.claude/` for local)
+(Paths are relative to your install location: your Claude config dir for global — `$CLAUDE_CONFIG_DIR` when set, otherwise `~/.claude/` — or `./.claude/` for local)
 
 Your custom files in other locations are preserved:
 - Custom commands not in `commands/hoangsa/` ✓
@@ -179,36 +98,20 @@ Use AskUserQuestion:
 
 ---
 
-## Step 5: Run update
-
-Re-run the native installer pinned to the resolved tag. The installer forwards mode flags (`--global` / `--local`) straight into `hoangsa-cli install`, so the same script covers both install types:
-
-**If LOCAL install:**
-```bash
-curl -fsSL "https://github.com/$HOANGSA_REPO/releases/download/$LATEST_TAG/install.sh" \
-  | HOANGSA_VERSION="$LATEST_TAG" sh -s -- --local
-```
-
-**If GLOBAL install (or unknown):**
-```bash
-curl -fsSL "https://github.com/$HOANGSA_REPO/releases/download/$LATEST_TAG/install.sh" \
-  | HOANGSA_VERSION="$LATEST_TAG" sh -s -- --global
-```
-
-Capture output. If install fails, show error and exit.
-
-Clear the update cache so statusline indicator disappears:
+## Step 3: Run update
 
 ```bash
-rm -f "./.claude/cache/hoangsa-update-check.json"
-rm -f "$HOME/.claude/cache/hoangsa-update-check.json"
+"$HOANGSA_BIN" update --yes          # add --local for a project install
 ```
 
-The SessionStart hook writes to the detected runtime's cache directory, so all paths must be cleared to prevent stale update indicators.
+The subcommand runs the release installer for the resolved tag, then clears the
+update-check cache in every config dir it knows about, so the statusline badge
+disappears without a second command. If it exits non-zero, show the `error`
+field and stop.
 
 ---
 
-## Step 6: Display result
+## Step 4: Display result
 
 Format completion message (changelog was already shown in confirmation step):
 
@@ -224,7 +127,7 @@ Format completion message (changelog was already shown in confirmation step):
 
 ---
 
-## Step 7: Check local patches
+## Step 5: Check local patches
 
 After update completes, check if the installer detected and backed up any locally modified files:
 
@@ -252,6 +155,6 @@ Universal rules live in `common.md §Universal rules`. Update-specific additions
 | **Show changelog first** | Never update without showing what changed |
 | **Confirm before updating** | Always ask user before executing install |
 | **Detect install type** | Auto-detect local vs global, never ask user |
-| **Clear cache after update** | Remove update-check cache to reset statusline |
+| **Never hand-roll the check** | Version detection and the upgrade both belong to `hoangsa-cli update`; the cache clear happens there too |
 | **Report local patches** | Warn user if modified files were backed up |
 | **Native installer only** | Update path is always the `curl | sh` installer — never invoke `npm` or `npx` |

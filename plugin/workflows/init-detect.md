@@ -357,10 +357,32 @@ Use Glob + Read:
 Read `package.json` field `workspaces` for npm workspaces.
 Grep `Cargo.toml` for `[workspace]` section.
 
-If monorepo detected, for each package/workspace:
+**Then sweep for unclaimed manifests.** Every check above finds packages a
+workspace file *declares*. A sub-project with its own manifest that no
+workspace lists is invisible to all of them — and it is usually the one with a
+different stack, which is exactly the one whose worker rules you would
+otherwise miss:
+
+```bash
+# Manifests below the root that no workspace declared. Prune the heavy dirs
+# or this walks vendored trees for minutes.
+find . \( -name node_modules -o -name target -o -name .git -o -name dist \
+          -o -name vendor -o -name .venv \) -prune -o \
+     \( -name package.json -o -name Cargo.toml -o -name pyproject.toml \
+        -o -name go.mod -o -name pom.xml -o -name build.gradle \) \
+     -mindepth 2 -print 2>/dev/null | head -50
+```
+
+Compare that list against the declared members. Anything left over is a real
+package — add it, then set `monorepo: true` even if the workspace file alone
+suggested a single project.
+
+For each package (declared or swept):
 - Read its local manifest (package.json, Cargo.toml, etc.)
-- Extract name, stack, build/test/lint commands
-- Detect package-specific frameworks
+- Extract name, stack, build/test/lint commands — write `null` for a command
+  the manifest genuinely doesn't define; never invent one that won't run
+- Detect package-specific frameworks into `packages[].frameworks` (the addon
+  matcher in `init.md` reads that field)
 
 ---
 

@@ -9,19 +9,24 @@ allowed-tools:
 Check for HOANGSA updates, install if available, and display what changed.
 
 Routes to the update workflow which handles:
-- Version detection (local vs global installation)
-- npm version checking
+- Version check via `hoangsa-cli update --check` (reads the install manifest,
+  resolves the latest release tag)
 - Changelog fetching and display
 - User confirmation with clean install warning
-- Update execution and cache clearing
+- Update execution via `hoangsa-cli update`, which clears the update cache
 - Restart reminder
 </objective>
 
 <execution_context>
-Resolve HOANGSA install path — check local first, then global:
-1. `${CLAUDE_PLUGIN_ROOT}/workflows/update.md`
-2. `${CLAUDE_PLUGIN_ROOT}/workflows/update.md`
-Read the first path that exists.
+Load the workflow:
+
+```bash
+hoangsa-cli workflow show update
+```
+
+Its stdout IS the workflow — follow it. The command searches the
+project-local install, `$CLAUDE_CONFIG_DIR`, then the default profile,
+and lists every path it tried if nothing matched.
 </execution_context>
 
 <process>
