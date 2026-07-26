@@ -938,6 +938,46 @@ mod tests {
     }
 
     #[test]
+    fn stale_root_memory_addon_with_legacy_gate_is_refused() {
+        // An install that was never refreshed still ships memory.md carrying
+        // `pre_invoke_gate`. The old code ran that command and applied the
+        // addon whenever it succeeded — so the refusal must hold even when the
+        // addon's preference is satisfied, never apply unconditionally.
+        let dir = temp_root("stale-memory");
+        let sentinel = dir.join("sentinel");
+        write_raw_addon(
+            &dir,
+            ROOT_TIER,
+            "memory.md",
+            &format!(
+                "---\nname: memory\nframeworks: [\"*\"]\npriority: 70\ninject_position: after_base\npre_invoke_gate: \"touch {}\"\n---\n\n# hoangsa-memory — Code Intelligence\n",
+                sentinel.display()
+            ),
+        );
+        fs::write(
+            dir.join("project/.hoangsa/config.json"),
+            r#"{"preferences":{"tech_stack":["rust"],"memory_strict":true},"codebase":{}}"#,
+        )
+        .unwrap();
+        let c = compose_in(&dir, "impl", "impl");
+        assert!(!sentinel.exists(), "stale pre_invoke_gate was executed");
+        assert!(c.applied.is_empty(), "{:?}", c.applied);
+        assert!(
+            !c.rules.contains("# hoangsa-memory"),
+            "stale addon body reached the composed rules: {}",
+            c.rules
+        );
+        let (_, reason) = c
+            .skipped
+            .iter()
+            .find(|(n, _)| n == "memory")
+            .unwrap_or_else(|| panic!("memory not skipped: {:?}", c.skipped));
+        assert!(reason.contains("pre_invoke_gate"), "{reason}");
+        assert!(reason.contains("hoangsa-cli update"), "{reason}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn unparseable_frontmatter_addon_is_ignored() {
         let dir = temp_root("bad-fm");
         write_raw_addon(
@@ -965,8 +1005,19 @@ mod tests {
                 &format!("---\nname: a{i:03}\nframeworks: [\"*\"]\n---\n\n# Addon {i:03}\n"),
             );
         }
-        let c = compose_in(&dir, "impl", "impl");
-        assert_eq!(c.applied.len(), 500, "skipped: {:?}", c.skipped);
+        // Composition must not hang on a large directory: run it off-thread and
+        // fail if it has not returned within 30s.
+        let root = dir.join("root").to_str().unwrap().to_string();
+        let project = dir.join("project").to_str().unwrap().to_string();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let c = compose_rules_at(&root, &project, "impl", "impl").expect("compose failed");
+            let _ = tx.send((c.applied.len(), c.skipped));
+        });
+        let (applied, skipped) = rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("composition did not finish within 30s");
+        assert_eq!(applied, 500, "skipped: {skipped:?}");
         let _ = fs::remove_dir_all(&dir);
     }
 
