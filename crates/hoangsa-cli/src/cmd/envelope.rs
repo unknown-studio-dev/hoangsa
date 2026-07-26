@@ -4,7 +4,6 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 /// One addon loaded with metadata + body, ready for composition.
 struct Addon {
@@ -14,7 +13,12 @@ struct Addon {
     priority: i64,
     inject_position: String,
     allowed_tools: Vec<String>,
-    pre_invoke_gate: Option<String>,
+    /// Name of a `preferences.<key>` that must be JSON `true` for this addon
+    /// to apply. Declarative — never executed.
+    requires_pref: Option<String>,
+    /// The removed `pre_invoke_gate` field is still declared (non-null) by a
+    /// stale installed addon. Such an addon is refused, never run.
+    legacy_gate_present: bool,
     exclude_task_types: Vec<String>,
     include_task_types: Vec<String>,
     exclude_worker_roles: Vec<String>,
@@ -50,6 +54,7 @@ fn strip_frontmatter(content: &str) -> String {
 }
 
 /// Load every addon under `dir` (non-recursive `*.md`), parsing frontmatter.
+/// Every directory entry is loaded — there is no cap on the addon count.
 fn load_addons(dir: &Path) -> Vec<Addon> {
     let mut result = Vec::new();
     let Ok(entries) = fs::read_dir(dir) else {
@@ -79,7 +84,10 @@ fn load_addons(dir: &Path) -> Vec<Addon> {
                 .cloned()
                 .unwrap_or_else(|| "after_base".to_string()),
             allowed_tools: fm_list(&fm, "allowed_tools"),
-            pre_invoke_gate: fm.get("pre_invoke_gate").filter(|v| *v != "null").cloned(),
+            requires_pref: fm.get("requires_pref").filter(|v| *v != "null").cloned(),
+            legacy_gate_present: fm
+                .get("pre_invoke_gate")
+                .is_some_and(|v| v != "null"),
             exclude_task_types: fm_list(&fm, "exclude_task_types"),
             include_task_types: fm_list(&fm, "include_task_types"),
             exclude_worker_roles: fm_list(&fm, "exclude_worker_roles"),
@@ -117,6 +125,16 @@ fn project_terms(config: &Value) -> BTreeSet<String> {
     terms
 }
 
+/// `preferences.<key>` is JSON boolean `true`. Anything else — a missing key,
+/// `null`, the string `"true"`, the number `1`, or an unreadable config — is
+/// false, so a conditional addon fails closed.
+fn pref_is_true(config: &Value, key: &str) -> bool {
+    if key.is_empty() {
+        return false;
+    }
+    config.pointer(&format!("/preferences/{key}")) == Some(&Value::Bool(true))
+}
+
 struct Composed {
     rules: String,
     allowed_tools: Vec<String>,
@@ -127,7 +145,7 @@ struct Composed {
 /// Middleware-chain composition (cook.md §Worker rules — Middleware Chain):
 /// before_base addons → base → after_base addons → project overrides → tail
 /// addons, each group sorted by priority then name; task-type / worker-role /
-/// pre-invoke gates applied per addon; allowed_tools = union.
+/// requires_pref gates applied per addon; allowed_tools = union.
 fn compose_rules(project_dir: &str, task_type: &str, role: &str) -> Result<Composed, String> {
     let root = resolve_hoangsa_root(project_dir)
         .ok_or_else(|| "HOANGSA_ROOT not found (checked env, .claude/hoangsa, ~/.claude/hoangsa)".to_string())?;
@@ -195,18 +213,19 @@ fn compose_rules_at(
             skipped.push((addon.name.clone(), format!("not included for role {role}")));
             continue;
         }
-        if let Some(gate) = &addon.pre_invoke_gate {
-            let ok = Command::new("sh")
-                .arg("-c")
-                .arg(gate)
-                .current_dir(project_dir)
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
-            if !ok {
-                skipped.push((addon.name.clone(), "pre_invoke_gate failed".to_string()));
-                continue;
-            }
+        if addon.legacy_gate_present {
+            skipped.push((
+                addon.name.clone(),
+                "addon still declares the removed `pre_invoke_gate` field — run `hoangsa-cli update` to refresh installed addons"
+                    .to_string(),
+            ));
+            continue;
+        }
+        if let Some(key) = &addon.requires_pref
+            && !pref_is_true(&config, key)
+        {
+            skipped.push((addon.name.clone(), format!("requires_pref '{key}' is not true")));
+            continue;
         }
         applied.push(addon);
     }
@@ -636,11 +655,21 @@ mod tests {
         fs::write(
             dir.join(format!("root/workflows/worker-rules/addons/{name}.md")),
             format!(
-                "---\nname: {name}\nframeworks: [\"rust\"]\ntest_frameworks: []\npriority: 50\ninject_position: after_base\nallowed_tools: []\npre_invoke_gate: null\n{frontmatter_extra}---\n\n{body}\n"
+                "---\nname: {name}\nframeworks: [\"rust\"]\ntest_frameworks: []\npriority: 50\ninject_position: after_base\nallowed_tools: []\n{frontmatter_extra}---\n\n{body}\n"
             ),
         )
         .unwrap();
     }
+
+    /// Write a raw addon file into either tier (`root/...` or `project/...`).
+    fn write_raw_addon(dir: &Path, tier: &str, file: &str, content: &str) {
+        let target = dir.join(tier);
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join(file), content).unwrap();
+    }
+
+    const ROOT_TIER: &str = "root/workflows/worker-rules/addons";
+    const PROJECT_TIER: &str = "project/.hoangsa/worker-rules/addons";
 
     fn compose_in(dir: &Path, task_type: &str, role: &str) -> Composed {
         compose_rules_at(
@@ -712,15 +741,232 @@ mod tests {
     }
 
     #[test]
-    fn compose_runs_pre_invoke_gate() {
-        let dir = temp_root("gate-cmd");
+    fn compose_refuses_legacy_pre_invoke_gate() {
+        let dir = temp_root("legacy-gate");
+        let sentinel = dir.join("sentinel");
+        for (tier, name) in [(ROOT_TIER, "stale-root"), (PROJECT_TIER, "pwn")] {
+            write_raw_addon(
+                &dir,
+                tier,
+                &format!("{name}.md"),
+                &format!(
+                    "---\nname: {name}\nframeworks: [\"*\"]\npre_invoke_gate: \"touch {}\"\n---\n\n# {name}\n",
+                    sentinel.display()
+                ),
+            );
+        }
+        let c = compose_in(&dir, "impl", "impl");
+        assert!(!sentinel.exists(), "legacy pre_invoke_gate was executed");
+        assert!(c.applied.is_empty(), "{:?}", c.applied);
+        for name in ["stale-root", "pwn"] {
+            let (_, reason) = c
+                .skipped
+                .iter()
+                .find(|(n, _)| n == name)
+                .unwrap_or_else(|| panic!("{name} not skipped: {:?}", c.skipped));
+            assert!(reason.contains("pre_invoke_gate"), "{reason}");
+            assert!(reason.contains("hoangsa-cli update"), "{reason}");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn no_shell_spawn_for_any_addon_field() {
+        let dir = temp_root("no-spawn");
+        let sentinel = dir.join("sentinel");
+        let payload = format!("touch {}", sentinel.display());
+        for (file, fm) in [
+            ("weapon-name", format!("name: {payload}\nframeworks: [\"*\"]\n")),
+            (
+                "weapon-frameworks",
+                format!("name: weapon-frameworks\nframeworks: {payload}\n"),
+            ),
+            (
+                "weapon-pref",
+                format!("name: weapon-pref\nframeworks: [\"*\"]\nrequires_pref: {payload}\n"),
+            ),
+            (
+                "weapon-gate",
+                format!("name: weapon-gate\nframeworks: [\"*\"]\npre_invoke_gate: {payload}\n"),
+            ),
+        ] {
+            write_raw_addon(
+                &dir,
+                ROOT_TIER,
+                &format!("{file}.md"),
+                &format!("---\n{fm}---\n\n# {file}\n"),
+            );
+        }
+        let c = compose_in(&dir, "impl", "impl");
+        assert!(
+            !sentinel.exists(),
+            "a frontmatter field reached a shell (applied: {:?})",
+            c.applied
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn requires_pref_true_applies_addon() {
+        let dir = temp_root("pref-true");
+        write_addon(&dir, "memory", "requires_pref: memory_strict\n", "# Memory Addon");
         fs::write(
-            dir.join("root/workflows/worker-rules/addons/gated.md"),
-            "---\nname: gated\nframeworks: [\"*\"]\npre_invoke_gate: \"false\"\n---\n\n# Gated\n",
+            dir.join("project/.hoangsa/config.json"),
+            r#"{"preferences":{"tech_stack":["rust"],"memory_strict":true},"codebase":{}}"#,
         )
         .unwrap();
         let c = compose_in(&dir, "impl", "impl");
-        assert!(c.skipped.iter().any(|(n, r)| n == "gated" && r.contains("pre_invoke_gate")));
+        assert_eq!(c.applied, vec!["memory"], "{:?}", c.skipped);
+        assert!(c.rules.contains("# Memory Addon"), "{}", c.rules);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn requires_pref_false_or_missing_skips_addon() {
+        let dir = temp_root("pref-false");
+        write_addon(&dir, "memory", "requires_pref: memory_strict\n", "# Memory Addon");
+        for config in [
+            r#"{"preferences":{"tech_stack":["rust"],"memory_strict":false},"codebase":{}}"#,
+            r#"{"preferences":{"tech_stack":["rust"]},"codebase":{}}"#,
+            r#"{"codebase":{"frameworks":["rust"]}}"#,
+        ] {
+            fs::write(dir.join("project/.hoangsa/config.json"), config).unwrap();
+            let c = compose_in(&dir, "impl", "impl");
+            assert!(c.applied.is_empty(), "{config}: {:?}", c.applied);
+            assert!(
+                c.skipped
+                    .iter()
+                    .any(|(n, r)| n == "memory" && r == "requires_pref 'memory_strict' is not true"),
+                "{config}: {:?}",
+                c.skipped
+            );
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn requires_pref_requires_json_true_not_truthy() {
+        let dir = temp_root("pref-truthy");
+        write_addon(&dir, "memory", "requires_pref: memory_strict\n", "# Memory Addon");
+        for value in ["\"true\"", "1", "null"] {
+            fs::write(
+                dir.join("project/.hoangsa/config.json"),
+                format!(
+                    r#"{{"preferences":{{"tech_stack":["rust"],"memory_strict":{value}}},"codebase":{{}}}}"#
+                ),
+            )
+            .unwrap();
+            let c = compose_in(&dir, "impl", "impl");
+            assert!(c.applied.is_empty(), "{value}: {:?}", c.applied);
+            assert!(
+                c.skipped
+                    .iter()
+                    .any(|(n, r)| n == "memory" && r == "requires_pref 'memory_strict' is not true"),
+                "{value}: {:?}",
+                c.skipped
+            );
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn requires_pref_empty_key_skips_addon() {
+        let dir = temp_root("pref-empty");
+        write_addon(&dir, "blank", "requires_pref:\n", "# Blank");
+        let c = compose_in(&dir, "impl", "impl");
+        assert!(c.applied.is_empty(), "{:?}", c.applied);
+        assert!(
+            c.skipped
+                .iter()
+                .any(|(n, r)| n == "blank" && r == "requires_pref '' is not true"),
+            "{:?}",
+            c.skipped
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn addon_without_requires_pref_still_applies() {
+        let dir = temp_root("no-pref");
+        write_addon(&dir, "rust", "", "# Rust Addon");
+        write_raw_addon(
+            &dir,
+            PROJECT_TIER,
+            "local.md",
+            "---\nname: local\nframeworks: [\"*\"]\npriority: 10\n---\n\n# Local Addon\n",
+        );
+        let c = compose_in(&dir, "impl", "impl");
+        assert_eq!(c.applied, vec!["local", "rust"], "{:?}", c.skipped);
+        let base = c.rules.find("# Base Rules").unwrap();
+        let local = c.rules.find("# Local Addon").unwrap();
+        let rust = c.rules.find("# Rust Addon").unwrap();
+        assert!(base < local && local < rust, "{}", c.rules);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn memory_addon_gating_matches_previous_behaviour() {
+        let dir = temp_root("memory-addon");
+        let shipped = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../templates/workflows/worker-rules/addons/memory.md");
+        fs::copy(&shipped, dir.join("root/workflows/worker-rules/addons/memory.md"))
+            .unwrap_or_else(|e| panic!("copy {}: {e}", shipped.display()));
+
+        fs::write(
+            dir.join("project/.hoangsa/config.json"),
+            r#"{"preferences":{"tech_stack":["rust"],"memory_strict":true},"codebase":{}}"#,
+        )
+        .unwrap();
+        let c = compose_in(&dir, "impl", "impl");
+        assert_eq!(c.applied, vec!["memory"], "{:?}", c.skipped);
+
+        fs::write(
+            dir.join("project/.hoangsa/config.json"),
+            r#"{"preferences":{"tech_stack":["rust"],"memory_strict":false},"codebase":{}}"#,
+        )
+        .unwrap();
+        let c = compose_in(&dir, "impl", "impl");
+        assert!(c.applied.is_empty(), "{:?}", c.applied);
+        assert!(
+            c.skipped
+                .iter()
+                .any(|(n, r)| n == "memory" && r == "requires_pref 'memory_strict' is not true"),
+            "{:?}",
+            c.skipped
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unparseable_frontmatter_addon_is_ignored() {
+        let dir = temp_root("bad-fm");
+        write_raw_addon(
+            &dir,
+            PROJECT_TIER,
+            "broken.md",
+            "---\nname: broken\nframeworks: [\"*\"\n\n# Broken\n",
+        );
+        write_addon(&dir, "rust", "", "# Rust Addon");
+        let c = compose_in(&dir, "impl", "impl");
+        assert_eq!(c.applied, vec!["rust"], "{:?}", c.skipped);
+        assert!(c.skipped.iter().all(|(n, _)| n != "broken"), "{:?}", c.skipped);
+        assert!(c.rules.contains("# Base Rules"), "{}", c.rules);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn large_addon_directory_composes_without_cap() {
+        let dir = temp_root("many-addons");
+        for i in 0..500 {
+            write_raw_addon(
+                &dir,
+                ROOT_TIER,
+                &format!("a{i:03}.md"),
+                &format!("---\nname: a{i:03}\nframeworks: [\"*\"]\n---\n\n# Addon {i:03}\n"),
+            );
+        }
+        let c = compose_in(&dir, "impl", "impl");
+        assert_eq!(c.applied.len(), 500, "skipped: {:?}", c.skipped);
         let _ = fs::remove_dir_all(&dir);
     }
 
