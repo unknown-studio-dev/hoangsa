@@ -268,10 +268,10 @@ fn enforce_project_rules_override_global() {
     );
 }
 
-// ─── Each layer degrades independently ────────────────────────────────────────
+// ─── An unreadable layer fails CLOSED ─────────────────────────────────────────
 
 #[test]
-fn enforce_malformed_rules_file_degrades_per_layer() {
+fn enforce_unreadable_rules_layer_fails_closed() {
     const GLOBAL_BLOCK: &str = r#"{
   "version": "1.0",
   "rules": [
@@ -306,7 +306,18 @@ fn enforce_malformed_rules_file_degrades_per_layer() {
 
     let payload = r#"{"tool_name":"Bash","tool_input":{"command":"git stash"}}"#;
 
-    // (a) Corrupt PROJECT layer — the valid global BLOCK rule still fires.
+    // These three sub-cases used to pin the opposite contract: an unreadable
+    // layer contributed zero rules, the surviving layer carried on, and with no
+    // surviving layer the call was approved. That "degrade per layer" design
+    // switched off EVERY rule the broken layer held — pattern and stateful
+    // alike — with no stderr and no warning. `hook enforce` now refuses to
+    // vouch for a call it cannot evaluate, so the corruption itself is the
+    // decision and it preempts whatever the intact layer would have said.
+    //
+    // Per-layer independence with BOTH layers readable is unaffected and is
+    // still covered by `enforce_project_rules_override_global`.
+
+    // (a) Corrupt PROJECT layer, valid global BLOCK rule.
     let fx = fixture();
     fx.write_global_rules(GLOBAL_BLOCK);
     fx.write_project_rules(CORRUPT);
@@ -315,14 +326,15 @@ fn enforce_malformed_rules_file_degrades_per_layer() {
     assert_eq!(
         decision(&stdout),
         "block",
-        "a corrupt project file must not disable a valid global rule; got: {stdout}"
+        "a corrupt project file must fail closed; got: {stdout}"
     );
     assert!(
-        reason(&stdout).contains("global-block-stash"),
-        "the surviving global rule must be the one that fired; got: {stdout}"
+        !reason(&stdout).contains("global-block-stash"),
+        "the block must come from the unreadable layer, not from whichever rule \
+         happened to survive it; got: {stdout}"
     );
 
-    // (b) Corrupt GLOBAL layer — the valid project BLOCK rule still fires.
+    // (b) Corrupt GLOBAL layer, valid project BLOCK rule.
     let fx = fixture();
     fx.write_global_rules(CORRUPT);
     fx.write_project_rules(PROJECT_BLOCK);
@@ -331,25 +343,155 @@ fn enforce_malformed_rules_file_degrades_per_layer() {
     assert_eq!(
         decision(&stdout),
         "block",
-        "a corrupt global file must not disable a valid project rule; got: {stdout}"
+        "a corrupt global file must fail closed; got: {stdout}"
     );
     assert!(
-        reason(&stdout).contains("project-block-stash"),
-        "the surviving project rule must be the one that fired; got: {stdout}"
+        !reason(&stdout).contains("project-block-stash"),
+        "the block must come from the unreadable layer, not from whichever rule \
+         happened to survive it; got: {stdout}"
     );
 
-    // (c) The deliberate cost of that design, stated plainly: a corrupt layer
-    // contributes ZERO rules, so the BLOCK rules it held stop being enforced
-    // and the same call is approved. Enforcement degrades silently on stdout —
-    // a corrupt rules file disables its own layer, it does not fail closed.
+    // (c) The headline flip. Corrupt project layer, no global layer at all —
+    // the exact shape a crash mid-`rule add` leaves behind. There is no rule
+    // left to fire, which is precisely why this must block: zero rules here
+    // means "enforcement is broken", not "nothing is forbidden".
     let fx = fixture();
     fx.write_project_rules(CORRUPT);
     let (stdout, stderr, ok) = fx.run_enforce(payload);
     assert!(ok, "enforce must exit 0; stderr: {stderr}");
     assert_eq!(
         decision(&stdout),
+        "block",
+        "an unreadable rules file must never be reported as an empty rule set; got: {stdout}"
+    );
+}
+
+// ─── REQ-03: an unreadable layer blocks, and says which file and why ──────────
+
+#[test]
+fn enforce_blocks_when_project_rules_file_is_malformed() {
+    let fx = fixture();
+    fx.write_project_rules(r#"{ "version": "1.0", "rules": [ {"id": "truncated"#);
+
+    let payload = r#"{"tool_name":"Bash","tool_input":{"command":"echo hello"}}"#;
+    let (stdout, stderr, ok) = fx.run_enforce(payload);
+
+    assert!(ok, "enforce must exit 0 even when it blocks; stderr: {stderr}");
+    assert_eq!(
+        decision(&stdout),
+        "block",
+        "an unreadable project rules file must fail CLOSED; got: {stdout}"
+    );
+    let reason = reason(&stdout);
+    assert!(
+        !reason.trim().is_empty(),
+        "a block with no reason is unactionable; got: {stdout}"
+    );
+    let rules_path = fx.project.join(".hoangsa").join("rules.json");
+    assert!(
+        reason.contains(&rules_path.display().to_string()),
+        "the reason must name the offending path ({}); got: {reason}",
+        rules_path.display()
+    );
+    assert!(
+        reason.contains("EOF while parsing"),
+        "the reason must carry the underlying parse error; got: {reason}"
+    );
+}
+
+#[test]
+fn enforce_blocks_when_global_rules_file_is_malformed() {
+    let fx = fixture();
+    // The project layer is entirely valid — only the global file is broken.
+    fx.write_project_rules(r#"{"version": "1.0", "rules": []}"#);
+    fx.write_global_rules("}{ not json at all");
+
+    let payload = r#"{"tool_name":"Bash","tool_input":{"command":"echo hello"}}"#;
+    let (stdout, stderr, ok) = fx.run_enforce(payload);
+
+    assert!(ok, "enforce must exit 0 even when it blocks; stderr: {stderr}");
+    assert_eq!(
+        decision(&stdout),
+        "block",
+        "a valid project layer does not excuse an unreadable global layer; got: {stdout}"
+    );
+    let global_path = fx.home.join("rules.json");
+    assert!(
+        reason(&stdout).contains(&global_path.display().to_string()),
+        "the reason must name the global path ({}); got: {stdout}",
+        global_path.display()
+    );
+}
+
+// ─── EC-24: absence is not corruption ─────────────────────────────────────────
+
+#[test]
+fn enforce_missing_rules_file_still_approves() {
+    // (a) No rules.json at either layer — a fresh project that never ran
+    // `rule init`. Nothing is configured, so nothing is enforced, and the call
+    // goes through exactly as it did before fail-closed landed.
+    let fx = fixture();
+    let payload = r#"{"tool_name":"Bash","tool_input":{"command":"git stash"}}"#;
+    let (stdout, stderr, ok) = fx.run_enforce(payload);
+    assert!(ok, "enforce must exit 0; stderr: {stderr}");
+    assert_eq!(
+        decision(&stdout),
         "approve",
-        "with every layer corrupt or absent there are no rules left to enforce; got: {stdout}"
+        "an absent rules.json is not a corrupt one — a fresh project must keep working; got: {stdout}"
+    );
+
+    // (b) Absence does not short-circuit the hook either: with the project
+    // layer still missing, a stateful rule from the global layer must reach
+    // Layer 2 and fire. If the missing-file path had blocked (or returned
+    // early), this block would never be attributable to the stateful check.
+    let fx = fixture();
+    fx.write_global_rules(
+        r#"{
+  "version": "1.0",
+  "rules": [
+    {
+      "id": "require-memory-impact",
+      "name": "Require memory_impact before first edit",
+      "enabled": true,
+      "enforcement": "hook",
+      "matcher": "Edit|Write",
+      "conditions": [],
+      "action": "block",
+      "message": "Run memory_impact on this file before editing.",
+      "stateful": "require-memory-impact"
+    }
+  ]
+}"#,
+    );
+    let edit_payload = r#"{"tool_name":"Edit","tool_input":{"file_path":"src/lib.rs"}}"#;
+    let (stdout, stderr, ok) = fx.run_enforce(edit_payload);
+    assert!(ok, "enforce must exit 0; stderr: {stderr}");
+    assert_eq!(decision(&stdout), "block", "got: {stdout}");
+    assert!(
+        reason(&stdout).contains("STATEFUL: require-memory-impact"),
+        "with the project layer merely absent, Layer 2 must still run; got: {stdout}"
+    );
+}
+
+// ─── EC-25: corruption disabled the stateful rules too ────────────────────────
+
+#[test]
+fn enforce_corrupt_project_layer_blocks_stateful_rule() {
+    // `stateful_rule_enabled` looks its ids up in the very same `config.rules`
+    // the pattern loop uses, so a corrupt layer used to switch off
+    // require-memory-impact along with everything else: this Edit — the exact
+    // call the rule exists to gate — was approved in silence.
+    let fx = fixture();
+    fx.write_project_rules(r#"{ "version": "1.0", "rules": [ {"id": "require-memory-impact",,, }"#);
+
+    let edit_payload = r#"{"tool_name":"Edit","tool_input":{"file_path":"src/lib.rs"}}"#;
+    let (stdout, stderr, ok) = fx.run_enforce(edit_payload);
+
+    assert!(ok, "enforce must exit 0; stderr: {stderr}");
+    assert_eq!(
+        decision(&stdout),
+        "block",
+        "a corrupt layer must not silently disable the stateful checks; got: {stdout}"
     );
 }
 
@@ -359,15 +501,21 @@ fn enforce_malformed_rules_file_degrades_per_layer() {
 fn enforce_empty_rules_still_runs_layer2() {
     let payload = r#"{"tool_name":"Bash","tool_input":{"command":"git stash"}}"#;
 
-    // (a) The literal EC-06 input. Note `RulesConfig::version` has no serde
-    // default, so `{"rules": []}` does not deserialize and reaches the empty
-    // rule set via the lenient-degrade path rather than as a parsed-but-empty
-    // config. Same observable contract either way: zero rules, no block.
+    // (a) The literal EC-06 input, which is NOT the empty rule set it looks
+    // like: `RulesConfig::version` has no serde default, so `{"rules": []}`
+    // fails to deserialize. It used to be indistinguishable from an empty set
+    // because both degraded to zero rules; now that an unreadable layer fails
+    // closed, the two are distinct and this input is on the corrupt side of
+    // the line. The genuinely-empty case is (b).
     let fx = fixture();
     fx.write_project_rules(r#"{"rules": []}"#);
     let (stdout, stderr, ok) = fx.run_enforce(payload);
     assert!(ok, "enforce must exit 0; stderr: {stderr}");
-    assert_eq!(decision(&stdout), "approve", "got: {stdout}");
+    assert_eq!(
+        decision(&stdout),
+        "block",
+        "a rules.json missing a required field is unreadable, not empty; got: {stdout}"
+    );
 
     // (b) A well-formed, genuinely empty rule set: Layer 1 matches nothing and
     // the process still emits a well-formed JSON decision.

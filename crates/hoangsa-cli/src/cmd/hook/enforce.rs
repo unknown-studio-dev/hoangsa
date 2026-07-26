@@ -16,7 +16,8 @@ use super::{apply_patch_file_paths, enforcement_events_path, is_source_file};
 /// Critical (block) rules fail-CLOSED. Quality (warn) rules fail-OPEN.
 pub fn cmd_enforce(cwd: &str) {
     use crate::cmd::rule::{
-        evaluate_rule_conditions, read_effective_rules_config, Enforcement, RuleAction,
+        check_rules_layers_readable, evaluate_rule_conditions, read_effective_rules_config,
+        Enforcement, RuleAction,
     };
     use std::io::Read as _;
 
@@ -49,12 +50,35 @@ pub fn cmd_enforce(cwd: &str) {
         .unwrap_or("");
     let tool_input = parsed.get("tool_input").cloned().unwrap_or(json!({}));
 
+    // Rules we cannot read are rules we cannot enforce. `read_effective_rules_config`
+    // degrades an unreadable layer to "no rules", which is the right answer for a
+    // MISSING file and the wrong one for a corrupt file: it switched off every rule
+    // that layer held at once — pattern rules and, because `stateful_rule_enabled`
+    // looks its ids up in the same set, the stateful checks too — and approved the
+    // call with nothing on stderr. Corruption is not exotic; `write_rules_config`
+    // uses a plain `fs::write`, so a crash mid-`rule add` or a conflict marker
+    // produces exactly this state. Same principle as the malformed-payload branch
+    // above: a hook that cannot see what it is enforcing must not vouch for the
+    // call. Absence stays benign — a project with no rules.json is unruled, not
+    // broken, and must keep working.
+    if let Err(e) = check_rules_layers_readable(cwd) {
+        out(&json!({
+            "decision": "block",
+            "reason": format!(
+                "hoangsa enforce: could not read the rules configuration ({e}). \
+                 Rules cannot be evaluated, so this call is denied rather than \
+                 waved through. Repair or delete the file — a rules.json that is \
+                 absent is fine, one that is unreadable is not."
+            ),
+        }));
+        return;
+    }
+
     // ── Layer 1: Pattern-based rules (global ~/.hoangsa/rules.json overlaid by
     // project .hoangsa/rules.json; project overrides global by id) ──
-    // A missing OR malformed file at either layer contributes no rules — the
-    // loop below is then a no-op and control still flows to the Layer 2
-    // stateful checks. Degrading each layer independently means a corrupt
-    // global file can never silently disable a valid project BLOCK rule.
+    // Both layers are readable by the time we get here, so a layer that
+    // contributes no rules is genuinely unruled: the loop below is then a no-op
+    // and control still flows to the Layer 2 stateful checks.
     let config = read_effective_rules_config(cwd);
 
     let mut warnings: Vec<String> = Vec::new();

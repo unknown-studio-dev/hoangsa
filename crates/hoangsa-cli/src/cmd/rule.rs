@@ -296,6 +296,22 @@ fn check_layer_readable(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Strict readability check across BOTH layers, for enforcement callers that
+/// must not degrade. Absence is not corruption: a layer whose file does not
+/// exist contributes no rules and is fine, and a global path that cannot be
+/// resolved at all (no home directory) counts as absent too. Only a file that
+/// exists and cannot be read or parsed is an error, and the error names it.
+///
+/// Callers pair this with [`read_effective_rules_config`], which stays lenient:
+/// this decides whether the rule set is trustworthy, that one builds it.
+pub fn check_rules_layers_readable(project_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
+    check_layer_readable(&rules_path(project_dir))?;
+    if let Some(global) = global_rules_path() {
+        check_layer_readable(&global)?;
+    }
+    Ok(())
+}
+
 /// Resolve the effective rule set for `project_dir`: the global layer
 /// (`~/.hoangsa/rules.json`) overlaid by the project layer
 /// (`<project_dir>/.hoangsa/rules.json`), with project rules overriding global
