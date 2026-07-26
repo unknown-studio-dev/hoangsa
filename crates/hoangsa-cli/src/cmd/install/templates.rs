@@ -196,7 +196,14 @@ pub(crate) fn rel_key(rel: &Path) -> String {
 ///
 /// Unrecognized top-level dirs are preserved as-is so unit tests (which
 /// use synthetic trees without these names) still pass.
-fn route_rel(rel: &Path) -> PathBuf {
+///
+/// `uninstall` must apply this same mapping: the manifest is keyed by the
+/// SOURCE path, so a remover that joins a key straight onto the config dir
+/// looks for `workflows/cook.md` where `hoangsa/workflows/cook.md` was
+/// written. Sharing the function is what keeps the two from drifting —
+/// `scripts/uninstall.sh` reimplemented the join without the mapping and
+/// silently left 71 of 99 tracked files behind while reporting success.
+pub(crate) fn route_rel(rel: &Path) -> PathBuf {
     let mut comps = rel.components();
     let Some(first) = comps.next() else {
         return rel.to_path_buf();
@@ -257,14 +264,23 @@ pub fn copy_templates(
         let src_hash = compute_file_sha256(&src_file)?;
         new_manifest.files.insert(rel_str.clone(), src_hash.clone());
 
-        // Patch-backup gate: only if dst already exists AND prev manifest had it
-        // AND the current on-disk hash disagrees with what we last wrote.
-        if dst_file.exists()
-            && let Some(prev) = prev_manifest
-            && let Some(prev_hash) = prev.files.get(&rel_str)
-        {
+        // Patch-backup gate. Back up anything we are about to overwrite whose
+        // content we cannot prove we wrote ourselves.
+        //
+        // This used to require a previous manifest AND an entry in it, which
+        // inverted the guarantee: with the manifest missing (a different
+        // HOANGSA_INSTALL_DIR, an interrupted uninstall) the only files the
+        // install overwrote were the ones whose content had drifted — i.e.
+        // exactly the user's edits — and it backed up none of them. Skipping
+        // the backup is only safe when the manifest proves the file on disk is
+        // byte-for-byte what we last installed.
+        if dst_file.exists() {
             let current_hash = compute_file_sha256(&dst_file)?;
-            if &current_hash != prev_hash {
+            let pristine = prev_manifest
+                .as_ref()
+                .and_then(|prev| prev.files.get(&rel_str))
+                .is_some_and(|prev_hash| prev_hash == &current_hash);
+            if !pristine && current_hash != src_hash {
                 let backup_path = patch_root.join(format!("{}.bak-{}", rel_str, stamp));
                 if let Some(parent) = backup_path.parent() {
                     fs::create_dir_all(parent)?;

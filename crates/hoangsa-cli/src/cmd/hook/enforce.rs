@@ -23,7 +23,26 @@ pub fn cmd_enforce(cwd: &str) {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input).ok();
 
-    let parsed: serde_json::Value = serde_json::from_str(&input).unwrap_or(json!({}));
+    // A payload we cannot read is not a payload we can clear. Falling back to
+    // `{}` gave every rule an empty tool_name to match against, so they all
+    // passed and the call was approved — malformed stdin silently disabled
+    // the entire rule engine. Deny instead, and say why: a hook that cannot
+    // see the call must not vouch for it.
+    let parsed: serde_json::Value = match serde_json::from_str(&input) {
+        Ok(v) => v,
+        Err(e) => {
+            out(&json!({
+                "decision": "block",
+                "reason": format!(
+                    "hoangsa enforce: could not parse the hook payload ({e}). \
+                     Rules cannot be evaluated, so this call is denied rather than \
+                     waved through. If this is a harness bug, disable the enforce \
+                     hook rather than leaving it blind."
+                ),
+            }));
+            return;
+        }
+    };
     let tool_name = parsed
         .get("tool_name")
         .and_then(|v| v.as_str())
@@ -382,6 +401,7 @@ pub fn intent_guard_edit(events: &str, file_path: &str) -> IntentOutcome {
 /// `require-detect-changes` short-circuits to Approve.
 pub fn intent_guard_bash_commit(events: &str, staged_files: &[String]) -> IntentOutcome {
     let mut detected: Vec<String> = Vec::new();
+    let mut ran_detect_changes = false;
     let mut has_override = false;
     for line in events.lines() {
         let entry: serde_json::Value = match serde_json::from_str(line) {
@@ -390,6 +410,13 @@ pub fn intent_guard_bash_commit(events: &str, staged_files: &[String]) -> Intent
         };
         match entry.get("event").and_then(|e| e.as_str()).unwrap_or("") {
             "detect_changes" => {
+                // The RULE is "did you call memory_detect_changes", so the
+                // event's presence is what satisfies it. Requiring a non-empty
+                // `files` list made the gate unsatisfiable whenever path
+                // extraction found nothing: the agent called the tool, the
+                // hook logged `files: []`, and the commit stayed blocked
+                // forever with no way out but `enforce override`.
+                ran_detect_changes = true;
                 if let Some(files) = entry.get("files").and_then(|f| f.as_array()) {
                     for f in files {
                         if let Some(s) = f.as_str() {
@@ -409,7 +436,7 @@ pub fn intent_guard_bash_commit(events: &str, staged_files: &[String]) -> Intent
         return IntentOutcome::Approve;
     }
 
-    if detected.is_empty() {
+    if !ran_detect_changes {
         return IntentOutcome::Block(
             "⛔ STATEFUL: require-detect-changes\n\n\
              No memory_detect_changes found before commit.\n\

@@ -1,7 +1,12 @@
 #!/bin/sh
 # hoangsa uninstaller — POSIX sh, removes everything install.sh / install-local.sh
-# write. This is the only supported uninstall path; hoangsa-cli has no
-# uninstall subcommand.
+# write.
+#
+# `hoangsa-cli uninstall --global|--local` does the same job and is the path to
+# prefer: it needs no jq, and it shares the source→destination path mapping
+# with the installer instead of reimplementing it. This script stays for the
+# case that command cannot cover — a half-installed tree where the binary is
+# missing or will not run.
 #
 # What gets removed:
 #   1. Binaries in $HOANGSA_CLI_DIR and $HOANGSA_INSTALL_DIR/bin
@@ -14,7 +19,7 @@
 #   5. Managed PATH block in ~/.zshrc / .bashrc / .bash_profile / config.fish
 #      (between `# hoangsa:managed start` / `# hoangsa:managed end` markers)
 #   6. fastembed model cache at $HOANGSA_INSTALL_DIR/cache/fastembed
-#      (global mode only; ~118 MB of ONNX weights the installer downloaded)
+#      (global mode only; ~465 MB of model files the installer downloaded)
 #
 # What gets preserved by default (user data):
 #   * ~/.hoangsa/memory/     — long-term memory store
@@ -200,8 +205,10 @@ remove_binaries() {
 
 # --- fastembed model cache --------------------------------------------------
 #
-# The installer pre-downloads `multilingual-e5-small` (~118 MB of ONNX
-# weights) into $HOANGSA_INSTALL_DIR/cache/fastembed. We remove it here
+# The installer pre-downloads `multilingual-e5-small` (~465 MB on disk: 448 MB
+# of ONNX weights plus a 16 MB tokenizer, measured — the older ~118 MB figure
+# in these docs was copied forward and never checked)
+# into $HOANGSA_INSTALL_DIR/cache/fastembed. We remove it here
 # so an uninstall doesn't leave orphan GB-scale junk behind. FASTEMBED_CACHE_DIR
 # is honored only if the user set it for *this* shell; we never
 # speculatively recurse into unknown paths.
@@ -249,7 +256,16 @@ remove_templates() {
     info "removing templates tracked in $MANIFEST_PATH"
     # Collect files + parent dirs. Parents handled after files so empty-dir
     # cleanup cascades. `jq -r` emits one path per line.
-    _files=$(jq -r '.files | keys[]' "$MANIFEST_PATH" 2>/dev/null || true)
+    #
+    # The manifest is keyed by the TEMPLATE SOURCE path; the installer routes
+    # the destination separately (templates.rs `route_rel`). Joining a raw key
+    # onto $_dst_root looks for files that were never written there — this
+    # loop used to miss `workflows/*` and `skills/hoangsa/*`, 71 of 99 tracked
+    # files, while still printing "uninstall complete".
+    _files=$(jq -r '.files | keys[]' "$MANIFEST_PATH" 2>/dev/null \
+        | sed -e 's|^workflows/|hoangsa/workflows/|' \
+              -e 's|^skills/hoangsa/|skills/|' \
+        || true)
     if [ -z "$_files" ]; then
         info "manifest has no tracked files"
         return 0

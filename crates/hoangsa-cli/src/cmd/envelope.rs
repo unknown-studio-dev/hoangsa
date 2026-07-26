@@ -284,12 +284,20 @@ pub fn cmd_compose(project_dir: &str, task_type: &str, role: &str) {
 /// keyword derived from the task (name words >3 chars, file stems, task type).
 /// Format-agnostic: entries are blank-line-separated paragraphs. Max 5.
 fn matching_lessons(workspace: &str, task: &Value) -> Vec<String> {
-    let Some(content) = read_file(
-        Path::new(workspace)
-            .join(".hoangsa/memory/LESSONS.md")
-            .to_str()
-            .unwrap_or(""),
-    ) else {
+    // Try the resolved root first, then the literal local path.
+    //
+    // Hardcoding `<workspace>/.hoangsa/memory` shipped ZERO lessons to every
+    // project migrated to `~/.hoangsa/memory/projects/<slug>/`. But
+    // `resolve_root` only prefers a local root once it is "populated" (it
+    // looks for an index), so resolving alone would miss a project that has
+    // LESSONS.md locally and has never been indexed. Checking both is the
+    // only option that serves both layouts.
+    let resolved = hoangsa_memory_core::resolve_root(Path::new(workspace), None);
+    let local = Path::new(workspace).join(".hoangsa/memory");
+    let Some(content) = [resolved, local]
+        .iter()
+        .find_map(|root| read_file(root.join("LESSONS.md").to_str().unwrap_or("")))
+    else {
         return Vec::new();
     };
 
@@ -333,10 +341,16 @@ fn matching_lessons(workspace: &str, task: &Value) -> Vec<String> {
 /// The skill registry block from common.md §Worker skill registry (first fenced
 /// block in that section). Falls back to a minimal built-in list.
 fn skill_registry(root: &str) -> String {
+    // Keep in sync with common.md § Worker skill registry — `hoangsa-cli
+    // verify` fails when the two lists diverge.
     let fallback = "Available skills — read the full SKILL.md only if relevant to your task:\n\
         - git-flow: Git branching, task switching, PR creation → .claude/skills/hoangsa/git-flow/SKILL.md\n\
         - visual-debug: Screenshot/video analysis for visual bugs → .claude/skills/hoangsa/visual-debug/SKILL.md\n\
-        - fe-testing: FE verification loop — criteria, test layers, run-and-observe, mutation check → .claude/skills/hoangsa/fe-testing/SKILL.md\n\n\
+        - fe-testing: FE verification loop — criteria, test layers, run-and-observe, mutation check → .claude/skills/hoangsa/fe-testing/SKILL.md\n\
+        - memory-impact-analysis: Blast radius before you edit a symbol — how to read memory_impact and what to do with HIGH/CRITICAL → .claude/skills/hoangsa/memory-impact-analysis/SKILL.md\n\
+        - memory-refactoring: Rename / extract / move safely — find every reference before touching one → .claude/skills/hoangsa/memory-refactoring/SKILL.md\n\
+        - memory-debugging: Trace a failure to its origin through the call graph → .claude/skills/hoangsa/memory-debugging/SKILL.md\n\
+        - memory-exploring: Understand unfamiliar code — callers, execution flow, architecture → .claude/skills/hoangsa/memory-exploring/SKILL.md\n\n\
         To use a skill: read_file(\"<path>\") to get full instructions, then follow them.\n\
         Do NOT read skills unless your task specifically requires them.";
     let Some(common) = read_file(
@@ -427,8 +441,27 @@ pub fn cmd_envelope(session_dir: &str, task_id: &str, kind: &str, memory_status:
         "research" | "analysis" => "readonly",
         _ => "impl",
     };
-    let (model, _profile, model_source) =
+    let (model, profile, model_source) =
         crate::cmd::model::resolve_model_parts(model_role_for(task_type), workspace);
+
+    // Claude routes per-subagent models; Codex has no such knob, so the
+    // tier becomes a reasoning effort there and the session keeps its own
+    // model. Handing a Codex worker "MODEL: sonnet" would name a model it
+    // cannot spawn.
+    let routing_line = if crate::cmd::model::harness(workspace) == "codex" {
+        format!(
+            "REASONING EFFORT: {}   (config routing: profile '{}' → tier '{}', source: {} — \
+             raise/lower your effort to match; keep the Codex session model)",
+            crate::cmd::model::codex_effort_for_tier(&model),
+            profile,
+            model,
+            model_source
+        )
+    } else {
+        format!(
+            "MODEL: {model}   (config routing, source: {model_source} — spawn this worker with exactly this model)"
+        )
+    };
 
     let composed = match compose_rules(workspace, task_type, role) {
         Ok(c) => c,
@@ -459,6 +492,12 @@ pub fn cmd_envelope(session_dir: &str, task_id: &str, kind: &str, memory_status:
     let covers = list_section("Requirements covered:", task.get("covers").and_then(|v| v.as_array()), |f| {
         format!("- {}", f.as_str().unwrap_or("?"))
     });
+    let behavior = list_section(
+        "Behavior contract — implement exactly these steps (from DESIGN-SPEC § Behavior / Logic). \
+         Do NOT invent logic that isn't here; if a step is ambiguous or contradicts the code, report a blocker:",
+        task.get("behavior").and_then(|v| v.as_array()),
+        |b| format!("- {}", b.as_str().unwrap_or("?")),
+    );
     let test_cases = list_section(
         "Test cases to satisfy (from TEST-SPEC):",
         task.get("test_cases").and_then(|v| v.as_array()),
@@ -543,12 +582,12 @@ pub fn cmd_envelope(session_dir: &str, task_id: &str, kind: &str, memory_status:
     };
 
     let prompt = format!(
-        "MODEL: {model}   (config routing, source: {model_source} — spawn this worker with exactly this model)\n\n\
+        "{routing_line}\n\n\
 You are a HOANGSA worker. Execute this task precisely.\n\n\
 ## Worker Rules\n\n{rules}\n{tool_restrictions}\n---\n\n\
 ## Task Envelope\n\n\
 Task: {name}\nID: {task_id}\nWorkspace: {workspace}\nhoangsa-memory: {memory_status}\n\
-{files}{pointers}{covers}{test_cases}{edge_cases}{lessons_section}{bug_context}\
+{files}{pointers}{covers}{behavior}{test_cases}{edge_cases}{lessons_section}{bug_context}\
 \nUI task: {ui_line}\nEvidence dir (UI tasks — screenshots go here):\n{evidence_dir}/\n\
 {context_pack}\
 \n## Skill Registry (load on demand)\n\n{registry}\n\n\
@@ -556,11 +595,12 @@ Task: {name}\nID: {task_id}\nWorkspace: {workspace}\nhoangsa-memory: {memory_sta
 1. Read all context_pointers files first\n\
 2. Before modifying any function/class/method, run memory_impact({{target: \"symbolName\", direction: \"upstream\"}}) to check blast radius (if hoangsa-memory is available); search past work with memory_archive_search({{query: \"{name} <primary module>\"}})\n\
 3. If impact returns HIGH or CRITICAL risk — report it, do not proceed without orchestrator acknowledgment\n\
-4. Implement the task — handling EVERY listed edge case. If an edge case is impossible or out of scope, STOP and report it as a blocker; never silently skip one\n\
+4. Implement the task — following every step of the behavior contract and handling EVERY listed edge case. Where the contract is silent you may use judgment; where it speaks, it wins. If a behavior step or edge case is impossible, contradicts the code, or is out of scope, STOP and report it as a blocker; never silently skip one and never fill a gap in the contract by guessing\n\
 5. Run the acceptance command to verify: {acceptance}\n\
 {ui_step}\n\
-6. If acceptance fails, fix and retry (max 3 attempts)\n\
-{commit_step}\n\n\
+6. If acceptance fails, fix and retry (max 3 attempts) — by changing your implementation, never by changing the acceptance command, an expected value, or a behavior step (Worker Rules \u{a7} Acceptance: the contract is an input, not a variable)\n\
+{commit_step}\n\
+9. Close with the completion report from Worker Rules \u{a7} Communication: one line per behavior step and per edge case, each with the `path:line` where it is handled or a ⚠️ line saying what you did instead. A report that aggregates or omits lines is an incomplete task — the orchestrator otherwise sees only a diff and an exit code\n\n\
 Acceptance command: {acceptance}\n",
         rules = composed.rules,
         registry = skill_registry(&root),

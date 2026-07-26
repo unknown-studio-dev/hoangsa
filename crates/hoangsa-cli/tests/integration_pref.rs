@@ -133,7 +133,14 @@ fn test_profile_roundtrip_balanced() {
 
     let v = parse_json(&stdout);
     assert_eq!(v["success"], true, "expected success=true; got: {v}");
-    assert_eq!(v["profile"], "balanced", "expected profile=balanced; got: {v}");
+    // The response names what was written: the WORKFLOW preset, not the
+    // top-level `profile` key (which routes models and has a different
+    // vocabulary). `pref set … profile` is still accepted as a deprecated
+    // alias — see `normalize_key`.
+    assert_eq!(
+        v["workflow_profile"], "balanced",
+        "expected workflow_profile=balanced; got: {v}"
+    );
 
     // Verify each of the 6 keys via pref get
     let expected: &[(&str, Value)] = &[
@@ -170,7 +177,14 @@ fn test_profile_roundtrip_full() {
 
     let v = parse_json(&stdout);
     assert_eq!(v["success"], true, "expected success=true; got: {v}");
-    assert_eq!(v["profile"], "full", "expected profile=full; got: {v}");
+    // The response names what was written: the WORKFLOW preset, not the
+    // top-level `profile` key (which routes models and has a different
+    // vocabulary). `pref set … profile` is still accepted as a deprecated
+    // alias — see `normalize_key`.
+    assert_eq!(
+        v["workflow_profile"], "full",
+        "expected workflow_profile=full; got: {v}"
+    );
 
     let expected: &[(&str, Value)] = &[
         ("simplify_pass", Value::Bool(true)),

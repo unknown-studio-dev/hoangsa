@@ -18,14 +18,40 @@ pub fn resolve_hoangsa_root(project_dir: &str) -> Option<String> {
         return Some(local.to_string_lossy().to_string());
     }
 
-    if let Ok(home) = std::env::var("HOME") {
-        let global = Path::new(&home).join(".claude/hoangsa");
+    for base in claude_config_dirs() {
+        let global = base.join("hoangsa");
         if global.join("workflows/worker-rules/addons").is_dir() {
             return Some(global.to_string_lossy().to_string());
         }
     }
 
     None
+}
+
+/// Claude config directories to search, in priority order.
+///
+/// `CLAUDE_CONFIG_DIR` first when set — Claude Code honours it, so a user on
+/// an alternate profile has their templates there and nothing in `~/.claude`.
+/// Hardcoding `~/.claude` made every such install invisible to rule
+/// composition.
+pub fn claude_config_dirs() -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    if let Some(raw) = std::env::var_os("CLAUDE_CONFIG_DIR") {
+        let s = raw.to_string_lossy().into_owned();
+        if !s.is_empty() {
+            // A value forwarded through a nested shell can arrive unexpanded.
+            let expanded = match (s.as_str(), std::env::var("HOME")) {
+                ("~", Ok(home)) => std::path::PathBuf::from(home),
+                (v, Ok(home)) if v.starts_with("~/") => Path::new(&home).join(&v[2..]),
+                (v, _) => std::path::PathBuf::from(v),
+            };
+            out.push(expanded);
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        out.push(Path::new(&home).join(".claude"));
+    }
+    out
 }
 
 /// Scan $HOANGSA_ROOT/workflows/worker-rules/addons/*.md, parse frontmatter.

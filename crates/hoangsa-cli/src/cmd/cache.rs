@@ -9,24 +9,29 @@ struct Pricing {
     cache_write: f64,
     cache_read: f64,
     output: f64,
+    /// False when no branch matched and the sonnet rate was assumed. Every
+    /// cost derived from it is then a guess, and the caller has to say so —
+    /// a silently-wrong number is worse than no number. `claude-opus-5`
+    /// was landing here and being billed at sonnet rates.
+    known: bool,
 }
 
 fn get_pricing(model_id: &str) -> Pricing {
     let norm = model_id.to_lowercase().replace(['-', '_'], "");
     if norm.contains("claudefable") {
-        Pricing { input: 10.0, cache_write: 12.50, cache_read: 1.00, output: 50.0 }
+        Pricing { input: 10.0, cache_write: 12.50, cache_read: 1.00, output: 50.0, known: true }
     } else if norm.contains("claudeopus4") && !norm.contains("claudeopus41") {
-        Pricing { input: 5.0, cache_write: 6.25, cache_read: 0.50, output: 25.0 }
+        Pricing { input: 5.0, cache_write: 6.25, cache_read: 0.50, output: 25.0, known: true }
     } else if norm.contains("claudeopus41") || norm.contains("claudeopus3") {
-        Pricing { input: 15.0, cache_write: 18.75, cache_read: 1.50, output: 75.0 }
+        Pricing { input: 15.0, cache_write: 18.75, cache_read: 1.50, output: 75.0, known: true }
     } else if norm.contains("claudesonnet") {
-        Pricing { input: 3.0, cache_write: 3.75, cache_read: 0.30, output: 15.0 }
+        Pricing { input: 3.0, cache_write: 3.75, cache_read: 0.30, output: 15.0, known: true }
     } else if norm.contains("claudehaiku45") {
-        Pricing { input: 1.0, cache_write: 1.25, cache_read: 0.10, output: 5.0 }
+        Pricing { input: 1.0, cache_write: 1.25, cache_read: 0.10, output: 5.0, known: true }
     } else if norm.contains("claudehaiku3") {
-        Pricing { input: 0.25, cache_write: 0.30, cache_read: 0.03, output: 1.25 }
+        Pricing { input: 0.25, cache_write: 0.30, cache_read: 0.03, output: 1.25, known: true }
     } else {
-        Pricing { input: 3.0, cache_write: 3.75, cache_read: 0.30, output: 15.0 }
+        Pricing { input: 3.0, cache_write: 3.75, cache_read: 0.30, output: 15.0, known: false }
     }
 }
 
@@ -102,7 +107,24 @@ struct SessionResult {
     savings: f64,
     net_savings: f64,
     savings_pct: f64,
+    /// Model ids in this session that no pricing branch recognised. Non-empty
+    /// means every cost figure below is an assumption, not a measurement.
+    unpriced_models: Vec<String>,
     turns: Vec<TurnMetrics>,
+}
+
+/// `"exact"`, or a warning naming the model ids that were billed at the
+/// sonnet fallback rate. Emitted next to every cost figure so a reader
+/// can't mistake an assumption for a measurement.
+fn cost_basis(unpriced: &[String]) -> String {
+    if unpriced.is_empty() {
+        return "exact".to_string();
+    }
+    format!(
+        "ASSUMED — no pricing entry for {}; billed at sonnet rates ($3/$15 per MTok). \
+         Add the model to get_pricing() in cache.rs for real numbers.",
+        unpriced.join(", ")
+    )
 }
 
 fn grade_from_score(score: f64) -> &'static str {
@@ -172,6 +194,14 @@ fn analyze_session(path: &Path) -> Option<SessionResult> {
 
     let hit_rate = if total_cacheable == 0 { 0.0 } else { total_cache_read as f64 / total_cacheable as f64 };
 
+    let mut unpriced_models: Vec<String> = turns
+        .iter()
+        .filter(|t| !get_pricing(&t.model).known)
+        .map(|t| t.model.clone())
+        .collect();
+    unpriced_models.sort();
+    unpriced_models.dedup();
+
     let metrics: Vec<TurnMetrics> = turns.into_iter().map(compute_turn_metrics).collect();
 
     let actual_cost: f64 = metrics.iter().map(|m| m.actual_cost).sum();
@@ -190,7 +220,7 @@ fn analyze_session(path: &Path) -> Option<SessionResult> {
         session_id, project, model, started_at, num_turns,
         total_input, total_output, total_cache_creation, total_cache_read,
         hit_rate, efficiency_score, grade, actual_cost, cost_no_cache,
-        savings, net_savings, savings_pct, turns: metrics,
+        savings, net_savings, savings_pct, unpriced_models, turns: metrics,
     })
 }
 
@@ -321,6 +351,7 @@ pub fn cmd_cache(args: &[&str], cwd: &str) {
             "savings": (s.savings * 10000.0).round() / 10000.0,
             "net_savings": (s.net_savings * 10000.0).round() / 10000.0,
             "savings_pct": (s.savings_pct * 10.0).round() / 10.0,
+            "cost_basis": cost_basis(&s.unpriced_models),
             "turns": turn_data,
         }));
         return;
@@ -351,6 +382,7 @@ pub fn cmd_cache(args: &[&str], cwd: &str) {
             "grade": s.grade,
             "actual_cost": (s.actual_cost * 10000.0).round() / 10000.0,
             "savings": (s.savings * 10000.0).round() / 10000.0,
+            "cost_basis": cost_basis(&s.unpriced_models),
         })
     }).collect();
 
@@ -383,5 +415,34 @@ mod tests {
         // fable must not fall through to the opus or default branches
         let opus = get_pricing("claude-opus-4-7");
         assert_eq!(opus.input, 5.0);
+    }
+
+    /// The fallback exists so an unknown model still produces a number —
+    /// but it must never look like a measured one. `claude-opus-5` is the
+    /// live case: no branch matches it, so it was billed as sonnet.
+    #[test]
+    fn unknown_models_are_flagged_not_silently_priced() {
+        for id in ["claude-opus-5", "claude-haiku-5", "gpt-5-codex", ""] {
+            let p = get_pricing(id);
+            assert!(!p.known, "{id} should be flagged as unpriced");
+            assert_eq!(p.input, 3.0, "{id} should still fall back to sonnet rates");
+        }
+        for id in [
+            "claude-fable-5",
+            "claude-opus-4-8",
+            "claude-opus-4-1",
+            "claude-sonnet-5",
+            "claude-haiku-4-5",
+        ] {
+            assert!(get_pricing(id).known, "{id} should be priced exactly");
+        }
+    }
+
+    #[test]
+    fn cost_basis_reports_exact_or_names_the_gap() {
+        assert_eq!(cost_basis(&[]), "exact");
+        let note = cost_basis(&["claude-opus-5".to_string()]);
+        assert!(note.starts_with("ASSUMED"), "got {note}");
+        assert!(note.contains("claude-opus-5"), "got {note}");
     }
 }

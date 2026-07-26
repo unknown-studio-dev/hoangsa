@@ -163,6 +163,28 @@ pub fn count_tokens(text: &str) -> u64 {
     }
 }
 
+/// Write `content` to `path` via a per-process temp file plus rename.
+///
+/// A bare `fs::write` truncates the LIVE file at open, so a short write
+/// landing over an in-flight long write leaves a valid-JSON prefix followed
+/// by a stale tail — reproduced destroying a session's `state.json` while two
+/// cook workers in the same wave both ran `state update`. The temp name
+/// carries the pid so two writers cannot interleave inside it.
+///
+/// This makes the publish atomic; it does NOT serialise read-modify-write, so
+/// a lost update is still possible. Losing a patch is recoverable; losing the
+/// file is not.
+pub fn atomic_write_string(path: &std::path::Path, content: &str) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(format!(".{}.tmp", std::process::id()));
+    let tmp = std::path::PathBuf::from(tmp);
+    std::fs::write(&tmp, content)?;
+    std::fs::rename(&tmp, path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

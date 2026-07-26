@@ -65,3 +65,32 @@ fn does_not_double_wrap() {
     assert_eq!(code, 0);
     assert_eq!(out.trim(), "{}");
 }
+
+/// `hsp` must land AFTER leading `VAR=value` assignments. Putting it first
+/// made the shell exec a program literally named `FOO=1`, so every tool call
+/// like `RUST_BACKTRACE=1 cargo test` died with 127.
+#[test]
+fn keeps_env_assignments_in_front_of_hsp() {
+    let payload =
+        r#"{"tool_name":"Bash","tool_input":{"command":"RUST_BACKTRACE=1 NO_COLOR=1 git log -5"}}"#;
+    let (out, code) = run_hook(payload);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let rewritten = v["hookSpecificOutput"]["modifiedToolInput"]["command"]
+        .as_str()
+        .unwrap();
+    assert_eq!(rewritten, "RUST_BACKTRACE=1 NO_COLOR=1 hsp git log -5");
+    assert!(
+        !rewritten.starts_with("hsp RUST_BACKTRACE"),
+        "hsp must not swallow the assignments as argv"
+    );
+}
+
+/// A lone assignment with no command is not a command — nothing to rewrite.
+#[test]
+fn assignment_only_command_is_passed_through() {
+    let payload = r#"{"tool_name":"Bash","tool_input":{"command":"FOO=bar"}}"#;
+    let (out, code) = run_hook(payload);
+    assert_eq!(code, 0);
+    assert_eq!(out.trim(), "{}");
+}

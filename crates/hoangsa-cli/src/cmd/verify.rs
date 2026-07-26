@@ -180,30 +180,6 @@ fn cleanup(dir: &Path) {
     let _ = fs::remove_dir_all(dir);
 }
 
-/// Recursively find files whose name starts with `prefix`, skipping `.git` directories.
-/// Returns a list of matching absolute path strings.
-fn find_files_matching(dir: &Path, prefix: &str) -> Vec<String> {
-    let mut results = Vec::new();
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if path.file_name().is_some_and(|n| n == ".git") {
-                    continue;
-                }
-                results.extend(find_files_matching(&path, prefix));
-            } else if path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with(prefix))
-            {
-                results.push(path.display().to_string());
-            }
-        }
-    }
-    results
-}
-
 // ─── test suites ─────────────────────────────────────────────────────────────
 
 fn test_validate_plan(t: &mut TestRunner) {
@@ -348,13 +324,29 @@ fn test_validate_spec(t: &mut TestRunner) {
 
     {
         let dir = tmp_project();
-        let spec = "---\nspec_version: \"1.0\"\nproject: \"test\"\ncomponent: \"auth\"\nlanguage: \"typescript\"\nstatus: \"draft\"\n---\n\n## Types / Data Models\n\n```typescript\ninterface User { id: string; }\n```\n\n## Interfaces / APIs\n\n```typescript\nfunction createUser(data: User): Promise<User>;\n```\n\n## Implementations\n\n### Design Decisions\n| # | Decision | Reasoning | Type |\n|---|----------|-----------|------|\n\n### Affected Files\n| File | Action | Description |\n|------|--------|-------------|\n\n## Acceptance Criteria\n\n| Req | Command | Expected |\n|-----|---------|----------|\n";
+        let spec = "---\nspec_version: \"1.0\"\nproject: \"test\"\ncomponent: \"auth\"\nlanguage: \"typescript\"\ncategory: \"code\"\nstatus: \"draft\"\n---\n\n## Types / Data Models\n\n```typescript\ninterface User { id: string; }\n```\n\n## Interfaces / APIs\n\n```typescript\nfunction createUser(data: User): Promise<User>;\n```\n\n## Behavior / Logic\n\n### [REQ-01] create user\n**Steps:**\n1. reject when email fails RFC5322 → 400 INVALID_EMAIL\n2. insert with ON CONFLICT (email) DO NOTHING; 0 rows affected → 409\n\n## Risk Sweep\n| Risk class | Applies? | Handling | Edge case ref |\n|---|---|---|---|\n| Boundary / empty input | APPLIES | empty email → 400 | empty email |\n| Invalid / malformed input | APPLIES | RFC5322 check | malformed email |\n| Concurrency & TOCTOU | APPLIES | unique index on email, no read-then-write | two writers same email |\n| Idempotency & retry | APPLIES | ON CONFLICT DO NOTHING | replayed request |\n| Partial failure & rollback | N/A | single statement | — |\n| Auth & permission | N/A | public signup endpoint | — |\n| Limits (size / timeout / rate) | APPLIES | 1 KiB body cap | oversized body |\n| Backward compat / migration | N/A | new endpoint | — |\n\n## Open Questions\n| Question | Status | Answer | Impact |\n|---|---|---|---|\n| None | RESOLVED | — | — |\n\n## Implementations\n\n### Design Decisions\n| # | Decision | Reasoning | Type |\n|---|----------|-----------|------|\n\n### Affected Files\n| File | Action | Description |\n|------|--------|-------------|\n\n## Acceptance Criteria\n\n| Req | Command | Expected |\n|-----|---------|----------|\n";
         let p = dir.join("DESIGN-SPEC.md");
         fs::write(&p, spec).unwrap();
         let out = t.run_json(&["validate", "spec", p.to_str().unwrap()], &dir);
         t.check(
             "validates correct spec",
             out["valid"] == true && out["component"] == "auth",
+            &format!("got {out:?}"),
+        );
+
+        // The same spec minus its Risk Sweep must fail — the gate is the point
+        let no_sweep = spec
+            .split("## Risk Sweep")
+            .next()
+            .unwrap_or("")
+            .to_string()
+            + "## Implementations\n\n## Acceptance Criteria\n";
+        let p2 = dir.join("DESIGN-SPEC-no-sweep.md");
+        fs::write(&p2, no_sweep).unwrap();
+        let out = t.run_json(&["validate", "spec", p2.to_str().unwrap()], &dir);
+        t.check(
+            "rejects code spec without Risk Sweep",
+            out["valid"] == false,
             &format!("got {out:?}"),
         );
         cleanup(&dir);
@@ -379,13 +371,34 @@ fn test_validate_tests(t: &mut TestRunner) {
 
     {
         let dir = tmp_project();
-        let spec = "---\ntests_version: \"1.0\"\nspec_ref: \"auth-spec-v1.0\"\ncomponent: \"auth\"\n---\n\n## Unit Tests\n\n### Test: should_create_user\n- **Covers**: [REQ-01]\n- **Verify**: `npx jest`\n";
+        let spec = "---\ntests_version: \"1.0\"\nspec_ref: \"auth-spec-v1.0\"\ncomponent: \"auth\"\n---\n\n## Unit Tests\n\n### Test: should_create_user\n- **Covers**: [REQ-01]\n- **Verify**: `npx jest`\n\n## Edge Cases\n\n| Case | Setup | Expected | Covers |\n|---|---|---|---|\n| empty email | create user with \"\" | ValidationError | REQ-01 |\n";
         let p = dir.join("TEST-SPEC.md");
         fs::write(&p, spec).unwrap();
         let out = t.run_json(&["validate", "tests", p.to_str().unwrap()], &dir);
         t.check(
             "validates correct test spec",
             out["valid"] == true,
+            &format!("got {out:?}"),
+        );
+        cleanup(&dir);
+    }
+
+    // Negative twin of the above: strip only ## Edge Cases and the same
+    // spec must fail. Without this, the fixture could be "fixed" by
+    // deleting the requirement instead of satisfying it.
+    {
+        let dir = tmp_project();
+        let spec = "---\ntests_version: \"1.0\"\nspec_ref: \"auth-spec-v1.0\"\ncomponent: \"auth\"\n---\n\n## Unit Tests\n\n### Test: should_create_user\n- **Covers**: [REQ-01]\n- **Verify**: `npx jest`\n";
+        let p = dir.join("no-edge.md");
+        fs::write(&p, spec).unwrap();
+        let out = t.run_json(&["validate", "tests", p.to_str().unwrap()], &dir);
+        let has_edge_err = out["errors"].as_array().is_some_and(|e| {
+            e.iter()
+                .any(|x| x.as_str().unwrap_or("").contains("Edge Cases"))
+        });
+        t.check(
+            "rejects test spec without Edge Cases",
+            out["valid"] == false && has_edge_err,
             &format!("got {out:?}"),
         );
         cleanup(&dir);
@@ -927,9 +940,94 @@ fn test_integration_templates(t: &mut TestRunner) {
     eprintln!("\n\x1b[1m● integration: templates\x1b[0m");
 
     let tpl = &t.templates_dir.clone();
-    let commands: &[&str] = &["taste", "plate", "serve", "check", "fix", "research"];
+    // Derived from disk, not a hardcoded list. The old list named six of
+    // twenty commands, so a new command could ship with no workflow and no
+    // help entry and nothing would notice — which is exactly what happened.
+    let mut commands: Vec<String> = fs::read_dir(tpl.join("commands/hoangsa"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            (p.extension().and_then(|x| x.to_str()) == Some("md"))
+                .then(|| p.file_stem()?.to_str().map(str::to_string))
+                .flatten()
+        })
+        .collect();
+    commands.sort();
+    t.check(
+        "commands/hoangsa is non-empty",
+        !commands.is_empty(),
+        "no command files found",
+    );
 
-    for cmd in commands {
+    // Workflow resolution lives in `hoangsa-cli workflow show`, in one place
+    // that has tests. Commands that spell the search path out themselves
+    // duplicate it nineteen times — which is how the CLAUDE_CONFIG_DIR case
+    // came to be missing from all nineteen at once.
+    for cmd in &commands {
+        let p = tpl.join("commands/hoangsa").join(format!("{cmd}.md"));
+        let Ok(content) = fs::read_to_string(&p) else { continue };
+        if !content.contains("workflow show") && !content.contains("workflows/") {
+            continue; // self-contained command (e.g. help)
+        }
+        t.check(
+            &format!("commands/{cmd}.md resolves via `workflow show`"),
+            content.contains(&format!("workflow show {cmd}")),
+            "spells out the search path instead of calling `hoangsa-cli workflow show`",
+        );
+        t.check(
+            &format!("commands/{cmd}.md does not hardcode a config dir"),
+            !content.contains("~/.claude/hoangsa"),
+            "hardcodes ~/.claude — breaks alternate Claude profiles",
+        );
+    }
+
+    // A shipped template must not name one machine's profile directory. Any
+    // concrete alternative reads as "the" alternative, and the variable can
+    // point anywhere.
+    {
+        let mut leaked = Vec::new();
+        let mut stack = vec![tpl.clone()];
+        while let Some(dir) = stack.pop() {
+            for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().and_then(|e| e.to_str()) == Some("md")
+                    && fs::read_to_string(&path)
+                        .map(|c| c.contains(".zclaude"))
+                        .unwrap_or(false)
+                {
+                    leaked.push(
+                        path.strip_prefix(tpl)
+                            .unwrap_or(&path)
+                            .to_string_lossy()
+                            .to_string(),
+                    );
+                }
+            }
+        }
+        t.check(
+            "no machine-specific profile dir in templates",
+            leaked.is_empty(),
+            &format!("a concrete profile path leaked into shipped templates: {leaked:?}"),
+        );
+    }
+
+    // `/hoangsa:help` prints the catalogue; a command missing from it is
+    // invisible to the user even though it works.
+    if let Ok(help) = fs::read_to_string(tpl.join("commands/hoangsa/help.md")) {
+        for cmd in &commands {
+            t.check(
+                &format!("help lists /hoangsa:{cmd}"),
+                help.contains(&format!("/hoangsa:{cmd}")),
+                "shipped but absent from the help catalogue",
+            );
+        }
+    }
+
+    for cmd in &commands {
         let p = tpl.join("commands/hoangsa").join(format!("{cmd}.md"));
         t.check(
             &format!("commands/{cmd}.md exists"),
@@ -938,16 +1036,26 @@ fn test_integration_templates(t: &mut TestRunner) {
         );
     }
 
-    for cmd in commands {
+    // Only commands that ROUTE to a workflow need one. `/hoangsa:help` prints
+    // its catalogue inline and has no workflow by design — asserting one for
+    // every command would be a gate that lies about the architecture.
+    for cmd in &commands {
+        let src = tpl.join("commands/hoangsa").join(format!("{cmd}.md"));
+        let routes = fs::read_to_string(&src)
+            .map(|c| c.contains("workflows/"))
+            .unwrap_or(false);
+        if !routes {
+            continue;
+        }
         let p = tpl.join("workflows").join(format!("{cmd}.md"));
         t.check(
             &format!("workflows/{cmd}.md exists"),
             p.exists(),
-            &format!("missing: {}", p.display()),
+            &format!("{cmd} routes to a workflow that is missing: {}", p.display()),
         );
     }
 
-    for cmd in commands {
+    for cmd in &commands {
         let p = tpl.join("commands/hoangsa").join(format!("{cmd}.md"));
         if let Ok(content) = fs::read_to_string(&p) {
             t.check(
@@ -958,31 +1066,122 @@ fn test_integration_templates(t: &mut TestRunner) {
         }
     }
 
-    // Verify agents/ directory no longer exists (removed in v2.1)
-    t.check(
-        "no templates/agents/",
-        !tpl.join("agents").exists(),
-        "legacy agents dir still exists — delete it",
-    );
+    // Routed agents must not pin a model: a tier in the frontmatter silently
+    // wins over config routing whenever a spawn call omits the model, which
+    // turns the whole model_profile config into a no-op. hoangsa-simplify is
+    // the documented exception (mechanical pass, no role in resolve-model).
+    for agent in &[
+        "hoangsa-worker-impl",
+        "hoangsa-worker-readonly",
+        "hoangsa-reviewer",
+    ] {
+        let p = tpl.join("agents").join(format!("{agent}.md"));
+        match fs::read_to_string(&p) {
+            Ok(content) => t.check(
+                &format!("agents/{agent}.md does not pin a model"),
+                !content.lines().any(|l| l.trim_start().starts_with("model:")),
+                "frontmatter pins a model — routed agents take theirs from \
+                 `resolve-model`, passed by the orchestrator at spawn time",
+            ),
+            Err(_) => t.check(
+                &format!("agents/{agent}.md exists"),
+                false,
+                &format!("missing: {}", p.display()),
+            ),
+        }
+    }
 
-    // GSD removal
-    t.check(
-        "no get-shit-done/",
-        !tpl.join("get-shit-done").exists(),
-        "still exists",
-    );
-    t.check(
-        "no commands/gsd/",
-        !tpl.join("commands/gsd").exists(),
-        "still exists",
-    );
+    // Gate 4's analyzers ship with HOANGSA precisely so the gate cannot pass
+    // by default on a machine that never installed them. Three things must
+    // agree or that guarantee is gone: the install list, the shipped
+    // templates, and the workflow that spawns them by name.
+    let cook = fs::read_to_string(tpl.join("workflows/cook.md")).unwrap_or_default();
+    for agent in crate::cmd::install::mode::QUALITY_SKILLS {
+        let p = tpl.join("agents").join(format!("{agent}.md"));
+        match fs::read_to_string(&p) {
+            Ok(content) => {
+                t.check(
+                    &format!("agents/{agent}.md does not pin a model"),
+                    !content.lines().any(|l| l.trim_start().starts_with("model:")),
+                    "frontmatter pins a model — analyzers take theirs from \
+                     `resolve-model reviewer`, passed by cook at spawn time",
+                );
+                t.check(
+                    &format!("cook.md spawns {agent}"),
+                    cook.contains(agent.as_ref() as &str),
+                    "shipped as a Gate-4 analyzer but cook.md never names it",
+                );
+            }
+            Err(_) => t.check(
+                &format!("agents/{agent}.md exists"),
+                false,
+                &format!(
+                    "listed in QUALITY_SKILLS but not shipped: {}",
+                    p.display()
+                ),
+            ),
+        }
+    }
 
-    let found = find_files_matching(tpl, "gsd-");
-    t.check(
-        "no gsd-* files",
-        found.is_empty(),
-        &format!("found: {}", found.join(", ")),
-    );
+    // Every shipped agent runs against whatever stack the project uses — cook's
+    // own verification tier already branches across Rust, Python, TS and Go. An
+    // agent written in one language's syntax grades every other project against
+    // a language it is not written in, and its findings arrive unactionable.
+    // The upstream agents this replaced failed exactly here: the official
+    // code-simplifier prescribes ES modules and React props to every codebase
+    // it is pointed at.
+    if let Ok(entries) = fs::read_dir(tpl.join("agents")) {
+        let mut agent_files: Vec<_> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "md"))
+            .collect();
+        agent_files.sort();
+        for p in agent_files {
+            let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let content = fs::read_to_string(&p).unwrap_or_default();
+            let leaks: Vec<&str> = [
+                "#[", "let _ =", "unwrap", "is_err()", "panic!", "Vec<", "Option<", "&mut",
+                "Some(", ".rs:", ".ts:", ".py:", ".go:", "cargo ", "pytest", "npx ",
+                "ES module", "React", "arrow function",
+            ]
+            .into_iter()
+            .filter(|tok| content.contains(tok))
+            .collect();
+            t.check(
+                &format!("agents/{name} stays language-neutral"),
+                leaks.is_empty(),
+                &format!(
+                    "stack-specific syntax in an agent that runs on every project: {} \
+                     — name the construct, not one language's spelling of it",
+                    leaks.join(", ")
+                ),
+            );
+        }
+    }
+
+    // The update workflow used to detect the install by reading
+    // `<config>/hoangsa/VERSION` — a file nothing has ever written — from a
+    // hardcoded `~/.claude`. It reported "not installed" on every machine, in
+    // a shape indistinguishable from a genuinely missing install. Version
+    // detection belongs to `hoangsa-cli update`, which reads the manifest the
+    // installer actually writes.
+    if let Ok(upd) = fs::read_to_string(tpl.join("workflows/update.md")) {
+        // Match the shell spelling (`"…/hoangsa/VERSION"`), not the bare
+        // path: the workflow names that dead file in prose to explain why it
+        // stopped using it, and a gate that cannot tell a warning from the
+        // mistake it warns about forces the warning to be deleted.
+        t.check(
+            "update.md does not hand-roll version detection",
+            !upd.contains("hoangsa/VERSION\"") && !upd.contains("hoangsa/VERSION'"),
+            "reads a VERSION file no installer writes — use `hoangsa-cli update --check`",
+        );
+        t.check(
+            "update.md delegates to the CLI",
+            upd.contains("update --check"),
+            "must call `hoangsa-cli update --check` rather than reimplementing the check",
+        );
+    }
 
     // index command
     t.check(
@@ -1035,12 +1234,390 @@ fn test_integration_workflow_refs(t: &mut TestRunner) {
     }
 
     if let Ok(c) = fs::read_to_string(tpl.join("workflows/cook.md")) {
-        t.check(
-            "cook → context get",
-            c.contains("context get") || c.contains("context_get"),
-            "missing",
-        );
+        // Cook no longer calls `context get` per task — `envelope` assembles
+        // the worker prompt and embeds the context pack that `prepare` wrote.
+        // The invariant worth guarding is that cook uses the envelope at all;
+        // hand-assembled prompts are how fresh-context workers lose their
+        // rules, lessons and context.
+        t.check("cook → envelope", c.contains("envelope"), "missing");
         t.check("cook → auto_taste", c.contains("auto_taste"), "missing");
+    }
+}
+
+/// Collect the skill names appearing as `skills/hoangsa/<name>/SKILL.md`.
+fn skill_names_in(text: &str) -> std::collections::BTreeSet<String> {
+    text.match_indices("skills/hoangsa/")
+        .filter_map(|(i, m)| {
+            let rest = &text[i + m.len()..];
+            let name = rest.split('/').next()?;
+            rest.starts_with(&format!("{name}/SKILL.md"))
+                .then(|| name.to_string())
+        })
+        .collect()
+}
+
+fn test_integration_skills(t: &mut TestRunner) {
+    eprintln!("\n\x1b[1m● integration: skills\x1b[0m");
+
+    let tpl = &t.templates_dir.clone();
+    let skills_dir = tpl.join("skills/hoangsa");
+
+    // A skill directory without SKILL.md installs fine and then does
+    // nothing — the entry point is what the client actually loads.
+    let mut names = Vec::new();
+    if let Ok(entries) = fs::read_dir(&skills_dir) {
+        for e in entries.flatten().filter(|e| e.path().is_dir()) {
+            let name = e.file_name().to_string_lossy().to_string();
+            t.check(
+                &format!("skill {name} has SKILL.md"),
+                e.path().join("SKILL.md").is_file(),
+                "missing SKILL.md",
+            );
+            names.push(name);
+        }
+    }
+    t.check(
+        "skills dir is non-empty",
+        !names.is_empty(),
+        &format!("nothing under {}", skills_dir.display()),
+    );
+
+    // common.md owns the worker skill registry; envelope.rs carries a
+    // fallback copy for when common.md can't be read. common.md says
+    // "edit here, not in Rust", which only holds if the two agree.
+    let common = fs::read_to_string(tpl.join("workflows/common.md")).unwrap_or_default();
+    let registry = skill_names_in(&common);
+    t.check(
+        "common.md worker skill registry is non-empty",
+        !registry.is_empty(),
+        "no skills/hoangsa/<name>/SKILL.md entries found",
+    );
+    for name in &registry {
+        t.check(
+            &format!("registry skill {name} exists on disk"),
+            skills_dir.join(name).join("SKILL.md").is_file(),
+            "registry names a skill that isn't shipped",
+        );
+    }
+
+    let envelope_rs = tpl
+        .parent()
+        .map(|r| r.join("crates/hoangsa-cli/src/cmd/envelope.rs"))
+        .and_then(|p| fs::read_to_string(p).ok())
+        .unwrap_or_default();
+    if !envelope_rs.is_empty() {
+        let fallback = skill_names_in(&envelope_rs);
+        t.check(
+            "envelope fallback registry matches common.md",
+            fallback == registry,
+            &format!("common.md has {registry:?}, envelope.rs fallback has {fallback:?}"),
+        );
+    }
+}
+
+/// The four profile names, in the column order the docs use.
+const PROFILE_ORDER: [&str; 4] = ["quality", "balanced", "budget", "minimal"];
+const MODEL_TIERS: [&str; 4] = ["fable", "opus", "sonnet", "haiku"];
+
+/// Parse `model.rs`'s profile table into role → [model per profile].
+fn parse_profiles(src: &str) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut out: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    let mut order: Vec<(String, String, String)> = Vec::new();
+    let mut current = String::new();
+    for line in src.lines() {
+        let l = line.trim().trim_end_matches(',');
+        if let Some(name) = l.strip_prefix('"').and_then(|s| s.strip_suffix('"'))
+            && PROFILE_ORDER.contains(&name)
+        {
+            current = name.to_string();
+            continue;
+        }
+        if current.is_empty() {
+            continue;
+        }
+        if let Some(inner) = l.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+            let parts: Vec<&str> = inner
+                .split(',')
+                .map(|p| p.trim().trim_matches('"'))
+                .collect();
+            if parts.len() == 2 && MODEL_TIERS.contains(&parts[1]) {
+                order.push((parts[0].to_string(), current.clone(), parts[1].to_string()));
+            }
+        }
+    }
+    for profile in PROFILE_ORDER {
+        for (role, p, model) in &order {
+            if p == profile {
+                out.entry(role.clone()).or_default().push(model.clone());
+            }
+        }
+    }
+    out
+}
+
+/// Model tiers named on a table row, in column order.
+fn row_models(line: &str) -> Vec<String> {
+    line.split(['|', '│'])
+        .map(str::trim)
+        .filter(|cell| MODEL_TIERS.contains(cell))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Field names workflows reference as `packages[].<field>`.
+fn referenced_package_fields(text: &str) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    for (i, _) in text.match_indices("packages[].") {
+        let rest = &text[i + "packages[].".len()..];
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if !name.is_empty() {
+            out.insert(name);
+        }
+    }
+    out
+}
+
+fn test_integration_worker_rule_refs(t: &mut TestRunner) {
+    eprintln!("\n\x1b[1m● integration: worker-rule references\x1b[0m");
+
+    let tpl = &t.templates_dir.clone();
+    let Ok(base) = fs::read_to_string(tpl.join("workflows/worker-rules/base.md")) else {
+        return;
+    };
+    // Section TITLES, not numbers. Citations used to carry the number, so
+    // inserting a section silently repointed every reference after it — and
+    // the references live in other files, where nothing noticed. Names do not
+    // renumber, so this checks the citation form that cannot rot.
+    let titles: std::collections::BTreeSet<String> = base
+        .lines()
+        .filter_map(|l| l.strip_prefix("## "))
+        .filter_map(|rest| rest.split_once(". "))
+        .map(|(_, title)| title.trim().to_lowercase())
+        .collect();
+    t.check(
+        "worker-rules/base.md has titled sections",
+        !titles.is_empty(),
+        "no `## N. Title` headings found",
+    );
+
+    let mut sources: Vec<(String, String)> = Vec::new();
+    for rel in ["workflows/cook.md", "workflows/fix.md", "workflows/taste.md"] {
+        if let Ok(c) = fs::read_to_string(tpl.join(rel)) {
+            sources.push((rel.to_string(), c));
+        }
+    }
+    if let Some(repo) = tpl.parent()
+        && let Ok(c) = fs::read_to_string(repo.join("crates/hoangsa-cli/src/cmd/envelope.rs"))
+    {
+        sources.push(("envelope.rs".to_string(), c));
+    }
+
+    for (name, content) in &sources {
+        for (i, _) in content.match_indices("ules \u{a7} ") {
+            // Take the words after the marker up to the first `:` or `)`.
+            let tail = &content[i + "ules \u{a7} ".len()..];
+            let cited: String = tail
+                .chars()
+                .take_while(|c| *c != ':' && *c != ')' && *c != '\n')
+                .collect();
+            let cited = cited.trim().to_lowercase();
+            if cited.is_empty() {
+                continue;
+            }
+            t.check(
+                &format!("{name} cites worker rules section \"{cited}\""),
+                titles.contains(&cited),
+                &format!("base.md has no such section — titles are {titles:?}"),
+            );
+        }
+        // A numbered citation is the form that rots; reject it outright.
+        let numbered = (1..=9).any(|n| {
+            let lower = format!("orker rules \u{a7}{n}");
+            let upper = format!("orker Rules \u{a7}{n}");
+            content.contains(&lower) || content.contains(&upper)
+        });
+        t.check(
+            &format!("{name} cites worker rules by name, not number"),
+            !numbered,
+            "section numbers shift when a section is inserted — cite the title",
+        );
+    }
+}
+
+fn test_integration_install_paths(t: &mut TestRunner) {
+    eprintln!("\n\x1b[1m● integration: install paths\x1b[0m");
+
+    let tpl = &t.templates_dir.clone();
+    // The CLI lives under the INSTALL root (`~/.hoangsa/bin`), the templates
+    // under the Claude config dir. `$HOANGSA_ROOT/bin/hoangsa-cli` mixed the
+    // two and resolved to a path no install has ever created — it was the
+    // most-executed line in the prompt layer, at 88 call sites.
+    let mut bad_bin = Vec::new();
+    let mut bad_agents = Vec::new();
+    let mut walked = 0usize;
+    let mut stack = vec![tpl.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let Ok(text) = fs::read_to_string(&path) else {
+                continue;
+            };
+            walked += 1;
+            let name = path
+                .strip_prefix(tpl)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_string();
+            if text.contains("$HOANGSA_ROOT/bin") {
+                bad_bin.push(name.clone());
+            }
+            if text.contains("$HOANGSA_ROOT/agents") {
+                bad_agents.push(name);
+            }
+        }
+    }
+    t.check("walked the template tree", walked > 0, "no markdown found");
+    t.check(
+        "no $HOANGSA_ROOT/bin/ references",
+        bad_bin.is_empty(),
+        &format!("the CLI is not under the template tree: {bad_bin:?}"),
+    );
+    t.check(
+        "no $HOANGSA_ROOT/agents/ references",
+        bad_agents.is_empty(),
+        &format!("agents install to <config>/agents/, not under it: {bad_agents:?}"),
+    );
+
+    // common.md must actually define what the rest of the layer spends.
+    if let Ok(common) = fs::read_to_string(tpl.join("workflows/common.md")) {
+        for var in ["HOANGSA_BIN=", "HOANGSA_ROOT=", "HOANGSA_AGENTS="] {
+            t.check(
+                &format!("common.md assigns {}", var.trim_end_matches('=')),
+                common.contains(var),
+                "workflows spend this variable but nothing sets it",
+            );
+        }
+    }
+}
+
+fn test_integration_package_schema(t: &mut TestRunner) {
+    eprintln!("\n\x1b[1m● integration: package schema\x1b[0m");
+
+    let tpl = &t.templates_dir.clone();
+    // init.md carries the only worked example of a package entry, so it is
+    // the de-facto schema: whatever init writes is what every other
+    // workflow can read back.
+    let Ok(schema_src) = fs::read_to_string(tpl.join("workflows/init.md")) else {
+        return;
+    };
+    let declared: std::collections::BTreeSet<String> = ["name", "path", "stack", "build", "test", "lint", "frameworks"]
+        .iter()
+        .filter(|f| schema_src.contains(&format!("\"{f}\":")))
+        .map(|f| f.to_string())
+        .collect();
+    t.check(
+        "init.md package example declares the core fields",
+        ["name", "path", "stack", "build", "test", "lint"]
+            .iter()
+            .all(|f| declared.contains(*f)),
+        &format!("declared: {declared:?}"),
+    );
+
+    // A workflow that reads `packages[].x` when init never writes `x` gets
+    // nothing, silently — that is how the addon matcher lost its
+    // package-level framework input.
+    for entry in fs::read_dir(tpl.join("workflows")).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        for field in referenced_package_fields(&text) {
+            t.check(
+                &format!("{name} reads packages[].{field} — init writes it"),
+                declared.contains(&field),
+                "no such field in init.md's package example",
+            );
+        }
+    }
+}
+
+fn test_integration_model_profiles(t: &mut TestRunner) {
+    eprintln!("\n\x1b[1m● integration: model profiles\x1b[0m");
+
+    let tpl = &t.templates_dir.clone();
+    let Some(repo) = tpl.parent() else { return };
+    let Ok(model_rs) = fs::read_to_string(repo.join("crates/hoangsa-cli/src/cmd/model.rs")) else {
+        return;
+    };
+
+    let profiles = parse_profiles(&model_rs);
+    t.check(
+        "model.rs defines all 4 profiles for every role",
+        !profiles.is_empty() && profiles.values().all(|v| v.len() == PROFILE_ORDER.len()),
+        &format!("parsed {profiles:?}"),
+    );
+
+    // Codex has no per-subagent model knob, so the envelope stamps a
+    // reasoning effort there instead of a model. The Codex command-player
+    // rules have to name the same label or the worker is told to look for
+    // a line that no longer exists.
+    let envelope_rs = fs::read_to_string(repo.join("crates/hoangsa-cli/src/cmd/envelope.rs"))
+        .unwrap_or_default();
+    let codex_rs = fs::read_to_string(repo.join("crates/hoangsa-cli/src/cmd/install/codex.rs"))
+        .unwrap_or_default();
+    if !envelope_rs.is_empty() && !codex_rs.is_empty() {
+        let label = "REASONING EFFORT";
+        t.check(
+            "envelope stamps a Codex reasoning effort",
+            envelope_rs.contains(label),
+            "envelope.rs no longer emits a REASONING EFFORT line",
+        );
+        t.check(
+            "codex command-player knows the effort line",
+            codex_rs.contains(label),
+            "install/codex.rs rules don't mention REASONING EFFORT",
+        );
+    }
+
+    // The same table is restated for humans in two places. Nothing stops
+    // it from drifting away from the code that actually routes models,
+    // and a wrong table is worse than none — it gets believed.
+    for (label, path) in [
+        ("README.md", repo.join("README.md")),
+        ("init.md", tpl.join("workflows/init.md")),
+    ] {
+        let Ok(doc) = fs::read_to_string(&path) else {
+            continue;
+        };
+        for (role, expected) in &profiles {
+            let row = doc
+                .lines()
+                .find(|l| {
+                    (l.trim_start().starts_with('|') || l.trim_start().starts_with('│'))
+                        && l.contains(role.as_str())
+                        && row_models(l).len() == PROFILE_ORDER.len()
+                })
+                .map(row_models);
+            t.check(
+                &format!("{label} profile row: {role}"),
+                row.as_ref() == Some(expected),
+                &format!("model.rs says {expected:?}, doc row is {row:?}"),
+            );
+        }
     }
 }
 
@@ -1694,6 +2271,11 @@ pub fn cmd_verify(project_dir: &str) {
     test_unknown_command(&mut t);
     test_integration_templates(&mut t);
     test_integration_workflow_refs(&mut t);
+    test_integration_skills(&mut t);
+    test_integration_install_paths(&mut t);
+    test_integration_worker_rule_refs(&mut t);
+    test_integration_package_schema(&mut t);
+    test_integration_model_profiles(&mut t);
     test_full_state_lifecycle(&mut t);
     test_media(&mut t);
     test_addon(&mut t);

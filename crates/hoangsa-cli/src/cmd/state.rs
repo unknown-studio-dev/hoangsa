@@ -1,4 +1,4 @@
-use crate::helpers::{out, read_json};
+use crate::helpers::{atomic_write_string, out, read_json};
 use serde_json::{Map, Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -121,6 +121,10 @@ pub fn cmd_init(session_dir: Option<&str>, cwd: &str) {
         "session_id": session_id,
         "status": "design",
         "task_type": task_type,
+        // Written empty so `state get` has a stable shape from init onwards;
+        // `prepare`/`cook` fill it via `state update`. Readers should never
+        // have to tell "no tasks yet" apart from "key absent".
+        "tasks": [],
         "language": prefs.language,
         "preferences": {
             "auto_taste": prefs.auto_taste,
@@ -135,7 +139,7 @@ pub fn cmd_init(session_dir: Option<&str>, cwd: &str) {
         out(&json!({ "success": false, "error": e.to_string() }));
         return;
     }
-    match fs::write(&state_file, serde_json::to_string_pretty(&state).unwrap()) {
+    match atomic_write_string(&state_file, &serde_json::to_string_pretty(&state).unwrap()) {
         Ok(_) => out(&json!({
             "success": true,
             "path": state_file.to_string_lossy(),
@@ -234,9 +238,9 @@ pub fn cmd_update(session_dir: Option<&str>, json_patch: Option<&str>, cwd: &str
     }
 
     let updated_val = Value::Object(updated);
-    match fs::write(
+    match atomic_write_string(
         &state_file,
-        serde_json::to_string_pretty(&updated_val).unwrap(),
+        &serde_json::to_string_pretty(&updated_val).unwrap(),
     ) {
         Ok(_) => out(&json!({ "success": true, "state": updated_val })),
         Err(e) => out(&json!({ "success": false, "error": e.to_string() })),

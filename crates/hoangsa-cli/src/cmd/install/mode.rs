@@ -7,10 +7,9 @@
 //                  `~/.hoangsa/bin/` (REQ-09 hint).
 //   * Rule + `.memoryignore` seeds are **local-only** — `--global` must
 //     never create them in the user's current directory.
-//   * Quality-gate skills (`silent-failure-hunter`, `pr-test-analyzer`,
-//     `comment-analyzer`, `type-design-analyzer`) install only in
-//     `--global` mode, landing under `~/.claude/skills/<skill>/` (the
-//     caller is responsible for gating).
+//   * Gate-4 analyzers (`hoangsa-analyzer-*`) install only in `--global`
+//     mode, landing under `<config>/agents/<name>.md` (the caller is
+//     responsible for gating).
 //
 // The port mirrors `registerMemoryMcp` in `bin/install` (scaffold keeps
 // `{command, args, env}` shape, preserves existing keys) with two extra
@@ -24,11 +23,22 @@ use serde_json::{Value, json};
 /// The quality-gate skills shipped with `--global` installs (REQ /
 /// Decision #13). Kept as a single source of truth so dry-run preview,
 /// the live installer, and tests agree on the set.
+/// The Gate-4 analyzers. These now ship WITH HOANGSA as
+/// `templates/agents/hoangsa-analyzer-*.md`, so the install copies them like
+/// any other template and there is nothing to be "pending" about.
+///
+/// They used to name four externally-installed Claude Code agents
+/// (`silent-failure-hunter`, `pr-test-analyzer`, …). Depending on them meant
+/// cook's Gate 4 quietly passed on any machine that did not have them — and
+/// the probe looked in `skills/<name>/` while Claude Code installs them as
+/// `agents/<name>.md`, so it reported all four missing even where all four
+/// were present. Every `install --global` ended `status: partial` for a
+/// dependency the tool no longer has.
 pub const QUALITY_SKILLS: &[&str] = &[
-    "silent-failure-hunter",
-    "pr-test-analyzer",
-    "comment-analyzer",
-    "type-design-analyzer",
+    "hoangsa-analyzer-coverage",
+    "hoangsa-analyzer-failure",
+    "hoangsa-analyzer-types",
+    "hoangsa-analyzer-claims",
 ];
 
 /// Standard `.memoryignore` seed written in `--local` mode when
@@ -369,29 +379,36 @@ pub struct QualitySkillsReport {
     pub pending: Vec<String>,
 }
 
-/// Test-friendly variant. Computes the quality-skills status against
-/// an explicit `<home>/.claude/skills/` root so tests can stage a
-/// tempdir pretend-home without touching `~/.claude/skills/`.
-pub fn install_quality_skills_to(skills_root: &Path) -> io::Result<QualitySkillsReport> {
-    fs::create_dir_all(skills_root)?;
+/// Test-friendly variant. Takes the Claude config dir so tests can stage a
+/// tempdir pretend-home.
+///
+/// These four are **agents**, not skills: Claude Code loads them from
+/// `<config>/agents/<name>.md`. This probe used to look for
+/// `<config>/skills/<name>/` — wrong artifact kind AND wrong directory — so
+/// it reported all four "pending" on a machine where all four were installed,
+/// and every `install --global` ended in `status: partial` for no reason.
+/// A warning that is always on is a warning nobody reads.
+pub fn install_quality_skills_to(config_dir: &Path) -> io::Result<QualitySkillsReport> {
+    let agents_root = config_dir.join("agents");
     let mut report = QualitySkillsReport::default();
     for skill in QUALITY_SKILLS {
-        let dir = skills_root.join(skill);
-        if dir.is_dir() {
+        if agents_root.join(format!("{skill}.md")).is_file() {
             report.already_present.push((*skill).to_string());
         } else {
+            // Now a real defect: these are shipped templates, so a missing
+            // one means the template copy did not land — not that the user
+            // forgot an optional extra.
             report.pending.push((*skill).to_string());
         }
     }
     Ok(report)
 }
 
-/// Production entry point — operates on `$CLAUDE_CONFIG_DIR/skills/`
-/// (fallback `~/.claude/skills/`). ONLY call from the `--global` flow
-/// (Decision #13).
+/// Production entry point — probes `$CLAUDE_CONFIG_DIR` (fallback
+/// `~/.claude`). ONLY call from the `--global` flow (Decision #13).
 pub fn install_quality_skills() -> Result<QualitySkillsReport, String> {
-    let skills_root = super::claude_config_dir()?.join("skills");
-    install_quality_skills_to(&skills_root).map_err(|e| e.to_string())
+    let config = super::claude_config_dir()?;
+    install_quality_skills_to(&config).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -625,27 +642,45 @@ mod tests {
     #[test]
     fn install_quality_skills_lists_missing() {
         let home = tempdir().expect("home tempdir");
-        let skills_root = home.path().join(".claude").join("skills");
+        let config = home.path().join(".claude");
 
-        let report = install_quality_skills_to(&skills_root).expect("scan");
+        let report = install_quality_skills_to(&config).expect("scan");
         assert!(report.already_present.is_empty());
         assert_eq!(report.pending.len(), QUALITY_SKILLS.len());
-        assert!(skills_root.is_dir(), "skills root should be created");
+    }
+
+    /// The analyzers land as `agents/<name>.md`, not `skills/<name>/`.
+    /// The old probe looked only under `skills/`, so it reported them
+    /// pending on a machine where every one was installed and each global
+    /// install ended `status: partial`.
+    #[test]
+    fn install_quality_skills_finds_agent_files() {
+        let home = tempdir().expect("home tempdir");
+        let config = home.path().join(".claude");
+        fs::create_dir_all(config.join("agents")).expect("mkdir");
+        let one = QUALITY_SKILLS[0];
+        fs::write(config.join("agents").join(format!("{one}.md")), "x").expect("write");
+
+        let report = install_quality_skills_to(&config).expect("scan");
+        assert!(
+            report.already_present.iter().any(|s| s == one),
+            "an agent file must count as present: {report:?}"
+        );
+        assert!(!report.pending.iter().any(|s| s == one));
     }
 
     #[test]
     fn install_quality_skills_marks_present() {
         let home = tempdir().expect("home tempdir");
-        let skills_root = home.path().join(".claude").join("skills");
-        fs::create_dir_all(skills_root.join("silent-failure-hunter")).expect("mkdir");
+        let config = home.path().join(".claude");
+        fs::create_dir_all(config.join("agents")).expect("mkdir");
+        for a in QUALITY_SKILLS {
+            fs::write(config.join("agents").join(format!("{a}.md")), "x").expect("write");
+        }
 
-        let report = install_quality_skills_to(&skills_root).expect("scan");
-        assert!(
-            report
-                .already_present
-                .iter()
-                .any(|s| s == "silent-failure-hunter")
-        );
+        let report = install_quality_skills_to(&config).expect("scan");
+        assert!(report.pending.is_empty(), "all shipped: {report:?}");
+        assert_eq!(report.already_present.len(), QUALITY_SKILLS.len());
         assert_eq!(
             report.already_present.len() + report.pending.len(),
             QUALITY_SKILLS.len()

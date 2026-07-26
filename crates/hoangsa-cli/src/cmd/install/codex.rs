@@ -259,7 +259,7 @@ Use this skill as the adapter between Claude-shaped HOANGSA workflows and Codex.
 4. Use available `memory_*` MCP tools before non-trivial edits or factual codebase claims.
 5. Convert Claude `AskUserQuestion` steps into concise Codex user questions.
 6. Convert Claude `Task` orchestration into explicit Codex subagent instructions; only spawn subagents when appropriate for the active session.
-7. `MODEL:` lines in worker envelopes name Claude tiers — ignore them on Codex and use the session model.
+7. Worker envelopes open with `REASONING EFFORT: <low|medium|high>` on Codex — the profile tier translated for this harness. Match your effort to it and keep the session model; HOANGSA never picks a Codex model. A stray `MODEL:` line means the envelope was built for Claude — ignore it and use the session model.
 8. Respect Codex sandboxing, approvals, hooks, skills, and AGENTS.md instructions.
 9. Treat custom prompts as shortcuts only. The skill workflow is canonical.
 "#;

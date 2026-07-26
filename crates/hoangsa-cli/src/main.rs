@@ -107,6 +107,19 @@ fn main() {
         }
         ("validate", "spec") => cmd::validate::cmd_spec(rest.first().unwrap_or(&"")),
         ("validate", "tests") => cmd::validate::cmd_tests(rest.first().unwrap_or(&"")),
+        ("validate", "scope") => {
+            let rev = rest
+                .iter()
+                .position(|a| *a == "--rev")
+                .and_then(|i| rest.get(i + 1))
+                .copied()
+                .unwrap_or("HEAD");
+            cmd::validate::cmd_scope(
+                rest.first().unwrap_or(&""),
+                rest.get(1).unwrap_or(&""),
+                rev,
+            )
+        }
         ("dag", "check") => cmd::dag::cmd_check(rest.first().unwrap_or(&"")),
         ("dag", "waves") => cmd::dag::cmd_waves(rest.first().unwrap_or(&"")),
         ("session", "init") => cmd::session::cmd_init(
@@ -176,6 +189,7 @@ fn main() {
         ("trust", "list") => {
             cmd::trust::cmd_list();
         }
+        ("workflow", "show") => cmd::workflow::cmd_show(&rest, &cwd),
         ("verify", _) => {
             let project_dir = if sub.is_empty() { &cwd } else { sub };
             cmd::verify::cmd_verify(project_dir);
@@ -329,12 +343,20 @@ fn main() {
             let rest_all: Vec<&str> = args.iter().skip(1).map(|s| s.as_str()).collect();
             cmd::bootstrap::cmd_bootstrap(&rest_all, &cwd);
         }
+        ("update", _) => {
+            let rest_all: Vec<&str> = args.iter().skip(1).map(|s| s.as_str()).collect();
+            cmd::update::cmd_update(&rest_all);
+        }
+        ("uninstall", _) => {
+            let rest_all: Vec<&str> = args.iter().skip(1).map(|s| s.as_str()).collect();
+            cmd::uninstall::cmd_uninstall(&rest_all, std::path::Path::new(&cwd));
+        }
         ("install", _) => {
             // Collect every arg after "install" as flag tokens so the
             // subcommand can do its own parsing (sub may be a flag like
             // "--global", not a positional subcommand).
             let rest_all: Vec<&str> = args.iter().skip(1).map(|s| s.as_str()).collect();
-            cmd::install::cmd_install(&rest_all);
+            cmd::install::cmd_install(&rest_all, std::path::Path::new(&cwd));
         }
         ("ui", _) => {
             // `hoangsa-cli ui [project_dir] [--no-open]`

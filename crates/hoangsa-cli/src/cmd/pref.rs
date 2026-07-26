@@ -70,17 +70,58 @@ const KNOWN_KEYS: &[&str] = &[
     "research_scope",
     "research_mode",
     "review_style",
-    "auto_compact",
-    "auto_compact_interval",
-    "auto_compact_cooldown_secs",
     "simplify_pass",
     "quality_gate",
     "test_runs",
     "context_mode",
     "chain_mode",
     "memory_strict",
-    "profile",
+    "workflow_profile",
 ];
+
+/// Deprecated spelling of `workflow_profile`.
+///
+/// `profile` is also the top-level model-routing key (`quality | balanced |
+/// budget | minimal`), and `pref set … profile` used to write the workflow
+/// preset name — `full | balanced | minimal` — straight into it. `full` is
+/// not a routing profile, so routing silently fell back to balanced while
+/// reporting `"profile": "full"`; `minimal` is valid in *both* vocabularies
+/// with different meanings, so picking the cheap workflow preset also
+/// downgraded every model. The alias still works and now writes only the
+/// workflow key.
+const LEGACY_PROFILE_KEY: &str = "profile";
+
+/// The six preference keys a workflow profile sets.
+fn workflow_preset(name: &str) -> Option<[(&'static str, Value); 6]> {
+    let (simplify, gate, runs, research, context, strict) = match name {
+        "full" => (true, true, 3, "full", "full", true),
+        "balanced" => (false, false, 1, "inline", "selective", false),
+        "minimal" => (false, false, 0, "inline", "selective", false),
+        _ => return None,
+    };
+    Some([
+        ("simplify_pass", Value::Bool(simplify)),
+        ("quality_gate", Value::Bool(gate)),
+        ("test_runs", Value::Number(runs.into())),
+        ("research_mode", Value::String(research.to_string())),
+        ("context_mode", Value::String(context.to_string())),
+        ("memory_strict", Value::Bool(strict)),
+    ])
+}
+
+/// Map the deprecated `profile` spelling onto `workflow_profile`, warning
+/// once. Applied before the `KNOWN_KEYS` check so the old command line keeps
+/// working — it just no longer collides with model routing.
+fn normalize_key(key: &str) -> &str {
+    if key == LEGACY_PROFILE_KEY {
+        eprintln!(
+            "pref: `profile` is the top-level model-routing key; the workflow preset is \
+             now `workflow_profile`. Using workflow_profile — model routing untouched."
+        );
+        return "workflow_profile";
+    }
+    key
+}
 
 /// `pref get <projectDir> <key>` — read a preference from config.json
 pub fn cmd_get(project_dir: Option<&str>, key: Option<&str>) {
@@ -99,6 +140,7 @@ pub fn cmd_get(project_dir: Option<&str>, key: Option<&str>) {
         }
     };
 
+    let key = normalize_key(key);
     if !KNOWN_KEYS.contains(&key) {
         out(
             &json!({ "error": format!("Unknown preference key: {}. Known keys: {}", key, KNOWN_KEYS.join(", ")) }),
@@ -124,6 +166,7 @@ pub fn cmd_get(project_dir: Option<&str>, key: Option<&str>) {
 pub fn cmd_set(project_dir: Option<&str>, key: Option<&str>, value: Option<&str>) {
     let Some(project_dir) = require_arg(project_dir, "projectDir") else { return };
     let Some(key) = require_arg(key, "key") else { return };
+    let key = normalize_key(key);
 
     if !KNOWN_KEYS.contains(&key) {
         out(
@@ -137,59 +180,40 @@ pub fn cmd_set(project_dir: Option<&str>, key: Option<&str>, value: Option<&str>
         return;
     };
 
-    // Handle profile preset — expands to 6 optimization keys
-    if key == "profile" {
+    // Workflow quality preset — expands to 6 optimization keys.
+    if key == "workflow_profile" {
         let profile_name = value.unwrap_or("");
-        let preset: Option<[(&str, Value); 6]> = match profile_name {
-            "full" => Some([
-                ("simplify_pass", Value::Bool(true)),
-                ("quality_gate", Value::Bool(true)),
-                ("test_runs", Value::Number(3.into())),
-                ("research_mode", Value::String("full".to_string())),
-                ("context_mode", Value::String("full".to_string())),
-                ("memory_strict", Value::Bool(true)),
-            ]),
-            "balanced" => Some([
-                ("simplify_pass", Value::Bool(false)),
-                ("quality_gate", Value::Bool(false)),
-                ("test_runs", Value::Number(1.into())),
-                ("research_mode", Value::String("inline".to_string())),
-                ("context_mode", Value::String("selective".to_string())),
-                ("memory_strict", Value::Bool(false)),
-            ]),
-            "minimal" => Some([
-                ("simplify_pass", Value::Bool(false)),
-                ("quality_gate", Value::Bool(false)),
-                ("test_runs", Value::Number(0.into())),
-                ("research_mode", Value::String("inline".to_string())),
-                ("context_mode", Value::String("selective".to_string())),
-                ("memory_strict", Value::Bool(false)),
-            ]),
-            _ => None,
+        let Some(preset) = workflow_preset(profile_name) else {
+            out(&json!({
+                "error": format!(
+                    "Unknown workflow profile: {profile_name}. Known: full, balanced, minimal"
+                )
+            }));
+            return;
         };
-        let preset = match preset {
-            Some(p) => p,
-            None => {
-                out(&json!({ "error": format!("Unknown profile: {}. Known profiles: full, balanced, minimal", profile_name) }));
-                return;
-            }
+        // Deliberately NOT the top-level `profile` key: that one routes
+        // models, and these three names do not belong to its vocabulary.
+        // Create `preferences` if the config predates it or was hand-written
+        // without it — the previous `if let Some(..)` with no else wrote
+        // nothing and still reported success, which is a silent no-op.
+        let Some(obj) = config.as_object_mut() else {
+            out(&json!({ "error": "config.json is not a JSON object" }));
+            return;
         };
-        if let Some(obj) = config.as_object_mut() {
-            obj.insert("profile".to_string(), Value::String(profile_name.to_string()));
-            if let Some(prefs) = obj
-                .get_mut("preferences")
-                .and_then(|v| v.as_object_mut())
-            {
-                for (k, v) in preset {
-                    prefs.insert(k.to_string(), v);
-                }
-            }
+        let prefs = obj
+            .entry("preferences")
+            .or_insert_with(|| Value::Object(Default::default()));
+        let Some(prefs) = prefs.as_object_mut() else {
+            out(&json!({ "error": "config.json `preferences` is not an object" }));
+            return;
+        };
+        prefs.insert("workflow_profile".to_string(), Value::String(profile_name.to_string()));
+        for (k, v) in preset {
+            prefs.insert(k.to_string(), v);
         }
         let config_file = config_path(project_dir);
         match fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap()) {
-            Ok(_) => {
-                out(&json!({ "success": true, "profile": profile_name }));
-            }
+            Ok(_) => out(&json!({ "success": true, "workflow_profile": profile_name })),
             Err(e) => out(&json!({ "success": false, "error": e.to_string() })),
         }
         return;
@@ -267,9 +291,6 @@ mod tests {
                 "test_runs": 1,
                 "context_mode": "selective",
                 "memory_strict": false,
-                "auto_compact": true,
-                "auto_compact_interval": 500,
-                "auto_compact_cooldown_secs": 86400,
             },
             "task_manager": {
                 "provider": null,
@@ -406,7 +427,20 @@ mod tests {
         assert_eq!(prefs["research_mode"].as_str(), Some("inline"), "research_mode");
         assert_eq!(prefs["context_mode"].as_str(), Some("selective"), "context_mode");
         assert_eq!(prefs["memory_strict"], Value::Bool(false), "memory_strict");
-        assert_eq!(config["profile"].as_str(), Some("minimal"), "profile key set at root");
+        // This used to assert `config["profile"] == "minimal"`, pinning the
+        // collision as intended behaviour: the root key routes MODELS, and
+        // `minimal` exists in that vocabulary too — so setting the cheap
+        // workflow preset silently downgraded every model as well.
+        assert_eq!(
+            prefs["workflow_profile"].as_str(),
+            Some("minimal"),
+            "preset name belongs under preferences"
+        );
+        assert_eq!(
+            config["profile"].as_str(),
+            Some("balanced"),
+            "model routing must be left alone"
+        );
     }
 
     #[test]
@@ -479,5 +513,43 @@ mod tests {
         cmd_set(Some(dir), Some("test_runs"), Some("5"));
         let config = read_config(dir);
         assert_eq!(get_pref(&config, "test_runs").as_i64(), Some(5));
+    }
+
+    /// `profile` is the top-level model-routing key. `pref set … profile`
+    /// used to write the workflow preset name into it — `full` is not a
+    /// routing profile (silent fallback to balanced), and `minimal` is valid
+    /// in BOTH vocabularies with different meanings, so choosing the cheap
+    /// workflow preset also downgraded every model.
+    #[test]
+    fn workflow_preset_never_touches_the_routing_profile() {
+        let dir = std::env::temp_dir().join("hoangsa-pref-test-collision");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let d = dir.to_str().unwrap();
+
+        cmd_set(Some(d), Some("workflow_profile"), Some("minimal"));
+        let cfg = read_json(config_path(d).to_str().unwrap());
+        assert_eq!(cfg["profile"], "balanced", "model routing must be untouched");
+        assert_eq!(cfg["preferences"]["workflow_profile"], "minimal");
+        assert_eq!(cfg["preferences"]["test_runs"], 0, "the preset must still apply");
+
+        // The deprecated spelling keeps working and is equally harmless.
+        cmd_set(Some(d), Some("profile"), Some("full"));
+        let cfg = read_json(config_path(d).to_str().unwrap());
+        assert_eq!(cfg["profile"], "balanced", "legacy alias must not write routing");
+        assert_eq!(cfg["preferences"]["workflow_profile"], "full");
+        assert_eq!(cfg["preferences"]["test_runs"], 3);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A workflow profile name that does not exist must be refused, not
+    /// written through as a preset of nothing.
+    #[test]
+    fn unknown_workflow_profile_is_rejected() {
+        assert!(workflow_preset("quality").is_none(), "routing names are not presets");
+        assert!(workflow_preset("").is_none());
+        for ok in ["full", "balanced", "minimal"] {
+            assert!(workflow_preset(ok).is_some(), "{ok} should be a preset");
+        }
     }
 }

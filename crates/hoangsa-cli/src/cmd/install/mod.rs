@@ -228,7 +228,53 @@ fn install_dst_dir(mode: &str, cwd: &Path) -> Result<PathBuf, String> {
 /// template copy + manifest + patch-backup path for non-dry-run `global|local`
 /// invocations. Settings merge / MCP register / memory-bin relocate remain
 /// deferred to T-04/T-05/T-06.
-pub fn cmd_install(args: &[&str]) {
+/// Record `--harness` where `resolve-model` / `envelope` read it.
+///
+/// `project_root` is main.rs's resolved cwd (walks up to `.hoangsa/`), NOT
+/// `current_dir()` — installing from a subdirectory otherwise wrote the key
+/// into a config no other command ever reads. Called only after the install
+/// itself succeeded: a config claiming `harness: codex` next to a failed
+/// install is worse than no record.
+/// One-shot upgrade fixups on the project config. Runs on every install, is
+/// idempotent, and reports what it changed — a silent migration of model
+/// routing is exactly the failure mode being repaired.
+fn migrate_project_config(project_root: &Path) {
+    if let Some(preset) = crate::cmd::config::migrate_legacy_profile(project_root) {
+        eprintln!(
+            "install: migrated legacy `profile: \"{preset}\"` (a workflow preset) out of the \
+             model-routing key — routing is back on `balanced` and the preset now lives at \
+             preferences.workflow_profile. Set `profile` explicitly if you wanted \
+             quality|balanced|budget|minimal routing."
+        );
+    }
+}
+
+fn record_harness(flags: &InstallFlags, mode: &str, project_root: &Path) {
+    let Some(harness) = flags.harness.as_deref() else {
+        return;
+    };
+    if flags.dry_run {
+        return;
+    }
+    if mode == "global" {
+        eprintln!(
+            "install: --global has no project config to record the harness in — \
+             set HOANGSA_HARNESS={harness} in your shell, or re-run install \
+             inside a project so model routing can read it"
+        );
+        return;
+    }
+    match crate::cmd::config::set_harness(project_root, harness) {
+        Ok(true) => eprintln!(
+            "install: recorded \"harness\": \"{harness}\" in {}/.hoangsa/config.json",
+            project_root.display()
+        ),
+        Ok(false) => {}
+        Err(e) => eprintln!("install: could not record harness in config.json: {e}"),
+    }
+}
+
+pub fn cmd_install(args: &[&str], project_root: &Path) {
     let flags = match parse_flags(args) {
         Ok(f) => f,
         Err(e) => {
@@ -245,12 +291,22 @@ pub fn cmd_install(args: &[&str]) {
     let mode = mode_str(&flags);
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
+    // Config repair runs FIRST and unconditionally. It fixes damage an
+    // earlier version already did to the user's routing, so it must not be
+    // hostage to this install succeeding — several paths below exit early
+    // (missing bins, unwritable dirs) long before the tail of this function.
+    if !flags.dry_run {
+        migrate_project_config(project_root);
+    }
+
     if flags.harness.as_deref() == Some("codex") {
         cmd_install_codex(&flags, mode, &cwd);
+        record_harness(&flags, mode, project_root);
         return;
     }
     if flags.harness.as_deref() == Some("cowork") {
         cmd_install_cowork(&flags);
+        record_harness(&flags, mode, project_root);
         return;
     }
 
@@ -552,7 +608,8 @@ pub fn cmd_install(args: &[&str]) {
                 Ok(r) => {
                     if !r.pending.is_empty() {
                         warnings.push(format!(
-                            "quality_skills pending (not auto-installed): {}",
+                            "Gate-4 analyzers missing after install: {} — cook's quality gate \
+                             cannot run those dimensions. Re-run the install.",
                             r.pending.join(", ")
                         ));
                     }
@@ -644,6 +701,7 @@ pub fn cmd_install(args: &[&str]) {
         "memory_guidance_claude_updated": guidance_report.as_ref().map(|r| r.claude_md_updated),
         "memory_guidance_agents_updated": guidance_report.as_ref().map(|r| r.agents_md_updated),
     }));
+    record_harness(&flags, mode, project_root);
 }
 
 /// `--harness cowork` — Claude Cowork runs tasks in a sandboxed VM, but

@@ -31,6 +31,7 @@ pub const TOPICS: &[&str] = &[
     "trust",
     "validate",
     "verify",
+    "workflow",
 ];
 
 /// Entry point.
@@ -120,6 +121,8 @@ Stats & media:
 
 Install & git:
   install [flags]                         Install CLI + hooks (see `install --help`)
+  update [--check] [--local]              Check for a newer release; install it
+  uninstall --global|--local [--purge]    Remove everything install wrote
   bootstrap [flags]                       Bootstrap project .hoangsa/ skeleton
   commit "<msg>" --files <f1> <f2> ...    Guarded git commit wrapper
 
@@ -175,7 +178,11 @@ Usage:
   hoangsa-cli config get <projectDir>
   hoangsa-cli config set <projectDir> <jsonPatch>
 
-<jsonPatch> is an RFC-6902 patch or a partial object to merge."
+<jsonPatch> is an RFC-6902 patch or a partial object to merge.
+
+Top-level keys: profile, harness (claude|codex|cowork — set by
+`install --harness`, overridden by HOANGSA_HARNESS), model_overrides,
+preferences, codebase, task_manager."
         }
         "context" => {
             "context — per-task context assembly.
@@ -242,6 +249,60 @@ Usage:
 All hooks read a JSON payload on stdin (per Claude Code hook contract;
 Codex mirrors it) and emit a decision JSON on stdout."
         }
+        "update" => {
+            "update — check for a newer HOANGSA release and install it.
+
+Usage:
+  hoangsa-cli update [--check] [--local] [--dry-run] [--yes]
+
+Flags:
+  --check      Report current vs latest and exit; never installs
+  --local      Target the project install (./.claude) instead of the global one
+  --dry-run    Print the installer command that would run; run nothing
+  --yes, -y    Skip the confirmation prompt
+
+The installed version is read from `<install dir>/manifest.json` — the file the
+installer actually writes. Upgrading shells out to the release installer, which
+is what knows how to fetch the binary for this platform, then clears the
+update-check cache so the statusline badge clears with it.
+
+Exit codes:
+  0  up to date, or the update finished
+  1  the check or the install failed
+  2  bad arguments
+ 10  --check only: an update is available"
+        }
+        "uninstall" => {
+            "uninstall — remove everything `install` wrote.
+
+Usage:
+  hoangsa-cli uninstall --global [--dry-run] [--purge] [--yes]
+  hoangsa-cli uninstall --local  [--dry-run]
+
+Flags:
+  --global     Remove the global install (Claude config dir + ~/.hoangsa bins)
+  --local      Remove the project install (./.claude/ + ./.mcp.json entry)
+  --dry-run    Print what would be removed; touch nothing
+  --purge      (global only) Also delete ~/.hoangsa entirely, including the
+               memory store. Per-project .hoangsa/ dirs are never touched.
+  --yes, -y    Skip the confirmation prompt --purge asks on a terminal
+
+Removes binaries, every template tracked in the manifest, hook entries marked
+`_hoangsa_managed`, the hoangsa-memory MCP registration, the managed PATH block
+in your shell rc, and the model cache.
+
+Preserved unless --purge: ~/.hoangsa/memory, ~/.hoangsa/share, and every
+per-project .hoangsa/ directory.
+
+Environment:
+  HOANGSA_INSTALL_DIR   Install root (default: ~/.hoangsa)
+  HOANGSA_CLI_DIR       CLI bin dir  (default: $HOANGSA_INSTALL_DIR/bin)
+  CLAUDE_CONFIG_DIR     Config dir to clean (default: the first that exists)
+  HOANGSA_NO_PATH_EDIT  If \"1\", leave shell rc files alone
+
+Start with --dry-run. `scripts/uninstall.sh` does the same job from a checkout,
+for when this binary is missing or will not run."
+        }
         "install" => {
             "install — install hoangsa-cli + hooks into ~/.hoangsa or ./.claude.
 
@@ -255,18 +316,26 @@ Flags:
   --harness=<claude|codex|cowork>  Target harness (default: claude)
   --task-manager=<clickup|asana|none>  Pre-select task manager integration
   --no-memory         Skip hoangsa-memory MCP daemon install
-  --skip-path-edit    Don't modify shell rc files"
+  --skip-path-edit    Don't modify shell rc files
+
+An explicit --harness on a local install is also recorded as `harness` in
+.hoangsa/config.json, which is where `resolve-model` and `envelope` read it.
+--global has no project config to write to, so export HOANGSA_HARNESS
+instead. Other config keys are left untouched, and --dry-run writes nothing."
         }
         "media" => {
             "media — ffmpeg-backed screenshot + video helpers (feature: media).
 
 Usage:
-  hoangsa-cli media probe <path>
-  hoangsa-cli media frames <video> [--output <dir>] [--fps N]
-  hoangsa-cli media montage <frames_dir> [--out <path>]
-  hoangsa-cli media diff <frame_a> <frame_b> [--out <path>]
+  hoangsa-cli media probe   <path>
+  hoangsa-cli media frames  <video> [--interval <secs>] [--max-frames <n>] [--output-dir <dir>]
+  hoangsa-cli media montage <frames_dir> [--cols <n>] [--timestamps] [--output <path>]
+  hoangsa-cli media diff    <frames_dir> [--cols <n>] [--output <path>]
   hoangsa-cli media check-ffmpeg
   hoangsa-cli media install-ffmpeg
+
+`diff` takes the frames *directory* (it overlays consecutive frames), not a
+pair of images.
 
 Only available when built with `--features media`."
         }
@@ -296,8 +365,15 @@ Usage:
   hoangsa-cli pref get [projectDir] [key]
   hoangsa-cli pref set [projectDir] <key> <value>
 
-Reads ~/.hoangsa/preferences.json first, then overlays the project's
-.hoangsa/preferences.json. Without <key>, `get` prints the merged map."
+Without <key>, `get` prints the whole preferences map.
+
+`workflow_profile` (full|balanced|minimal) is a preset: setting it writes
+simplify_pass, quality_gate, test_runs, research_mode, context_mode and
+memory_strict in one go. It is NOT the top-level `profile` key, which routes
+models (quality|balanced|budget|minimal) — see `help resolve-model`. The old
+spelling `pref set . profile <x>` still works but warns and now writes only
+the workflow key; it used to overwrite model routing with a name that
+vocabulary doesn't have."
         }
         "resolve-model" => {
             "resolve-model — role → model id resolution.
@@ -306,8 +382,28 @@ Usage:
   hoangsa-cli resolve-model <role>
   hoangsa-cli resolve-model --all
 
-<role> is one of: orchestrator, worker, researcher, reviewer (or whatever
-is declared in config.json). `--all` prints every role → model mapping."
+<role> is one of the eight fixed roles: researcher, designer, planner,
+orchestrator, worker, reviewer, tester, committer. `--all` prints every
+role → model mapping.
+
+Resolution order: `model_overrides.<role>` in .hoangsa/config.json, then
+the `profile` in that file, then the balanced profile as a fallback.
+Profiles: quality | balanced (default) | budget | minimal.
+
+Tiers: fable > opus > sonnet > haiku. `fable` (Claude Fable 5, ~2× opus)
+belongs to no profile — reach it per role via `model_overrides`, e.g.
+`{ \"model_overrides\": { \"designer\": \"fable\" } }`.
+
+Harness-aware. With `\"harness\": \"codex\"` in .hoangsa/config.json (or
+HOANGSA_HARNESS=codex) the tier is not a model id — Codex scales by
+reasoning effort, so the tier maps to one and the session keeps its own
+model:
+
+  fable, opus → high      sonnet → medium      haiku → low
+
+The reported `model` then comes from ~/.codex/config.toml and is
+informational; HOANGSA never overrides it, and worker envelopes carry
+`REASONING EFFORT:` instead of `MODEL:`."
         }
         "rule" => {
             "rule — manage .hoangsa/rules.json.
@@ -386,14 +482,43 @@ Usage:
   hoangsa-cli validate plan  <path> [--tests <TEST-SPEC path>]
   hoangsa-cli validate spec  <path>
   hoangsa-cli validate tests <path>
+  hoangsa-cli validate scope <sessionDir> <taskId> [--rev <sha>]
 
-With --tests, `validate plan` also cross-checks plan.json against the
+`validate scope` checks a task's commit (default HEAD) against that
+task's `files` in plan.json: any path the commit touched that the plan
+did not hand the worker is an error; a declared file the commit left
+alone is a warning. This is the check that turns \"only modify
+task.files\" from a worker rule into a gate.
+
+`validate spec` is category-aware: a `category: code` DESIGN-SPEC must
+carry a non-empty ## Behavior / Logic (the logic a fresh-context worker
+implements from), a ## Risk Sweep answering all 8 risk classes
+(boundary, invalid input, concurrency & TOCTOU, idempotency & retry,
+partial failure & rollback, auth & permission, limits, backward compat)
+and a RESOLVED/DEFERRED status on every ## Open Questions entry — an
+unstatused question is one that was never put to the user.
+
+`validate plan` requires every \"type\": \"impl\" task to carry a
+non-empty `behavior` array (waivable with an explicit \"N/A — <reason>\"
+entry). With --tests it also cross-checks plan.json against the
 TEST-SPEC: every Edge Cases row must be embedded in ≥1 implementation
 task AND ≥1 test task, every spec test must appear in some task's
 test_cases, ## E2E Tests requires an e2e task, and surface: ui requires
 a task flagged \"ui\": true.
 
 Emits the schema-path + message for each violation."
+        }
+        "workflow" => {
+            "workflow — resolve and print a workflow file.
+
+Usage:
+  hoangsa-cli workflow show <name>
+
+Prints the first `<name>.md` found, searching in order: $HOANGSA_ROOT,
+the project-local install (./.claude/hoangsa/), $CLAUDE_CONFIG_DIR, then
+~/.claude/. stdout IS the workflow text — the /hoangsa:* commands run this
+and follow the output, so resolution lives here rather than being spelled
+out in twenty command files."
         }
         "verify" => {
             "verify — self-check install integrity.

@@ -39,8 +39,9 @@ pub fn cmd_post_enforce(cwd: &str) {
 
     // lesson_saved: any tool whose name contains "remember_lesson" (catches
     // the MCP tool `mcp__hoangsa-memory__memory_remember_lesson`).
+    let sid = session_of(&parsed);
     if tool_name.contains("remember_lesson") {
-        append_event(cwd, &json!({"event": "lesson_saved"}));
+        append_event(cwd, &stamp_session(json!({"event": "lesson_saved"}), &sid));
     }
 
     let event = match tool_name {
@@ -52,7 +53,7 @@ pub fn cmd_post_enforce(cwd: &str) {
     };
 
     if let Some(event) = event {
-        append_event(cwd, &event);
+        append_event(cwd, &stamp_session(event, &sid));
     }
 
     out(&json!({"decision": "approve"}));
@@ -244,9 +245,19 @@ fn build_detect_changes_event(tool_input: &serde_json::Value, full_payload: &ser
         }
     }
 
-    // Also check tool_result for file mentions
+    // Also mine the tool's own output for file mentions. Claude Code names
+    // this field `tool_response` (and it is an object for MCP tools, not a
+    // string); `tool_result` was never present, so this whole branch was dead
+    // and every event logged an empty file list.
+    let response_text = full_payload
+        .get("tool_response")
+        .or_else(|| full_payload.get("tool_result"))
+        .map(|v| match v.as_str() {
+            Some(s) => s.to_string(),
+            None => v.to_string(),
+        });
     if files.is_empty()
-        && let Some(result) = full_payload.get("tool_result").and_then(|v| v.as_str()) {
+        && let Some(result) = response_text.as_deref() {
             // Parse result looking for file paths
             for line in result.lines() {
                 let trimmed = line.trim();
@@ -396,6 +407,29 @@ fn find_symbol_in_tree(
         }
     }
     None
+}
+
+/// Session that owns an event, when the hook payload carried one.
+///
+/// The events file is per-PROJECT, but its contents are per-SESSION facts
+/// ("this session already ran memory_impact on src/lib.rs"). Untagged, two
+/// Claude Code sessions in one repo cross-talk in both directions: session B's
+/// SessionStart wiped A's log and blocked A on the next edit, and A's impact
+/// event satisfied B's gate for a file B never analysed.
+pub(super) fn session_of(payload: &serde_json::Value) -> Option<String> {
+    payload
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string)
+}
+
+/// Attach the owning session id to an event, when one is known.
+pub(super) fn stamp_session(mut event: serde_json::Value, sid: &Option<String>) -> serde_json::Value {
+    if let (Some(sid), Some(obj)) = (sid.as_ref(), event.as_object_mut()) {
+        obj.insert("session".to_string(), json!(sid));
+    }
+    event
 }
 
 pub(super) fn append_event(cwd: &str, event: &serde_json::Value) {
