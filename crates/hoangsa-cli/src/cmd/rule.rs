@@ -288,6 +288,14 @@ fn read_layer_lenient(path: &Path) -> Option<RulesConfig> {
     read_rules_config_at(path).ok().flatten()
 }
 
+/// Strict counterpart of [`read_layer_lenient`] for callers that must not
+/// degrade: an absent layer is still fine (it contributes no rules), but a
+/// layer that exists and cannot be read or parsed is an error naming the path.
+fn check_layer_readable(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    read_rules_config_at(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(())
+}
+
 /// Resolve the effective rule set for `project_dir`: the global layer
 /// (`~/.hoangsa/rules.json`) overlaid by the project layer
 /// (`<project_dir>/.hoangsa/rules.json`), with project rules overriding global
@@ -319,8 +327,17 @@ pub fn cmd_rule_gate() -> Result<(), Box<dyn std::error::Error>> {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input).ok();
 
+    // Resolve rules.json path via cwd
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    rule_gate(&cwd, &input)
+}
+
+fn rule_gate(project_dir: &str, input: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Parse the hook payload: {tool_name, tool_input}
-    let parsed: serde_json::Value = serde_json::from_str(&input).unwrap_or(serde_json::json!({}));
+    let parsed: serde_json::Value = serde_json::from_str(input).unwrap_or(serde_json::json!({}));
     let tool_name = parsed
         .get("tool_name")
         .and_then(|v| v.as_str())
@@ -330,16 +347,22 @@ pub fn cmd_rule_gate() -> Result<(), Box<dyn std::error::Error>> {
         .cloned()
         .unwrap_or(serde_json::json!({}));
 
-    // Resolve rules.json path via cwd
-    let cwd = std::env::current_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-
     // Effective rules = global (~/.hoangsa/rules.json) overlaid by project;
-    // project overrides global by id. A missing OR malformed file at either
-    // layer contributes no rules (graceful degradation, REQ-09); with an empty
-    // rule set nothing matches and the gate approves.
-    let config = read_effective_rules_config(&cwd);
+    // project overrides global by id. A missing file at either layer
+    // contributes no rules; with an empty rule set nothing matches and the
+    // gate approves.
+    //
+    // `read_effective_rules_config` also degrades a MALFORMED layer to "no
+    // rules" — deliberate for `hook enforce`, wrong here: a gate that cannot
+    // read the rules it is meant to enforce would approve every call. So each
+    // layer the gate depends on is re-checked strictly first, making a broken
+    // gate loud (exit 1) instead of silently permissive.
+    check_layer_readable(&rules_path(project_dir))?;
+    if let Some(global) = global_rules_path() {
+        check_layer_readable(&global)?;
+    }
+
+    let config = read_effective_rules_config(project_dir);
 
     let mut warnings: Vec<(String, String, String)> = Vec::new(); // (rule_id, rule_name, message)
 
@@ -426,6 +449,13 @@ fn write_rules_config(project_dir: &str, config: &RulesConfig) -> Result<(), Box
 }
 
 pub fn cmd_rule_list(project_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
+    // A project that never ran `rule init` has no rules.json and lists an empty
+    // rule set — that is success. A project directory that does not exist, or
+    // that cannot be read, is not: `read_rules_config` only stats the rules.json
+    // path, so both look identical to it. Opening the directory separates them.
+    if let Err(e) = fs::read_dir(project_dir) {
+        return Err(format!("project directory {project_dir}: {e}").into());
+    }
     match read_rules_config(project_dir)? {
         None => {
             out(&json!({ "rules": [], "count": 0, "enabled": 0, "disabled": 0 }));
@@ -1483,6 +1513,45 @@ mod tests {
         assert_eq!(
             actual, DEFAULT_RULES_SNAPSHOT,
             "default_rules() drifted from the pre-refactor snapshot"
+        );
+    }
+
+    // ── error paths that must reach the caller (REQ-03) ───────────────────────
+
+    #[test]
+    fn rule_list_errors_on_missing_project_dir() {
+        let err = cmd_rule_list("/nonexistent-dir-xyz")
+            .expect_err("a project directory that does not exist must be an error");
+        assert!(
+            err.to_string().contains("/nonexistent-dir-xyz"),
+            "the error must name the directory; got: {err}"
+        );
+    }
+
+    #[test]
+    fn rule_list_returns_empty_set_for_uninitialised_project() {
+        let tmp = tempfile::TempDir::new().expect("create temp project dir");
+        let dir = tmp.path().to_str().expect("temp dir path is utf-8");
+        cmd_rule_list(dir)
+            .expect("a project with no rules.json yet lists an empty rule set, it does not fail");
+    }
+
+    #[test]
+    fn rule_gate_fails_loud_on_malformed_rules_file() {
+        let tmp = tempfile::TempDir::new().expect("create temp project dir");
+        let dir = tmp.path().to_str().expect("temp dir path is utf-8");
+        fs::create_dir_all(tmp.path().join(".hoangsa")).expect("create .hoangsa dir");
+        fs::write(
+            rules_path(dir),
+            r#"{ "version": "1.0", "rules": [ {"id": "truncated"#,
+        )
+        .expect("write malformed rules file");
+
+        let err = rule_gate(dir, r#"{"tool_name":"Bash","tool_input":{"command":"git stash"}}"#)
+            .expect_err("a gate that cannot read its rules must fail, not approve");
+        assert!(
+            err.to_string().contains("rules.json"),
+            "the error must name the rules file; got: {err}"
         );
     }
 }
