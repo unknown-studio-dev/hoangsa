@@ -510,7 +510,14 @@ impl Server {
             // `hoangsa-memory index /abs/path`). Go through the lenient lookup so a
             // PR pre-check actually finds the symbols instead of silently
             // returning "no overlap".
+            // The indexer stores canonical absolute paths, so resolve the
+            // needle the same way when it names a file that exists — a
+            // symlinked spelling (`/var/...` for `/private/var/...`) shares no
+            // component suffix with its canonical form, and the lenient match
+            // below would miss it. A repo-relative diff path does not resolve
+            // from here; that falls through to the suffix match as before.
             let path_buf = std::path::PathBuf::from(path);
+            let path_buf = path_buf.canonicalize().unwrap_or(path_buf);
             let sym_rows = match store.kv.symbols_for_path_like(&path_buf).await {
                 Ok(r) => r,
                 Err(_) => continue,
