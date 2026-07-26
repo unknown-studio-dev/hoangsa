@@ -4,6 +4,7 @@ description: Commit — stage changed files and commit with conventional message
 allowed-tools:
   - Read
   - Bash
+  - mcp__hoangsa-memory__memory_detect_changes
   - AskUserQuestion
 ---
 
@@ -12,10 +13,15 @@ Stage changed files and commit them with a conventional commit message derived f
 </objective>
 
 <execution_context>
-Resolve HOANGSA install path — check local first, then global:
-1. `./.claude/hoangsa/workflows/plate.md`
-2. `~/.claude/hoangsa/workflows/plate.md`
-Read the first path that exists.
+Load the workflow:
+
+```bash
+hoangsa-cli workflow show plate
+```
+
+Its stdout IS the workflow — follow it. The command searches the
+project-local install, `$CLAUDE_CONFIG_DIR`, then the default profile,
+and lists every path it tried if nothing matched.
 </execution_context>
 
 <process>

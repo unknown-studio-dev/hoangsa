@@ -13,7 +13,7 @@ Manage worker-rules addons — list, add, remove with interactive UI.
 ## Step 1: List available addons
 
 ```bash
-ADDON_LIST=$("$HOANGSA_ROOT/bin/hoangsa-cli" addon list .)
+ADDON_LIST=$("$HOANGSA_BIN" addon list .)
 echo $ADDON_LIST
 ```
 
@@ -62,12 +62,12 @@ Based on user selection:
 
 ### For addons to add:
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" addon add . '["addon1","addon2"]'
+"$HOANGSA_BIN" addon add . '["addon1","addon2"]'
 ```
 
 ### For addons to remove:
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" addon remove . '["addon3"]'
+"$HOANGSA_BIN" addon remove . '["addon3"]'
 ```
 
 ---
@@ -77,7 +77,7 @@ Based on user selection:
 Show final addon state:
 
 ```bash
-FINAL=$("$HOANGSA_ROOT/bin/hoangsa-cli" addon list .)
+FINAL=$("$HOANGSA_BIN" addon list .)
 echo $FINAL
 ```
 

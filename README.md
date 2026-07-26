@@ -1,409 +1,401 @@
 # HOANGSA
 
-> A context engineering system for Claude Code
+> Context engineering for coding agents — Claude Code, Codex, Cowork.
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 ![Claude Code](https://img.shields.io/badge/Claude_Code-compatible-blueviolet.svg)
 ![Built with Rust](https://img.shields.io/badge/Built_with-Rust-orange.svg)
 
+<div align="center">
+
+### 🇻🇳 Hoàng Sa, Trường Sa là của Việt Nam 🇻🇳
+
+🇨🇳 中文 · 西沙群岛和南沙群岛属于越南。🇻🇳<br>
+🇺🇸 English · Hoàng Sa (Paracel Islands) and Trường Sa (Spratly Islands) belong to Vietnam. 🇻🇳<br>
+🇯🇵 日本語 · ホアンサ（パラセル）諸島とチュオンサ（スプラトリー）諸島はベトナムの領土です。🇻🇳<br>
+🇪🇸 Español · Las islas Paracel y las islas Spratly pertenecen a Vietnam. 🇻🇳<br>
+🇷🇺 Русский · Острова Хоангша и Чыонгша принадлежат Вьетнаму. 🇻🇳<br>
+🇫🇷 Français · Les îles Paracels et les îles Spratleys appartiennent au Vietnam. 🇻🇳<br>
+🇰🇷 한국어 · 호앙사 군도와 쯔엉사 군도는 베트남의 영토입니다. 🇻🇳
+
+</div>
+
 ---
 
-HOANGSA is a context engineering system for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that solves a fundamental problem: Claude's output quality degrades as the context window fills up. The fix is structural — HOANGSA splits work into discrete tasks, each running in a fresh context window with only the files it actually needs. The orchestrator never writes code; it dispatches workers with bounded context and assembles results.
+## The problem
+
+An agent's output degrades as its context window fills. Ask for a feature and
+you get good code for the first file, plausible code for the fifth, and by the
+tenth it has forgotten a type it defined itself. Bigger context windows push
+the cliff back; they don't remove it.
+
+The usual answers — "be more specific", "break it into steps" — are advice.
+HOANGSA is structure.
+
+## The idea
+
+Split the work into tasks. Give each task its **own fresh context window**
+holding only what it needs: the files it may touch, the behaviour it must
+implement, the command that proves it worked. The orchestrator never writes
+code — it dispatches, checks, and assembles.
+
+Everything else follows from that:
+
+- A task needs a **spec** precise enough to execute from, so there is a design
+  phase that produces one.
+- A worker with no history needs its **rules and context handed to it**, so
+  prompts are assembled by a CLI, not improvised by an agent.
+- A claim of "done" from a fresh worker is unverifiable, so **every deliverable
+  has a command that must pass**.
+
+That last one is load-bearing. Prompt text is a suggestion an agent can talk
+itself out of; a failing exit code is not. Wherever this repo says a rule
+matters, there is a `hoangsa-cli` subcommand that enforces it.
 
 ---
 
-## Installation
+## The pipeline
 
-HOANGSA ships four binaries: three CLIs you invoke directly
-(`hoangsa-cli`, `hoangsa-memory`, `hsp`) plus one MCP server
-(`hoangsa-memory-mcp`) that your agent harness spawns on your behalf.
+```
+brainstorm → menu → prepare → cook → taste → plate → ship
+   idea      specs    plan    build   verify  commit  push
+```
 
-Installing is two steps: **1)** get the binaries (release installer or
-build from source), **2)** wire the harness you use — Claude Code
-(done by default), Codex CLI/Desktop, or Claude Cowork. See
-[Wire your harness](#wire-your-harness).
+| Phase | Produces | Enforced by |
+|-------|----------|-------------|
+| **brainstorm** | `BRAINSTORM.md` — options, trade-offs, risk seeds, open questions | statused open questions |
+| **menu** | `DESIGN-SPEC.md` + `TEST-SPEC.md` | `validate spec`, `validate tests` |
+| **prepare** | `plan.json` — task DAG with per-task files, behaviour, acceptance | `validate plan`, `dag check` |
+| **cook** | code, one atomic commit per task | per-task `acceptance`, `validate scope` |
+| **taste** | verdict per task | acceptance re-run, spec-coverage review |
+| **plate** | conventional commit | — |
+| **ship** | push / PR after review | review gates |
+
+Each phase is a *contract*, not a script: mission, deliverables, hard gates.
+The path between them is the agent's choice; the gates are not.
+
+### What the gates actually check
+
+To make it concrete:
+
+- **`validate spec`** — a code spec must carry `## Behavior / Logic` (per
+  requirement: trigger, steps, error paths) and a `## Risk Sweep` covering
+  eight fixed classes, including concurrency & TOCTOU. Each class is either
+  *applies*, with concrete handling, or *N/A* with a reason. An open question
+  with no `RESOLVED` / `DEFERRED` status fails the gate — so a question cannot
+  reach the plan without having been put to you.
+- **`validate plan`** — every implementation task carries a non-empty
+  `behavior`, copied from the spec. The worker gets it as a contract: a step it
+  drops or quietly replaces is a failure even when the tests pass.
+- **`validate scope`** — a task's commit is checked against the files the plan
+  gave it. Touching an undeclared file is an error, not a note.
+
+---
+
+## Install
+
+```sh
+curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh | sh
+```
+
+Installs four binaries into `~/.hoangsa/bin/`, registers the memory MCP server,
+and writes the Claude Code hooks. Then, inside your agent:
+
+```
+/hoangsa:init     # detect the codebase, set preferences
+/hoangsa:menu     # design your first task
+```
+
+<details>
+<summary><b>Platforms, flags, building from source, uninstall</b></summary>
 
 ### Supported platforms
 
 | Triple | Status | Notes |
 |--------|--------|-------|
-| `darwin-arm64` | ✅ Supported | Apple Silicon (M1 / M2 / M3 / M4) |
-| `linux-x64` | ✅ Supported | glibc-based distros (Ubuntu, Debian, Fedora, RHEL, …) |
-| `linux-arm64` | ✅ Supported | glibc-based distros |
-| `linux-*` (musl / Alpine) | ❌ Not supported | ONNX Runtime binaries link glibc — build from source |
-| Windows | ❌ Not yet | Use WSL2 (Ubuntu) |
+| `darwin-arm64` | ✅ | Apple Silicon |
+| `linux-x64` | ✅ | glibc distros |
+| `linux-arm64` | ✅ | glibc distros |
+| `linux-*` musl / Alpine | ❌ | ONNX Runtime links glibc — build from source |
+| Windows | ❌ | use WSL2 |
 
-Prerequisites on the target machine: `curl` or `wget`, `tar`, and one of
-`sha256sum` / `shasum`. No Node, no Python, no Docker, no `cargo` needed
-for the release tarball.
+Needs `curl` or `wget`, `tar`, and `sha256sum` / `shasum`. No Node, Python, or
+Docker.
 
-For contributors building from source you additionally need **Rust 1.91+**
-(`rustup toolchain install stable`) and a C toolchain (`build-essential`
-on Debian/Ubuntu, Xcode Command Line Tools on macOS).
+### Installer flags
 
----
-
-### Option A — release installer (recommended)
-
-One command pulls the latest release, verifies the SHA-256 checksum,
-drops all four binaries into `~/.hoangsa/bin/`, registers the
-`hoangsa-memory` MCP server in Claude Code, and pre-downloads the
-fastembed ONNX weights.
-
-```sh
-curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh | sh
-```
-
-**Flags** (pass after `sh -s --`):
+Pass after `sh -s --`:
 
 | Flag | Effect |
 |------|--------|
-| `--global` | Install globally for this user (default) — writes to the resolved Claude config dir |
-| `--local` | Install for the current project only — writes to `./.claude/` |
-| `--no-embed` | Skip pre-downloading the `multilingual-e5-small` weights (~118 MB). They will fetch lazily on first `index` / `query` / `archive ingest`. Useful on bandwidth-constrained links. |
-| `--dry-run` | Print actions without writing files — good for auditing |
-| `--help` | Show the installer help |
-
-**Examples:**
-
-```sh
-# Global install (default)
-curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh | sh
-
-# Project-local install
-curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh | sh -s -- --local
-
-# Dry-run to see what would happen
-curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh | sh -s -- --dry-run
-
-# Pin a specific version
-HOANGSA_VERSION=v0.2.2 curl -fsSL https://github.com/pirumu/hoangsa/releases/download/v0.2.2/install.sh | sh
-```
-
-**Environment overrides:**
+| `--global` | install for this user (default) |
+| `--local` | install for the current project only (`./.claude/`) |
+| `--no-embed` | write a sticky `no-embed` marker — no model download, and no project can enable semantic retrieval |
+| `--dry-run` | print actions without writing |
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `HOANGSA_VERSION` | `latest` | Release tag to install (e.g. `v0.2.2`) |
-| `HOANGSA_REPO` | `pirumu/hoangsa` | GitHub repo slug to download from |
-| `HOANGSA_INSTALL_DIR` | `$HOME/.hoangsa` | Root for all binaries and cache |
-| `HOANGSA_CLI_DIR` | `$HOANGSA_INSTALL_DIR/bin` | Override just the CLI bin dir |
-| `HOANGSA_NO_PATH_EDIT` | — | Set to `1` to skip `~/.zshrc` / `~/.bashrc` edits (export PATH manually) |
-| `CLAUDE_CONFIG_DIR` | auto-detected | Pin a specific Claude profile (`~/.claude`, `~/.zclaude`, …) |
+| `HOANGSA_VERSION` | `latest` | release tag to install |
+| `HOANGSA_INSTALL_DIR` | `~/.hoangsa` | root for binaries and cache |
+| `HOANGSA_NO_PATH_EDIT` | — | `1` skips the shell rc edit |
+| `CLAUDE_CONFIG_DIR` | auto-detected | pin a Claude profile (`~/.claude`, `~/.zclaude`, …) |
 
-The installer honours `CLAUDE_CONFIG_DIR` if it is already set, and
-otherwise detects multiple Claude profile dirs (`~/.claude`,
-`~/.zclaude`, …). With more than one it prompts; pass the env var
-explicitly in non-TTY installs.
-
----
-
-### Option B — build from source (contributors)
-
-Clone the repo and run the local install helper — builds the workspace
-in release mode, installs the four binaries, and wires Claude Code the
-same way the release installer does:
+### From source
 
 ```sh
-git clone https://github.com/pirumu/hoangsa.git
-cd hoangsa
-scripts/install-local.sh --global     # or --local for per-project
+git clone https://github.com/pirumu/hoangsa.git && cd hoangsa
+scripts/install-local.sh --global
 ```
 
-Flags: `--global` / `--local`, `--dry-run`, `--no-embed`, `--skip-build`
-(re-run the post-build steps without recompiling).
+Flags: `--global` / `--local`, `--dry-run`, `--skip-build`, `--no-embed`,
+`--embed`. The `no-embed` marker is **sticky** — a later install without the
+flag keeps it; pass `--embed` to clear it deliberately.
 
-**Just one CLI?** Each binary can be installed standalone via `cargo`:
+### PATH
+
+The installer appends a managed block to `~/.zshrc` or `~/.bashrc`. If that was
+skipped, add it yourself:
 
 ```sh
-cargo install --path crates/hoangsa-cli       # installs `hoangsa-cli`
-cargo install --path crates/hoangsa-memory    # installs `hoangsa-memory`
-cargo install --path crates/hoangsa-memory-mcp # installs `hoangsa-memory-mcp`
-cargo install --path crates/hoangsa-proxy     # installs `hsp`
+echo 'export PATH="$HOME/.hoangsa/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
 ```
 
-This drops binaries into `~/.cargo/bin/`. Note that `cargo install`
-alone **does not** register MCP servers, copy templates, or wire Claude
-Code hooks — run `hoangsa-cli install --global` afterwards to finish
-setup.
-
----
-
-### Wire your harness
-
-The binaries are shared; each harness needs one wiring step.
-
-#### Claude Code
-
-Nothing extra — the release installer (and `install-local.sh`) already
-registers the MCP server, copies templates, and writes the hooks.
-Re-run by hand if needed:
+### Update and uninstall
 
 ```sh
-hoangsa-cli install --global    # or --local for one project
-hsp init                        # optional: output compressor hook
+hoangsa-cli update --check              # current vs latest; exits 10 if newer
+hoangsa-cli update                      # fetch and install it
+
+hoangsa-cli uninstall --global --dry-run  # list what would go
+hoangsa-cli uninstall --global            # keeps memory + model cache
+hoangsa-cli uninstall --global --purge    # deletes ~/.hoangsa entirely
 ```
 
-#### OpenAI Codex CLI / Codex Desktop
+`scripts/uninstall.sh` does the same job from a checkout, for when the binary
+is missing or will not run.
 
-```sh
-hoangsa-cli install --global --harness codex
-```
+</details>
 
-Writes hooks to `~/.codex/hooks.json` (hsp included when present), the
-MCP server to `~/.codex/config.toml`, skills + `/hoangsa:*` commands to
-`~/.agents/skills/hoangsa/`, workflows to `~/.codex/hoangsa/`. The
-desktop app shares this config. Archive and token stats pick up
-`~/.codex/sessions/` automatically.
+### Other harnesses
 
-**Then open Codex and run `/hooks` once to approve the hooks** — Codex
-does not run untrusted hooks.
+| Harness | Command | Notes |
+|---------|---------|-------|
+| **Claude Code** | nothing — the installer does it | |
+| **Codex CLI / Desktop** | `hoangsa-cli install --global --harness codex` | then run `/hooks` once in Codex to approve them |
+| **Cowork / Desktop** | `hoangsa-cli install --harness cowork` | restart the app; hooks don't apply inside the VM |
+| **Plugin only** | `/plugin marketplace add unknown-studio-dev/hoangsa` | commands + agents, no binaries |
 
-#### Claude Cowork / Claude Desktop
-
-```sh
-hoangsa-cli install --harness cowork
-```
-
-Registers the memory MCP server in `claude_desktop_config.json`
-(bridged into the Cowork task VM). Restart Claude Desktop afterwards.
-For the `/hoangsa:*` commands and skills, install the plugin:
-
-```text
-/plugin marketplace add unknown-studio-dev/hoangsa
-```
-
-Hooks/enforcement gates don't apply inside Cowork's VM.
-
-#### Plugin only (no binaries)
-
-`/plugin marketplace add unknown-studio-dev/hoangsa` on its own gives
-you the workflow commands, agents, and skills in Claude Code or Cowork.
-Memory tools, enforcement hooks, and `hsp` still require the binary
-install above.
-
----
-
-### Post-install: PATH and verification
-
-The installer appends a managed block to the first existing rc file it
-finds (`~/.zshrc` → `~/.bashrc`) containing:
-
-```sh
-# hoangsa:managed start
-export PATH="$HOME/.hoangsa/bin:$PATH"
-# hoangsa:managed end
-```
-
-**If the block was skipped** (non-TTY install, declined prompt,
-`HOANGSA_NO_PATH_EDIT=1`, no rc file found), add it yourself:
-
-```sh
-echo 'export PATH="$HOME/.hoangsa/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
-```
-
-**Verify the install:**
-
-```sh
-hoangsa-cli --version          # e.g. hoangsa-cli 0.2.2
-hoangsa-memory --version       # e.g. hoangsa-memory 0.2.2
-hoangsa-memory-mcp --version   # e.g. hoangsa-memory-mcp 0.2.2
-hsp --version                  # e.g. hsp 0.2.2
-```
-
-Then run the per-CLI self-checks:
-
-```sh
-hsp doctor                     # verifies hsp hooks + handlers
-hoangsa-memory memory show     # prints MEMORY.md + LESSONS.md for cwd
-```
-
----
-
-### Per-CLI install notes
-
-#### `hoangsa-cli` — HOANGSA orchestrator
-
-Drives the `/hoangsa:*` slash commands, owns the rule engine, wires
-Claude Code hooks, manages project preferences.
-
-- **Binary location:** `~/.hoangsa/bin/hoangsa-cli`
-- **Per-project config:** `.hoangsa/config.json` (created by
-  `hoangsa-cli install --local` or `/hoangsa:init`)
-- **Templates:** staged to `~/.hoangsa/templates/` on global install
-- **First-run setup:** `/hoangsa:init` from inside Claude Code, or
-  `hoangsa-cli install --local` from the shell
-
-No separate install step — bundled with the release installer.
-
-#### `hoangsa-memory` — long-term memory + code intelligence
-
-Indexes your source tree, serves recall queries, runs blast-radius
-analysis, and manages the verbatim conversation archive.
-
-- **Binary:** `~/.hoangsa/bin/hoangsa-memory`
-- **Companion daemon:** `~/.hoangsa/bin/hoangsa-memory-mcp` (spawned by
-  Claude Code via MCP — you never start it manually)
-- **Per-project data:** `.hoangsa/memory/` (or `~/.hoangsa/memory/projects/<slug>/`)
-- **Shared model cache:** `~/.hoangsa/cache/fastembed/`
-  (~4xx MB on disk once warm)
-- **First run:** `hoangsa-memory init && hoangsa-memory index .`
-
-If you passed `--no-embed` and want to prefetch weights later:
-
-```sh
-hoangsa-memory prefetch-embed
-```
-
-#### `hsp` — CLI output compressor
-
-Wraps Claude Code's Bash tool calls and trims verbose output
-(cargo/npm/git log/curl JSON) before the model reads it. 60–90% token
-savings on the noisiest commands.
-
-- **Binary:** `~/.hoangsa/bin/hsp`
-- **Global hook:** `hsp init` — writes PreToolUse hook into
-  `~/.claude/settings.json` (`hsp init --codex` → `~/.codex/hooks.json`)
-- **Per-project hook:** `hsp init -p` — writes into
-  `./.claude/settings.local.json`
-- **Self-check:** `hsp doctor`
-
-Full reference: [`crates/hoangsa-proxy/README.md`](crates/hoangsa-proxy/README.md).
-
----
-
-### Uninstall
-
-From a checkout of the repo:
-
-```sh
-scripts/uninstall.sh --global          # remove global install
-scripts/uninstall.sh --local           # remove project-local install
-scripts/uninstall.sh --global --purge  # also delete ~/.hoangsa entirely
-```
-
-Without `--purge`, the uninstaller leaves your memory data, fastembed
-cache, and staged templates under `~/.hoangsa/` in place — so you can
-reinstall without re-indexing or re-downloading model weights.
-
-To remove a single `cargo install`-ed binary:
-
-```sh
-cargo uninstall hoangsa-cli
-cargo uninstall hoangsa-memory
-cargo uninstall hoangsa-memory-mcp
-cargo uninstall hoangsa-proxy       # binary name is `hsp`
-```
-
----
-
-### Troubleshooting
-
-| Symptom | Fix |
-|---------|-----|
-| `command not found: hoangsa-cli` after install | PATH not updated in current shell. `source ~/.zshrc` or open a new terminal. |
-| `musl libc detected` on Alpine | Release tarballs are glibc-only. Use `scripts/install-local.sh` from a checkout on Alpine — requires `rustc` + `cargo`. |
-| MCP tools missing in Claude Code | `CLAUDE_CONFIG_DIR` mismatch. Set it explicitly before install: `CLAUDE_CONFIG_DIR=~/.zclaude curl -fsSL …\| sh`. |
-| `vector_store failed to start` on first `index` | fastembed weights missing or corrupted. Run `hoangsa-memory prefetch-embed` or delete `~/.hoangsa/cache/fastembed/` and retry. |
-| Installer stalls on prompt under `curl\|sh` | stdin is piped. Pass flags explicitly: `sh -s -- --global` and set `HOANGSA_NO_PATH_EDIT=1`. |
-| `GitHub API rate limit exceeded` | Pin a tag: `HOANGSA_VERSION=v0.2.2 curl …` — skips the `/releases/latest` API call. |
-
----
-
-## Quick Start
-
-Prerequisites: the **[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)** — for Codex or Cowork see [Wire your harness](#wire-your-harness).
-
-```bash
-curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh | sh
-/hoangsa:init        # Initialize project — detect codebase, set preferences
-/hoangsa:menu        # Design your first task → DESIGN-SPEC + TEST-SPEC
-```
-
-After `/hoangsa:menu`, run `/hoangsa:prepare` to plan, then `/hoangsa:cook` to execute.
+`--harness` is recorded in `.hoangsa/config.json` so model routing knows which
+runtime it is resolving for. On Codex, profile tiers become *reasoning effort*
+— Codex has no per-subagent model knob — and the session model is left alone.
 
 ---
 
 ## Commands
 
-### Core Workflow
+### Pipeline
 
-| Command | Description |
-|---------|-------------|
-| `/hoangsa:brainstorm` | Explore a vague idea → BRAINSTORM.md (feeds into menu) |
-| `/hoangsa:menu` | Design — interview → DESIGN-SPEC + TEST-SPEC |
-| `/hoangsa:prepare` | Plan — specs → executable task DAG (`plan.json`) |
-| `/hoangsa:cook` | Execute — wave-by-wave, fresh context per worker task |
-| `/hoangsa:taste` | Test — run acceptance tests per task |
-| `/hoangsa:qc` | QC — spec → test cases → execute; every verdict backed by evidence |
-| `/hoangsa:plate` | Commit — stage + generate conventional commit message |
-| `/hoangsa:ship` | Ship — code + security review, then push or create PR |
-| `/hoangsa:serve` | Sync — bidirectional sync with connected task manager |
-| `/hoangsa:fix` | Hotfix — cross-layer root cause tracing + minimal fix |
-| `/hoangsa:audit` | Audit — 8-dimension codebase scan (security, debt, coverage…) |
-| `/hoangsa:research` | Research — codebase analysis + external research → RESEARCH.md |
+| Command | Does |
+|---------|------|
+| `/hoangsa:brainstorm` | explore a vague idea → `BRAINSTORM.md` |
+| `/hoangsa:menu` | interview → `DESIGN-SPEC.md` + `TEST-SPEC.md` |
+| `/hoangsa:prepare` | specs → executable task DAG (`plan.json`) |
+| `/hoangsa:cook` | execute wave by wave, fresh context per task |
+| `/hoangsa:taste` | run acceptance, judge test quality, verify UI |
+| `/hoangsa:qc` | spec → test cases → execute, every verdict backed by evidence |
+| `/hoangsa:plate` | stage + conventional commit message |
+| `/hoangsa:ship` | code + security review, then push or PR |
+| `/hoangsa:fix` | hotfix — cross-layer root cause, minimal change |
 
 ### Utility
 
-| Command | Description |
-|---------|-------------|
-| `/hoangsa:rule` | Rules — add, remove, or list project enforcement rules |
-| `/hoangsa:addon` | Addons — list, add, or remove framework-specific worker rule addons |
-| `/hoangsa:init` | Initialize — detect codebase, configure preferences, first-time setup |
-| `/hoangsa:check` | Status — show current session progress and pending tasks |
-| `/hoangsa:index` | Index — rebuild hoangsa-memory code intelligence graph |
-| `/hoangsa:update` | Update — upgrade HOANGSA to the latest version |
-| `/hoangsa:help` | Help — show all available commands |
+| Command | Does |
+|---------|------|
+| `/hoangsa:init` | detect the codebase, configure preferences |
+| `/hoangsa:check` | session progress and pending tasks |
+| `/hoangsa:audit` | 9-dimension codebase scan |
+| `/hoangsa:research` | codebase + external research → `RESEARCH.md` |
+| `/hoangsa:serve` | two-way sync with a task manager |
+| `/hoangsa:rule` | project enforcement rules |
+| `/hoangsa:addon` | framework-specific worker-rule addons |
+| `/hoangsa:index` | rebuild the code-intelligence graph |
+| `/hoangsa:update` | upgrade HOANGSA |
+| `/hoangsa:help` | list everything |
 
 ---
 
-## Memory & Code Intelligence
+## Memory
 
-HOANGSA ships with **hoangsa-memory**, a local MCP server that gives Claude persistent memory (facts, lessons, preferences) and code-graph awareness (impact analysis, symbol context, change detection) across sessions.
+`hoangsa-memory` is a local MCP server giving the agent persistent memory and
+code-graph awareness. Nothing leaves your machine.
 
-- **Auto-installed** by the installer: binaries land in `~/.hoangsa/bin/` and the MCP server is registered in your project's `.mcp.json`.
-- **State** per project lives under `~/.hoangsa/memory/projects/<slug>/` (MEMORY.md, LESSONS.md, USER.md + index).
-- **Hooks** installed into Claude Code settings: pre-edit rule enforcement, pre-edit lesson recall, post-tool event logging, and PreCompact / SessionEnd archive ingest for conversation recall.
-- **Archive search** (full conversation history) uses the in-process fastembed vector store — no sidecar required. The installer pre-downloads the `multilingual-e5-small` weights (~4xx MB) into `~/.hoangsa/cache/fastembed/`; pass `--no-embed` to skip and fetch lazily on first use.
+**Three surfaces** — plain markdown you can read and edit:
 
-Manual reindex: `/hoangsa:index` or `~/.hoangsa/bin/hoangsa-memory --json index .`
+| File | Holds |
+|------|-------|
+| `MEMORY.md` | project facts and invariants |
+| `LESSONS.md` | action-triggered advice (`when X → do Y`) |
+| `USER.md` | your cross-project workflow preferences |
+
+**A code graph** — symbols, callers, callees, imports — behind `memory_impact`
+(blast radius before you edit), `memory_symbol_context`, and
+`memory_detect_changes` (did this diff touch only what it claimed?).
+
+**Recall** fuses local sources with Reciprocal Rank Fusion — symbol lookup,
+BM25, graph fan-out (depth 1 from the symbol seeds), and all three markdown
+surfaces. The conversation archive is deliberately *not* in default recall;
+query it explicitly with `memory_archive_search`.
+
+### Semantic retrieval — opt-in
+
+`[vector_store] enabled` defaults to `false`. The embedder is the heaviest
+thing here: a **465 MB** model cache plus a resident ONNX session whose CPU
+arena grows to 150–300 MB. Lexical, symbol, and graph retrieval cover most
+queries at no idle cost, so you turn it on when you decide you want it — per
+project, in `<memory root>/config.toml`:
+
+```toml
+[vector_store]
+enabled = true
+```
+
+Then warm the cache once with `hoangsa-memory prefetch-embed`. A global
+`~/.hoangsa/no-embed` marker overrides this to off everywhere.
+
+ONNX's thread pool is capped at half your cores (max 4). Override with
+`HOANGSA_ONNX_THREADS`; `0` restores the runtime default.
+
+### LLM reranking — opt-in
+
+Every stage above ranks on *form*: term overlap, identifier equality, graph
+edges, rank position. None of them reads a chunk and asks whether it answers
+the question, so a hit that leads on a literal string match can outrank the one
+that actually explains the thing.
+
+```toml
+[rerank]
+enabled = true
+candidates = 24        # fused results shown to the model
+timeout_secs = 20
+# command = ["claude", "-p"]   # default: claude, then codex
+```
+
+It drives whatever harness CLI is already on your `PATH` — no API key. Two
+guarantees, because recall sits on the hot path:
+
+- **Fail-open** — missing binary, timeout, non-zero exit, or prose instead of
+  JSON all return the fused order unchanged.
+- **Reordering only** — the model cannot add, drop, or duplicate a result.
+  Anything it doesn't mention keeps its fused rank at the back.
 
 ---
 
 ## Configuration
 
-Config lives in `.hoangsa/config.json`. Manage preferences with `/hoangsa:init` or `hoangsa-cli pref set`.
+`.hoangsa/config.json`, managed by `/hoangsa:init` or `hoangsa-cli pref set`.
+
+Top-level keys: `profile`, `harness`, `model_overrides`, `preferences`,
+`codebase`, `task_manager`.
 
 ### Preferences
 
-| Key | Values | Description |
-|-----|--------|-------------|
-| `lang` | `en`, `vi` | Language for output |
-| `spec_lang` | `en`, `vi` | Language for generated specs |
-| `tech_stack` | array | Project technology stack |
-| `review_style` | `strict`, `balanced`, `light`, `whole_document` | Code review thoroughness |
-| `interaction_level` | `minimal`, `quick`, `standard`, `detailed` | How much the orchestrator asks |
-| `auto_taste` | `true`, `false` | Auto-run tests after cook |
-| `auto_plate` | `true`, `false` | Auto-commit after cook |
-| `auto_serve` | `true`, `false` | Auto-sync to task manager |
+| Key | Values | Meaning |
+|-----|--------|---------|
+| `lang` / `spec_lang` | `en`, `vi` | language for output / for specs |
+| `interaction_level` | `quick`, `detailed` | how much the orchestrator asks |
+| `review_style` | `strict`, `balanced`, `light`, `whole_document` | review thoroughness |
+| `workflow_profile` | `full`, `balanced`, `minimal` | preset for the six quality keys below |
+| `quality_gate` | bool | review pass after each task |
+| `simplify_pass` | bool | cleanup pass after each task |
+| `test_runs` | int | how many times to repeat the suite |
+| `research_mode` / `context_mode` | `full`, `inline` / `full`, `selective` | research depth / context packing |
+| `memory_strict` | bool | require memory consultation before edits |
+| `auto_taste` / `auto_plate` / `auto_serve` | bool | auto-chain to the next phase |
 
-### Model Profiles
+> `workflow_profile` is a **quality** preset. It is not the top-level
+> `profile`, which routes models — different key, different vocabulary.
 
-Select a profile (`quality` / `balanced` / `budget`) to control the model at each of 8 roles. Switch with `/hoangsa:init` or by editing `profile` in `config.json`.
+### Model routing
 
-| Role | `quality` | `balanced` | `budget` |
-|------|-----------|------------|----------|
-| researcher | opus | sonnet | haiku |
-| designer | opus | opus | sonnet |
-| planner | opus | sonnet | haiku |
-| orchestrator | opus | opus | haiku |
-| worker | opus | sonnet | haiku |
-| reviewer | opus | sonnet | haiku |
-| tester | sonnet | haiku | haiku |
-| committer | sonnet | haiku | haiku |
+`profile` picks a model per role. An unknown name falls back to `balanced`.
 
-The `fable` alias (Claude Fable 5 — the tier above opus, ~2× opus pricing) is not part of any profile. Route it per role via `model_overrides` in `config.json`, e.g. `{ "model_overrides": { "designer": "fable" } }`.
+| Role | `quality` | `balanced` | `budget` | `minimal` |
+|------|-----------|------------|----------|-----------|
+| researcher | opus | sonnet | haiku | haiku |
+| designer | opus | opus | sonnet | sonnet |
+| planner | opus | sonnet | haiku | haiku |
+| orchestrator | opus | opus | haiku | sonnet |
+| worker | opus | sonnet | haiku | haiku |
+| reviewer | opus | sonnet | haiku | haiku |
+| tester | sonnet | haiku | haiku | haiku |
+| committer | sonnet | haiku | haiku | haiku |
+| simplify | opus | sonnet | haiku | haiku |
+
+`minimal` is `budget` with the orchestrator kept on sonnet — the one seat where
+the cheap tier usually costs more in rework than it saves, which makes
+`minimal` slightly *more* expensive than `budget` despite the name.
+
+`fable` (Claude Fable 5, ~2× opus) belongs to no profile. Route it per role:
+
+```json
+{ "model_overrides": { "designer": "fable" } }
+```
+
+**On Codex** the tier is not a model id — Codex scales by reasoning effort, so
+fable/opus → `high`, sonnet → `medium`, haiku → `low`, and the session model is
+left untouched.
+
+---
+
+## The binaries
+
+| Binary | Role |
+|--------|------|
+| `hoangsa-cli` | orchestrator — slash commands, gates, rule engine, hooks, prompt assembly |
+| `hoangsa-memory` | memory + code intelligence — index, query, impact, archive |
+| `hoangsa-memory-mcp` | the MCP server your agent talks to (spawned for you) |
+| `hsp` | output compressor — trims cargo/npm/git/curl noise before the model reads it, 60–90% on the worst offenders. See [its README](crates/hoangsa-proxy/README.md). |
+
+Per-project state lives in `.hoangsa/`; memory in `.hoangsa/memory/` or
+`~/.hoangsa/memory/projects/<slug>/`.
+
+---
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `command not found: hoangsa-cli` | PATH not updated in this shell — `source ~/.zshrc` or open a new terminal |
+| MCP tools missing in Claude Code | `CLAUDE_CONFIG_DIR` mismatch — set it explicitly before installing |
+| A `hoangsa-memory` process using a lot of CPU | it is embedding. `[vector_store] enabled = false` (the default) stops it; `HOANGSA_ONNX_THREADS` caps it. Identify it with `ps -o pid,ppid,%cpu,command -p <pid>` — a PPID of 1 means a hook spawned it detached |
+| `vector_store failed to start` | delete `~/.hoangsa/cache/fastembed/`, then `hoangsa-memory prefetch-embed` |
+| `validate spec` fails on an existing spec | 0.6.0 requires `## Behavior / Logic` and `## Risk Sweep` on code specs. Add them, or set `category: ops` / `content` in the frontmatter |
+| `musl libc detected` on Alpine | release tarballs are glibc-only — build from source |
+| Installer stalls under `curl \| sh` | stdin is piped; pass flags explicitly and set `HOANGSA_NO_PATH_EDIT=1` |
+
+---
+
+## Contributing
+
+```sh
+cargo test --workspace       # unit + integration
+hoangsa-cli verify .         # the repo's own template/config gates
+cargo clippy --workspace --all-targets
+```
+
+`verify` is the interesting one: it checks that the prompt layer and the code
+still agree — that every workflow calls a CLI subcommand that exists, that the
+model-profile tables in the docs match `model.rs` role by role, that the worker
+skill registry in `common.md` matches its fallback copy in Rust. A
+documentation table that drifts from the code fails the build.
+
+Two house rules:
+
+- **Do not run `cargo fmt`.** The tree is not uniformly rustfmt-formatted and
+  there is a standing decision not to mass-reformat. CI format-checks *newly
+  added* `.rs` files only — run `rustfmt --edition 2024` on those.
+- **`plugin/` is generated** from `templates/` by `make plugin`. Edit
+  `templates/`, regenerate, commit both.
 
 ---
 

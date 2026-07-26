@@ -31,7 +31,7 @@ walks its callers until you reach the real cause.
 3. memory_symbol_context({fqn: <suspect>})             → callers / callees
 4. memory_impact({fqn, direction: "up"})               → full upstream
 5. Read the suspect + its callers carefully
-6. After the fix: memory_lesson_outcome + remember_lesson
+6. After the fix: memory_remember_lesson
 ```
 
 ### 1. Check LESSONS.md first
@@ -93,16 +93,8 @@ already gave you `path:line` for every hit.
 
 ### 6. Reflect after the fix
 
-When the fix lands and tests pass:
-
-```
-memory_lesson_outcome {
-  signal: "success",
-  triggers: ["<trigger of any lesson you followed>"]
-}
-```
-
-If the bug is durable and non-obvious (not a typo), persist a lesson:
+When the fix lands and tests pass, if the bug is durable and non-obvious
+(not a typo), persist a lesson:
 
 ```
 memory_remember_lesson {

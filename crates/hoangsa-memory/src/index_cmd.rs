@@ -73,7 +73,7 @@ pub async fn run_index(root: &Path, src: &Path, json: bool, pdg: bool) -> Result
     // command is already running we skip embeddings rather than aborting
     // the whole index — BM25/graph indexing is still useful without
     // them.
-    let _vector_lock = match crate::acquire_vector_lock() {
+    let _vector_lock = match crate::acquire_vector_lock(std::time::Duration::from_secs(180)) {
         Ok(Some(lock)) => {
             if let Some(col) = open_vector_store(&store).await {
                 idx = idx.with_vector_store(col);

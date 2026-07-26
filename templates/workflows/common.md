@@ -9,17 +9,40 @@ and the shared rules live in one canonical place.
 
 ## Boot preamble
 
-Every workflow resolves its install path from the slash command, then runs
-`hoangsa-cli` via `$HOANGSA_ROOT/bin/hoangsa-cli`. The heavy lifts below
-are the only CLI calls a workflow needs to know about — deeper subcommands
-are documented inline where they're used.
+**Resolve the binary and the template tree separately — they live in different
+roots.** The CLI is installed under `~/.hoangsa/bin/` (or wherever
+`HOANGSA_INSTALL_DIR` points); the workflows/agents/skills are installed into
+the Claude config dir. There is no `bin/` directory under the template tree,
+so joining the template root with `bin/hoangsa-cli` — as every workflow used
+to — names a path that has never existed on any install. Run this once at the
+top of every workflow:
 
 ```bash
-SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)       # {found, id, dir, files}
-STATE=$("$HOANGSA_ROOT/bin/hoangsa-cli" state get "$SESSION_DIR")
-LANG_PREF=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . lang | python3 -c "import sys,json;print(json.load(sys.stdin).get('value','en'))")
-"$HOANGSA_ROOT/bin/hoangsa-cli" state update "$SESSION_DIR" '{"status":"..."}'
-"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . <key> <value>
+# 1. The CLI. PATH first — the installer adds ~/.hoangsa/bin to it.
+HOANGSA_BIN="$(command -v hoangsa-cli || true)"
+[ -x "$HOANGSA_BIN" ] || HOANGSA_BIN="$HOME/.hoangsa/bin/hoangsa-cli"
+[ -x "$HOANGSA_BIN" ] || { echo "hoangsa-cli not found — run the installer"; exit 1; }
+
+# 2. The template tree (workflows/). Project-local install wins over global.
+if [ -d "./.claude/hoangsa/workflows" ]; then HOANGSA_ROOT="./.claude/hoangsa"
+else HOANGSA_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hoangsa"; fi
+
+# 3. Agent definitions live beside commands/skills in the config dir,
+#    NOT under $HOANGSA_ROOT.
+HOANGSA_AGENTS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/agents"
+```
+
+Use `$HOANGSA_BIN` for every CLI call, `$HOANGSA_ROOT/workflows/...` for
+workflow files, and `$HOANGSA_AGENTS/<name>.md` for agent definitions. The
+heavy lifts below are the only CLI calls a workflow needs to know about —
+deeper subcommands are documented inline where they're used.
+
+```bash
+SESSION=$("$HOANGSA_BIN" session latest)       # {found, id, dir, files}
+STATE=$("$HOANGSA_BIN" state get "$SESSION_DIR")
+LANG_PREF=$("$HOANGSA_BIN" pref get . lang | python3 -c "import sys,json;print(json.load(sys.stdin).get('value','en'))")
+"$HOANGSA_BIN" state update "$SESSION_DIR" '{"status":"..."}'
+"$HOANGSA_BIN" pref set . <key> <value>
 ```
 
 ### Pre-built context bundle (optional, cheap)
@@ -29,7 +52,7 @@ scattered `state get` / `git status` / `config get` calls that would
 otherwise be repeated throughout the workflow. Populated by:
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" ctx <workflow>
+"$HOANGSA_BIN" ctx <workflow>
 ```
 
 Absence is a no-op — workflows fall back to their existing boot sequence.
@@ -104,10 +127,24 @@ Available skills — read the full SKILL.md only if relevant to your task:
 - git-flow: Git branching, task switching, PR creation → .claude/skills/hoangsa/git-flow/SKILL.md
 - visual-debug: Screenshot/video analysis for visual bugs → .claude/skills/hoangsa/visual-debug/SKILL.md
 - fe-testing: FE verification loop — criteria, test layers, run-and-observe, mutation check → .claude/skills/hoangsa/fe-testing/SKILL.md
+- memory-impact-analysis: Blast radius before you edit a symbol — how to read memory_impact and what to do with HIGH/CRITICAL → .claude/skills/hoangsa/memory-impact-analysis/SKILL.md
+- memory-refactoring: Rename / extract / move safely — find every reference before touching one → .claude/skills/hoangsa/memory-refactoring/SKILL.md
+- memory-debugging: Trace a failure to its origin through the call graph → .claude/skills/hoangsa/memory-debugging/SKILL.md
+- memory-exploring: Understand unfamiliar code — callers, execution flow, architecture → .claude/skills/hoangsa/memory-exploring/SKILL.md
 
 To use a skill: read_file("<path>") to get full instructions, then follow them.
 Do NOT read skills unless your task specifically requires them.
 ```
+
+The four `memory-*` entries back Instruction 2 of the envelope, which orders a
+`memory_impact` call before modifying any symbol — a worker was being told to
+do the analysis without being told a skill existed for it. Two shipped skills
+are deliberately **not** here: `memory-cli` (drives the `hoangsa-memory` binary,
+which fights the daemon for the store lock — workers use the MCP tools) and
+`memory-guide` (a tour of the tool catalog; the envelope already names the
+calls a worker needs). Leaving them out is a decision, not an oversight.
+`hoangsa-cli verify` pins this list against the fallback copy in
+`envelope.rs` — change one and the other fails.
 
 ---
 
@@ -122,10 +159,13 @@ visual context. Videos: `.mp4 .mov .webm .avi .mkv` — invoke the
 ```bash
 hoangsa-cli media check-ffmpeg
 # Always quote the path; reject paths with shell metacharacters
-hoangsa-cli media analyze "$VIDEO_PATH" --output-dir "/tmp/hoangsa-media-$(date +%s)"
+OUT="/tmp/hoangsa-media-$(date +%s)"
+hoangsa-cli media frames  "$VIDEO_PATH" --output-dir "$OUT/frames"
+hoangsa-cli media montage "$OUT/frames" --timestamps --output "$OUT/montage.png"
+hoangsa-cli media diff    "$OUT/frames" --output "$OUT/diff-montage.png"
 ```
 
-Read the output `montage.png` (annotated frame grid) and `diff-montage.png`
+Read `$OUT/montage.png` (annotated frame grid) and `$OUT/diff-montage.png`
 (red overlay of frame changes); fold findings into the workflow's context.
 No media → skip.
 

@@ -13,7 +13,7 @@ Perform a comprehensive codebase audit across 8 dimensions, producing a detailed
 ## Step 1: Session & output setup
 
 ```bash
-SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest 2>/dev/null || echo "")
+SESSION=$("$HOANGSA_BIN" session latest 2>/dev/null || echo "")
 ```
 
 - If `SESSION` is non-empty → use `SESSION_DIR` as output directory.
@@ -21,7 +21,7 @@ SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest 2>/dev/null || echo "")
 
 ```bash
 # SLUG auto-derived from scope (e.g. "full-codebase", "auth-module")
-SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session init chore "$SLUG")
+SESSION=$("$HOANGSA_BIN" session init chore "$SLUG")
 # Extract SESSION_DIR from the result
 ```
 
@@ -32,7 +32,7 @@ SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session init chore "$SLUG")
 ### 2a. Load saved preferences
 
 ```bash
-PREFS=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . 2>/dev/null || echo "{}")
+PREFS=$("$HOANGSA_BIN" pref get . 2>/dev/null || echo "{}")
 ```
 
 ### 2b. Audit target (ask user)
@@ -108,8 +108,8 @@ Step 3.
 Before scanning, gather project context. **Start from config.json** (detected by `/hoangsa:init`), then fill gaps:
 
 ```bash
-CONFIG=$("$HOANGSA_ROOT/bin/hoangsa-cli" config get .)
-INTERACTION=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . interaction_level)
+CONFIG=$("$HOANGSA_BIN" config get .)
+INTERACTION=$("$HOANGSA_BIN" pref get . interaction_level)
 ```
 
 ### 3a. Load from config (already detected by init)
@@ -185,7 +185,7 @@ If a project has a custom ignore file (e.g., `.auditignore`), respect it too.
 
 ## Step 4: Parallel dimension scanning
 
-Launch one scanning agent per dimension selected by `AUDIT_SCOPE` (Agent tool, parallel). Dimension specs live in separate files — do NOT read them into the orchestrator context; pass the path and let each agent read its own spec.
+Launch one scanning agent per dimension selected by `AUDIT_SCOPE` (Task tool, parallel). Dimension specs live in separate files — do NOT read them into the orchestrator context; pass the path and let each agent read its own spec.
 
 | # | Dimension | Spec file (`$HOANGSA_ROOT/workflows/audit-dimensions/`) |
 |---|-----------|--------------------------------------------------------|
@@ -221,7 +221,7 @@ Use the conversation archive to spot focus areas: `memory_archive_topics()` — 
 ### Model selection
 
 ```bash
-MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model researcher 2>/dev/null || echo "sonnet")
+MODEL=$("$HOANGSA_BIN" resolve-model researcher 2>/dev/null || echo "sonnet")
 ```
 
 Use the resolved model for all scanning agents.

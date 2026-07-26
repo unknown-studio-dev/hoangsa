@@ -111,18 +111,63 @@ pub fn cmd_state_check(cwd: &str, args: &[&str]) {
 /// enforcement events file, and on `source == "clear"` snapshots the
 /// statusline cost baseline so the displayed cost resets to $0.00.
 pub fn cmd_state_clear(cwd: &str) {
+    // Read the payload FIRST: the events file is per-project but its contents
+    // are per-session, so a blanket delete wiped a sibling session's log and
+    // blocked it on its next edit for work it had already done.
+    let mut raw_early = String::new();
+    let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut raw_early);
+    let payload_early: serde_json::Value =
+        serde_json::from_str(&raw_early).unwrap_or_else(|_| json!({}));
+    let my_session = payload_early
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string);
+
     let events_path = enforcement_events_path(cwd);
-    let _ = fs::remove_file(&events_path);
+    match my_session.as_deref() {
+        // Drop only our own events; untagged lines are legacy and belong to
+        // nobody, so they go too.
+        Some(sid) => {
+            if let Ok(text) = fs::read_to_string(&events_path) {
+                let kept: Vec<&str> = text
+                    .lines()
+                    .filter(|line| {
+                        serde_json::from_str::<serde_json::Value>(line)
+                            .ok()
+                            .and_then(|v| {
+                                v.get("session").and_then(|s| s.as_str()).map(str::to_string)
+                            })
+                            .is_some_and(|owner| owner != sid)
+                    })
+                    .collect();
+                if kept.is_empty() {
+                    let _ = fs::remove_file(&events_path);
+                } else {
+                    let mut body = kept.join("\n");
+                    body.push('\n');
+                    let _ = crate::helpers::atomic_write_string(&events_path, &body);
+                }
+            }
+        }
+        // No session id in the payload — fall back to the old behaviour.
+        None => {
+            let _ = fs::remove_file(&events_path);
+        }
+    }
     let _ = fs::remove_file(reflect_sentinel_path(cwd));
     let _ = fs::remove_file(graph_affordance_sentinel_path(cwd));
 
-    // Best-effort: read SessionStart payload (if any) and handle /clear.
-    let mut raw = String::new();
-    let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut raw);
-    if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&raw) {
-        let source = payload.get("source").and_then(|v| v.as_str()).unwrap_or("");
-        let sid = payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
-        if source == "clear" && !sid.is_empty() {
+    // Reuse the payload read above — stdin is already drained, so re-reading
+    // it here would always see an empty string and silently skip the reset.
+    {
+        let source = payload_early
+            .get("source")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if source == "clear"
+            && let Some(sid) = my_session.as_deref()
+        {
             snapshot_statusline_baseline(sid);
         }
     }

@@ -9,7 +9,7 @@ use hoangsa_memory_core::{
     Enforcement, Fact, FactScope, Lesson, LessonTrigger, MemoryKind, MemoryMeta,
 };
 use hoangsa_memory_policy::{
-    CapExceededError, CurationConfig, GuardedAppendError, MarkdownStoreMemoryExt, MemoryConfig,
+    CapExceededError, GuardedAppendError, MarkdownStoreMemoryExt, MemoryConfig,
     MemoryKind as MdKind,
 };
 
@@ -25,16 +25,9 @@ impl Server {
             #[serde(default)]
             tags: Vec<String>,
             #[serde(default)]
-            stage: bool,
-            #[serde(default)]
             scope: Option<String>,
         }
-        let Args {
-            text,
-            tags,
-            stage,
-            scope,
-        } = serde_json::from_value(args)?;
+        let Args { text, tags, scope } = serde_json::from_value(args)?;
         let fact = Fact {
             meta: MemoryMeta::new(MemoryKind::Semantic),
             text: text.trim().to_string(),
@@ -44,25 +37,8 @@ impl Server {
                 _ => FactScope::Always,
             },
         };
-        let cfg = CurationConfig::load_or_default(&self.inner.root).await;
         let mem_cfg = MemoryConfig::load_or_default(&self.inner.root).await;
-        let staged = stage || cfg.requires_review();
         let res = self.resources().await?;
-        if staged {
-            res.store.markdown.append_pending_fact(&fact).await?;
-            let path = self.inner.root.join("MEMORY.pending.md");
-            let text = format!(
-                "staged (review mode) — run `memory_promote` to accept: {}",
-                first_line(&fact.text)
-            );
-            let data = json!({
-                "text": fact.text,
-                "tags": fact.tags,
-                "path": path.display().to_string(),
-                "staged": true,
-            });
-            return Ok(ToolOutput::new(data, text));
-        }
         match res
             .store
             .markdown
@@ -82,7 +58,6 @@ impl Server {
                     "text": fact.text,
                     "tags": fact.tags,
                     "path": path.display().to_string(),
-                    "staged": false,
                 });
                 Ok(ToolOutput::new(data, text))
             }
@@ -106,15 +81,12 @@ impl Server {
             suggested_enforcement: Option<Enforcement>,
             #[serde(default)]
             block_message: Option<String>,
-            #[serde(default)]
-            stage: bool,
         }
         let Args {
             trigger,
             advice,
             suggested_enforcement,
             block_message,
-            stage,
         } = serde_json::from_value(args)?;
 
         let parsed_trigger: LessonTrigger = match trigger {
@@ -146,14 +118,13 @@ impl Server {
             suggested_enforcement: suggested_enforcement.clone(),
             block_message: block_message.clone(),
         };
-        let cfg = CurationConfig::load_or_default(&self.inner.root).await;
         let mem_cfg = MemoryConfig::load_or_default(&self.inner.root).await;
-        let staged = stage || cfg.requires_review();
         let res = self.resources().await?;
 
-        // Conflict check: a lesson with the same trigger already exists.
-        // In review mode we always stage; in auto mode we still refuse to
-        // silently overwrite — force the agent to stage + escalate.
+        // Conflict check: a lesson with this trigger already exists. Refuse
+        // rather than silently overwriting the advice already on file — but
+        // hand back the existing text and the exact call that resolves it,
+        // so the agent can decide whether this supersedes or duplicates.
         let conflict = res
             .store
             .markdown
@@ -163,33 +134,16 @@ impl Server {
             .into_iter()
             .find(|l| l.trigger.trim().eq_ignore_ascii_case(lesson.trigger.trim()));
 
-        if staged || conflict.is_some() {
-            res.store
-                .markdown
-                .append_pending_lesson(&lesson)
-                .await?;
-            let note = if conflict.is_some() {
-                "staged (conflict with existing lesson — user must review)"
-            } else {
-                "staged (review mode) — run `memory_promote` to accept"
-            };
-            let path = self.inner.root.join("LESSONS.pending.md");
-            let text = format!("{note}: {}", lesson.trigger);
-            let data = json!({
-                "trigger": lesson.trigger,
-                "structured_trigger": parsed_trigger,
-                "advice": lesson.advice,
-                "enforcement": lesson.enforcement,
-                "suggested_enforcement": lesson.suggested_enforcement,
-                "block_message": lesson.block_message,
-                "path": path.display().to_string(),
-                "staged": true,
-                "conflict": conflict.map(|l| json!({
-                    "trigger": l.trigger,
-                    "existing_advice": l.advice,
-                })),
-            });
-            return Ok(ToolOutput::new(data, text));
+        if let Some(existing) = conflict {
+            return Ok(ToolOutput::error(format!(
+                "a lesson with trigger {:?} already exists — its advice is: {}\n\
+                 If your advice supersedes it, call memory_replace {{ kind: \"lesson\", \
+                 query: {:?}, new_text: \"<trigger>\\n<advice>\" }}. \
+                 If it says the same thing, keep the existing one.",
+                existing.trigger.trim(),
+                existing.advice.trim(),
+                existing.trigger.trim(),
+            )));
         }
         match res
             .store
@@ -214,8 +168,6 @@ impl Server {
                     "suggested_enforcement": lesson.suggested_enforcement,
                     "block_message": lesson.block_message,
                     "path": path.display().to_string(),
-                    "staged": false,
-                    "conflict": Value::Null,
                 });
                 Ok(ToolOutput::new(data, text))
             }

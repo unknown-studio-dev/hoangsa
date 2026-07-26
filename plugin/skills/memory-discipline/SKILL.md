@@ -80,11 +80,9 @@ decide what to persist. Three surfaces, three tools:
 Be conservative — only save memory that is specific, durable, and
 non-obvious.
 
-If the outcome was a success that validates a lesson you followed, call
-`memory_lesson_outcome { signal: "success", triggers: [...] }` with the
-triggers of the lessons you honoured. On failure, call it with
-`signal: "failure"`. This bumps confidence counters so stale advice
-eventually dies.
+Lesson confidence counters are bumped for you: the Stop hook records a
+success or failure against every lesson it surfaced that turn. You do not
+call anything to make that happen — there is no MCP tool for it.
 
 ## Handling `cap_exceeded`
 
@@ -148,7 +146,6 @@ saves hours of rework.
 Live knobs in `<root>/config.toml`:
 
 `[curation]` (legacy alias: `[discipline]`):
-- `memory_mode = "auto"` (default) or `"review"`. See below.
 - `grounding_check = false` — opt-in; adds the `memory.grounding_check`
   prompt to the MCP catalog.
 - `quarantine_failure_ratio = 0.66` / `quarantine_min_attempts = 5` —
@@ -166,33 +163,35 @@ PreToolUse gating is handled by `hoangsa-cli hook enforce` against
 `.hoangsa/rules.json` and `.hoangsa/state/enforcement.events` — see the
 `hoangsa-cli rule` docs, not this file.
 
-## Memory modes: `auto` vs `review`
+## Duplicate triggers
 
-When you call `memory_remember_*`, the server honours `memory_mode`:
+`memory_remember_*` writes straight to its target file. The one thing the
+server refuses to do is silently **overwrite**: if a lesson with your
+`trigger` already exists, the call returns an error carrying the existing
+advice. Read it and decide — if yours supersedes it, call `memory_replace
+{ kind: "lesson", query: "<trigger>", new_text: "<trigger>\n<advice>" }`;
+if it says the same thing, keep what is already there. Do not re-submit
+the same trigger expecting it to win.
 
-- **`auto`** — the entry is appended straight to its target file.
-  Fastest. Relies on the forget pass + confidence counters to prune bad
-  memory later. Good for solo use.
-- **`review`** — the entry is appended to a `*.pending.md` sibling. The
-  user must run `hoangsa-memory memory promote <kind> <index>` (or call
-  `memory_promote`) to accept. Rejected entries are archived with
-  a reason in `memory-history.jsonl`. Good for teams.
+## The dream pass
 
-Even in `auto` mode, the server refuses to silently **overwrite** an
-existing lesson — if a `trigger` already exists, the new lesson is
-staged and flagged with `"conflict": {...}` in the tool output. When you
-see a conflict, do NOT try to auto-promote: flag it to the user via
-`memory_request_review` and let them decide.
+Consolidation you do not have to drive: when `[dream].enabled = true`, an
+idle daemon hands `MEMORY.md` / `LESSONS.md` / `USER.md` to a model that
+merges duplicates, rewrites stale entries, and drops ones the code no
+longer supports. `[dream].mode = "review"` (default) collects proposals in
+`DREAM.md`; `"auto"` applies them, archiving every dropped entry to
+`<SURFACE>.dropped.md` with its reason. Run it by hand with
+`hoangsa-memory memory dream [--force] [--dry-run]`.
 
 ## Audit log
 
 Every memory mutation lands in `.hoangsa/memory/memory-history.jsonl` (one JSON
 per line) with `op`, `kind`, `title`, `actor`, `reason`, and a timestamp.
-Ops include: `append`, `replace`, `remove`, `stage`, `promote`, `reject`,
-`quarantine`, `propose`, `request_review`. Inspect with
-`hoangsa-memory memory log --limit 50`. This log is size-capped and
-self-truncates — old entries past the session window are intentionally
-shed since reflection debt counts from `.session-start` anyway.
+Ops include: `append`, `replace`, `remove`, `quarantine`, `dream_drop`,
+`dream_merge`, `dream_rewrite`. Read it directly — there is no CLI reader.
+The log is size-capped and self-truncates; old entries past the session
+window are intentionally shed since reflection debt counts from
+`.session-start` anyway.
 
 ## Proposing new skills
 

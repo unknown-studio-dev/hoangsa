@@ -8,7 +8,7 @@ Turn a vague idea into a validated design through collaborative dialogue, before
 
 > **MUST complete ALL steps in order. DO NOT skip any step. DO NOT stop before Step 7.**
 >
-> 1. Init session → 2. Explore context → 3. Clarify intent → 4. Propose approaches → 5. Present design → 6. Write BRAINSTORM.md → 7. Complete + chain
+> 1. Init session → 2. Explore context → 3. Clarify intent → 4. Propose approaches → 5. Present design (incl. failure/concurrency + open-questions round) → 6. Write BRAINSTORM.md → 7. Complete + chain
 
 ---
 
@@ -40,13 +40,13 @@ If user typed their idea → store as `IDEA`.
 Auto-derive slug from the user's idea (2-4 key words, hyphenated):
 
 ```bash
-SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session init brainstorm "$SLUG")
+SESSION=$("$HOANGSA_BIN" session init brainstorm "$SLUG")
 ```
 
 Extract `SESSION_ID`, `SESSION_DIR` from JSON output.
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" state init "$SESSION_DIR"
+"$HOANGSA_BIN" state init "$SESSION_DIR"
 ```
 
 ---
@@ -62,7 +62,7 @@ Do NOT write any code, create any spec, or take any implementation action until 
 Check if a prior `/hoangsa:research` session produced a `RESEARCH.md` relevant to this idea.
 
 ```bash
-RESEARCH_SESSION=$("$HOANGSA_ROOT/bin/hoangsa-cli" session latest)
+RESEARCH_SESSION=$("$HOANGSA_BIN" session latest)
 ```
 
 Parse the result — if `type` is `"docs"` and `files` contains `"RESEARCH.md"`:
@@ -154,7 +154,23 @@ Focus on understanding:
 - Medium idea (new feature, refactor) → 3-4 questions
 - Complex idea (new subsystem, architecture change) → 4-6 questions
 
-**Do NOT ask more than 6 questions total.** If you need more clarification after 6, proceed with assumptions and note them in the design.
+### 3c. The unknown ledger
+
+Keep a running list of everything you don't know yet. Each entry ends in exactly
+one of three states:
+
+- **Answered from context** — codebase scan (Step 2b), research, or git history. Cite where.
+- **Answered by the user** — you asked.
+- **Assumption** — you filled the gap yourself. Then it is *not* settled: it goes
+  into the BRAINSTORM.md `## Open Questions` table with the assumption you made and
+  what breaks if it's wrong, and it gets surfaced in Step 5c.
+
+**Question budget:** the 1-6 count above bounds *exploratory* questions —
+nice-to-know context. A question is **blocking** when two plausible answers lead
+to two different designs (who owns the data, is it single- or multi-writer, must
+it work offline, is the old format still in the wild). Blocking questions are
+asked regardless of the budget; running out of budget is never a reason to guess.
+After 6 exploratory questions, stop exploring — do not stop asking blocking ones.
 
 ---
 
@@ -202,8 +218,26 @@ Present the design in sections, scaled to complexity. After each major section, 
 | **Data flow** | When data moves between components | Short description or diagram |
 | **API / Interface** | When there's a public interface | Key signatures, not exhaustive |
 | **Error handling** | When failure modes matter | List of scenarios + strategy |
+| **Failure & concurrency** | Whenever the idea writes shared state (file, DB row, cache, global, session dir) | See 5a-2 — required, not optional |
 | **Testing strategy** | Always | 1-2 sentences |
 | **Migration / rollout** | When changing existing behavior | Steps + rollback plan |
+
+### 5a-2. Failure & concurrency (risk seeds)
+
+The design is not presentable until you've said something concrete about how it
+breaks. Cover, in one or two lines each — these become the **Risk Seeds** that
+seed the menu-phase Risk Sweep:
+
+- **Shared state** — what does this read and then write? Who else touches it?
+- **Concurrency / TOCTOU** — for every check-then-act (does the file exist? is the
+  row free? is the lock held?), what happens if another actor changes it between
+  the check and the act? Name the guard: lock, transaction, atomic temp+rename,
+  CAS, unique index, single-writer.
+- **Retry / idempotency** — the operation runs twice: same result, or duplicate?
+- **Partial failure** — it dies halfway: what's left behind, who cleans it up?
+
+If the honest answer is "no shared state, pure computation" — say that, once.
+Unknowns here are blocking questions (Step 3c), not assumptions.
 
 ### 5b. Section review
 
@@ -217,9 +251,33 @@ After presenting all sections, use AskUserQuestion:
     - label: "Quay lại approach", description: "Muốn chọn approach khác"
   multiSelect: false
 
-If "OK" → proceed to Step 6.
+If "OK" → proceed to Step 5c.
 If "Cần sửa" → apply fixes, re-present affected sections, re-ask.
 If "Quay lại approach" → go back to Step 4.
+
+### 5c. Open-questions round (blocking)
+
+Before writing the file, walk the unknown ledger (3c) and pull out every entry
+still marked *assumption*, plus anything in the design you wrote as "TBD",
+"probably", or "for now". Nothing left → say `✅ Không còn open question` and go
+to Step 6.
+
+Otherwise ask — the whole point of brainstorming is that these are cheap here and
+expensive in cook. One AskUserQuestion per question, blocking ones first:
+
+Use AskUserQuestion:
+  question: "<the open question, concretely>"
+  header: "<topic, max 12 chars>"
+  options:
+    - label: "<Answer A>", description: "<what it makes true — and the cost>"
+    - label: "<Answer B>", description: "<...>"
+    - label: "Để menu quyết", description: "Chuyển sang menu với giả định: <assumption>. Sai thì: <impact>"
+  multiSelect: false
+
+Every question gets a row in `## Open Questions` with status `RESOLVED` (answer
+recorded) or `DEFERRED` (assumption + impact recorded, menu Step 2d picks it up).
+A question that was never asked has no valid status — writing the file without
+this round is a skipped step, not a shortcut.
 
 ---
 
@@ -279,6 +337,9 @@ status: "approved"
 ### Error Handling
 <Failure scenarios and strategies>
 
+### Failure & Concurrency
+<From Step 5a-2 — shared state, TOCTOU windows + guards, retry/idempotency, partial failure>
+
 ### Testing Strategy
 <How to verify this works>
 
@@ -288,8 +349,25 @@ status: "approved"
 | 1 | ... | ... | LOCKED |
 | 2 | ... | ... | FLEXIBLE |
 
+## Risk Seeds
+<!-- Feeds the menu-phase Risk Sweep (menu Step 3d-2). One line per risk you already
+     know about, with the class it belongs to. Unknown ≠ absent: write what you'd have
+     to check. Omit only for pure-computation ideas with no shared state. -->
+| Risk class | What we know so far |
+|------------|---------------------|
+| Concurrency & TOCTOU | ... |
+| Idempotency & retry | ... |
+| Partial failure | ... |
+| Backward compat / migration | ... |
+
 ## Open Questions
-<Anything still unresolved — menu phase will address these>
+<!-- Every row was surfaced to the user in Step 5c. RESOLVED = answered here.
+     DEFERRED = the user chose to decide in menu; record the assumption we proceed
+     under and what it costs if wrong. No row may be statusless — an unasked
+     question is not an open question, it's a guess. -->
+| Question | Status | Answer / Assumption | Impact if wrong |
+|----------|--------|---------------------|-----------------|
+| <question> | RESOLVED / DEFERRED | ... | ... |
 
 ## Out of Scope
 <What we explicitly decided NOT to do>
@@ -304,6 +382,8 @@ After writing, scan the document for:
 2. **Contradictions** — do any sections conflict? Resolve.
 3. **Scope creep** — did we add things the user didn't ask for? Remove.
 4. **Ambiguity** — could any part be interpreted two ways? Clarify.
+5. **Statusless open questions** — any row without RESOLVED/DEFERRED means Step 5c
+   was skipped. Go back and ask; do not backfill a status yourself.
 
 Fix issues inline. No need to re-present to user.
 
@@ -314,11 +394,11 @@ Append locked architectural decisions to the DESIGN-SPEC's Architecture section 
 ## Step 7: Complete + chain
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" state update "$SESSION_ID" '{"status":"brainstorm"}'
+"$HOANGSA_BIN" state update "$SESSION_ID" '{"status":"brainstorm"}'
 ```
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" commit \
+"$HOANGSA_BIN" commit \
   "brainstorm(<scope>): design for <title>" \
   --files "$SESSION_DIR/BRAINSTORM.md"
 ```
@@ -347,9 +427,10 @@ Before Step 7, emit the `common.md` self-verification table with rows:
 | 0. Setup (lang + hoangsa-memory) | ... |
 | 1. Init session + idea | ... |
 | 2. Explore context | ... |
-| 3. Clarify intent | ... |
+| 3. Clarify intent (unknown ledger) | ... |
 | 4. Propose approaches | ... |
-| 5. Present design | ... |
+| 5. Present design (incl. failure & concurrency) | ... |
+| 5c. Open-questions round (asked, not assumed) | ... |
 | 6. Write BRAINSTORM.md | ... |
 | 7. Complete + chain | ... |
 ```
@@ -367,6 +448,8 @@ Universal rules live in `common.md §Universal rules`. Brainstorm-specific addit
 | **≥2 approaches** | Always propose alternatives before settling |
 | **No code before approval** | HARD-GATE — design first, implement never (that's menu/cook's job) |
 | **Scale to complexity** | Simple idea = short doc, complex = detailed doc |
-| **Max 6 questions** | After 6, proceed with assumptions |
+| **Max 6 exploratory questions** | The budget bounds exploration only — blocking questions (two answers ⇒ two designs) are asked regardless |
+| **No silent assumptions** | An assumption is a DEFERRED open question with an impact line, surfaced in Step 5c — never an unwritten guess |
+| **Name the failure modes** | Shared state, TOCTOU, retry, partial failure — answered in 5a-2, carried out as Risk Seeds |
 | **Chain to menu** | Terminal state is suggesting `/hoangsa:menu` |
 | **Structured output** | BRAINSTORM.md has frontmatter + sections that menu can parse |

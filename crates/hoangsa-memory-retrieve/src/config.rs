@@ -270,28 +270,34 @@ impl WatchConfig {
 /// Replaces the old `ChromaConfig`. The `enabled` flag gates opening
 /// the `vectors.sqlite` file and loading the fastembed ONNX model —
 /// when false, retrieval falls back to BM25 + graph only.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Default, Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct VectorStoreConfig {
-    /// Enable the in-process vector store. Default `true` — the
-    /// installer pre-downloads the `multilingual-e5-small` weights into
-    /// the shared fastembed cache, so there's no first-call stall to
-    /// guard against. Set to `false` to disable semantic retrieval
-    /// (BM25 + graph still work).
+    /// Enable the in-process vector store. **Default `false`.**
+    ///
+    /// Semantic retrieval costs a ~465 MB model cache and a resident
+    /// ONNX session whose CPU arena ratchets to ~150-300 MB, and it is the
+    /// single heaviest thing this tool does. BM25 + symbol + graph retrieval
+    /// work without it and cover most recalls, so it is opt-in rather than
+    /// something a new user pays for before deciding they want it.
+    ///
+    /// Turn it on per project in `<root>/config.toml`:
+    ///
+    /// ```toml
+    /// [vector_store]
+    /// enabled = true
+    /// ```
+    ///
+    /// then run `hoangsa-memory prefetch-embed` once to warm the shared
+    /// cache. A global `<install_root>/no-embed` marker still overrides this
+    /// to `false` — see [`Self::is_effectively_enabled`].
     pub enabled: bool,
     /// Override the on-disk location of `vectors.sqlite`. When `None`,
     /// falls back to `StoreRoot::vectors_path()`.
     pub data_path: Option<String>,
 }
 
-impl Default for VectorStoreConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            data_path: None,
-        }
-    }
-}
+
 
 impl VectorStoreConfig {
     /// Load `<root>/config.toml` if it exists, returning the
@@ -345,10 +351,89 @@ impl VectorStoreConfig {
     ///
     /// Callers gate the vector store on this rather than the raw `enabled`
     /// field so that `--no-embed` at install time durably prevents the
-    /// ~118 MB model download — otherwise a per-project default of
+    /// ~465 MB model cache — otherwise a per-project default of
     /// `enabled = true` would pull the weights lazily on first use.
     pub fn is_effectively_enabled(&self) -> bool {
         self.enabled && !hoangsa_memory_store::embeddings_disabled_globally()
+    }
+}
+
+/// LLM reranking of recall results. Mirrors the `[rerank]` table in
+/// `<root>/config.toml`.
+///
+/// Every ranking stage before this one scores on form — term overlap,
+/// identifier equality, graph edges, rank position. None reads a chunk and
+/// asks whether it answers the question. This pass does, at the cost of one
+/// model round-trip per recall, which is why it is off by default.
+///
+/// ```toml
+/// [rerank]
+/// enabled = true
+/// # Optional: how many fused results to show the model. Default 24.
+/// candidates = 24
+/// # Optional: seconds before giving up and keeping the fused order.
+/// timeout_secs = 20
+/// # Optional: override the model invocation. The prompt is appended as the
+/// # final argument. Defaults to `claude -p`, then `codex exec`.
+/// command = ["claude", "-p"]
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RerankConfig {
+    /// Enable the pass. Default `false` — recall is on the agent's hot path
+    /// and must not grow a model call because someone upgraded.
+    pub enabled: bool,
+    /// How many post-fusion results to hand the model. Clamped to `[2, 100]`
+    /// at load: too few and the pass cannot change anything, too many and the
+    /// prompt costs more than the ranking is worth.
+    pub candidates: usize,
+    /// Seconds to wait for the model before falling back to the fused order.
+    pub timeout_secs: u64,
+    /// Explicit model argv. Empty means "probe PATH for a harness CLI".
+    pub command: Vec<String>,
+}
+
+impl Default for RerankConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            candidates: 24,
+            timeout_secs: 20,
+            command: Vec::new(),
+        }
+    }
+}
+
+impl RerankConfig {
+    /// Load `<root>/config.toml`, returning the `[rerank]` table or
+    /// [`Self::default`]. Tolerant like the other loaders: a malformed file
+    /// warns and falls back rather than breaking recall.
+    pub async fn load_or_default(root: &Path) -> Self {
+        let path = root.join("config.toml");
+        let text = match tokio::fs::read_to_string(&path).await {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Self::default(),
+            Err(e) => {
+                tracing::warn!(error = %e, path = %path.display(),
+                    "rerank: could not read config.toml, using defaults");
+                return Self::default();
+            }
+        };
+        Self::from_toml_text(&text, &path)
+    }
+
+    /// Parse from raw TOML text. Split out so tests don't need a file.
+    pub fn from_toml_text(text: &str, path: &Path) -> Self {
+        let mut cfg = match toml::from_str::<ConfigFile>(text) {
+            Ok(cf) => cf.rerank.unwrap_or_default(),
+            Err(e) => {
+                tracing::warn!(error = %e, path = %path.display(),
+                    "rerank: config.toml parse error, using defaults");
+                Self::default()
+            }
+        };
+        cfg.candidates = cfg.candidates.clamp(2, 100);
+        cfg
     }
 }
 
@@ -369,6 +454,8 @@ struct ConfigFile {
     watch: Option<WatchConfig>,
     #[serde(default)]
     vector_store: Option<VectorStoreConfig>,
+    #[serde(default)]
+    rerank: Option<RerankConfig>,
     /// Legacy key — read when `[vector_store]` is absent so existing
     /// `config.toml` files keep working during the Chroma → fastembed
     /// migration.
@@ -629,5 +716,29 @@ mod tests {
         assert_eq!(idx.ignore, vec!["dist/".to_string()]);
         assert_eq!(out.max_body_lines, 80);
         assert!((ret.rerank_markdown_boost - 1.6).abs() < 1e-6);
+    }
+
+    /// The vector store is opt-in. It costs a ~465 MB download and a resident
+    /// ONNX session, so a fresh install must not pay for it before the user
+    /// asks — and an explicit `enabled = true` must still turn it on.
+    #[test]
+    fn vector_store_is_off_until_explicitly_enabled() {
+        assert!(
+            !VectorStoreConfig::default().enabled,
+            "semantic retrieval must be opt-in"
+        );
+        let path = std::path::Path::new("config.toml");
+        assert!(
+            !VectorStoreConfig::from_toml_text("", path).enabled,
+            "an empty config must not enable it"
+        );
+        assert!(
+            !VectorStoreConfig::from_toml_text("[retrieve]\n", path).enabled,
+            "an unrelated table must not enable it"
+        );
+        assert!(
+            VectorStoreConfig::from_toml_text("[vector_store]\nenabled = true\n", path).enabled,
+            "explicit opt-in must be honoured"
+        );
     }
 }

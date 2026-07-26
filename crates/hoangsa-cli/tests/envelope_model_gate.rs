@@ -1,10 +1,12 @@
-//! Drift gate C: the worker prompt emitted by `cmd_envelope` must stamp
-//! `MODEL: {model}` as the FIRST line of the format string.
+//! Drift gate C: the worker prompt emitted by `cmd_envelope` must open with
+//! a routing stamp — `MODEL: {model}` on Claude, `REASONING EFFORT` on Codex.
 //!
-//! Guards the model-routing contract: workers must inherit the exact model
+//! Guards the model-routing contract: workers must inherit the exact routing
 //! chosen by the orchestrator. A past incident caused workers to run on the
 //! wrong tier because the orchestrator forgot to pass the MODEL line and the
-//! worker inherited the session default instead.
+//! worker inherited the session default instead. Codex is covered too — it
+//! has no per-subagent model knob, so the tier is routed as reasoning effort
+//! and losing that stamp reproduces the same failure there.
 
 use std::path::Path;
 
@@ -30,42 +32,57 @@ fn envelope_worker_prompt_starts_with_model_line() {
         "envelope.rs does not contain 'MODEL: {{model}}' — model-routing contract broken"
     );
 
-    // Assert 2: `MODEL: {model}` appears BEFORE `You are a HOANGSA worker`
-    // in byte order, which guarantees the MODEL stamp is emitted first in
-    // the formatted prompt.
-    let model_pos = src
-        .find("MODEL: {model}")
-        .expect("MODEL: {model} must exist");
-    let body_pos = src
-        .find("You are a HOANGSA worker")
-        .expect("'You are a HOANGSA worker' must exist in envelope.rs");
-
+    // Assert 2: the Codex branch stamps a reasoning effort. Codex has no
+    // per-subagent model knob, so the tier is routed as effort there — a
+    // Codex worker with no routing stamp is the same incident in a
+    // different harness.
     assert!(
-        model_pos < body_pos,
-        "MODEL: {{model}} (byte {model_pos}) must appear BEFORE \
-         'You are a HOANGSA worker' (byte {body_pos}) in envelope.rs — \
-         the MODEL stamp must be the first line of the worker prompt"
+        src.contains("REASONING EFFORT"),
+        "envelope.rs does not stamp 'REASONING EFFORT' — Codex workers would \
+         get no routing signal at all"
     );
 
-    // Assert 3: the worker-prompt format! call starts its string literal with
-    // `"MODEL: {model}`. We identify the prompt format! by the unique
-    // `let prompt = format!(` binding, then verify the very next non-whitespace
-    // token is `"MODEL: {model}`.
-    //
-    // We search for `let prompt = format!(` followed (on the next line) by
-    // `"MODEL: {model}` as a simple two-line proximity check.
+    // Assert 3: both stamps are built into `routing_line`, and that binding
+    // is established BEFORE the prompt is formatted.
+    let routing_pos = src
+        .find("let routing_line =")
+        .expect("'let routing_line =' must appear in envelope.rs");
     let prompt_decl = "let prompt = format!(";
     let decl_pos = src
         .find(prompt_decl)
         .expect("'let prompt = format!(' must appear in envelope.rs");
-    // Everything after the `format!(` open paren.
+    assert!(
+        routing_pos < decl_pos,
+        "routing_line (byte {routing_pos}) must be built before the prompt \
+         format! (byte {decl_pos})"
+    );
+    let routing_block = &src[routing_pos..decl_pos];
+    for stamp in ["MODEL: {model}", "REASONING EFFORT"] {
+        assert!(
+            routing_block.contains(stamp),
+            "'{stamp}' must be produced inside the routing_line binding, not \
+             somewhere the prompt never reads"
+        );
+    }
+
+    // Assert 4: the worker-prompt format! string starts with the routing
+    // line, so whichever harness is active, its stamp is the first thing a
+    // worker sees.
     let after_open = &src[decl_pos + prompt_decl.len()..];
-    // Trim leading whitespace (newline + spaces/tabs after the open paren).
     let trimmed = after_open.trim_start();
     assert!(
-        trimmed.starts_with("\"MODEL: {model}"),
-        "The worker-prompt format! string must start with '\"MODEL: {{model}}' \
+        trimmed.starts_with("\"{routing_line}"),
+        "The worker-prompt format! string must start with '\"{{routing_line}}' \
          but starts with: {:?}",
         &trimmed[..trimmed.len().min(60)]
+    );
+
+    // Assert 5: the body still follows the stamp.
+    let body_pos = src
+        .find("You are a HOANGSA worker")
+        .expect("'You are a HOANGSA worker' must exist in envelope.rs");
+    assert!(
+        decl_pos < body_pos,
+        "the prompt body must come after the routing stamp"
     );
 }

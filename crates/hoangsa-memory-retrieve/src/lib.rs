@@ -24,6 +24,7 @@
 #![deny(rust_2018_idioms)]
 #![warn(missing_docs)]
 
+pub mod rerank;
 pub mod archive;
 pub mod config;
 pub mod enrich;
@@ -101,12 +102,14 @@ async fn cached_retrieve_config(root: &std::path::Path) -> RetrieveConfig {
 /// always runs and the caller-supplied synthesizer is plugged in.
 pub async fn recall(store: StoreRoot, q: Query, mode: Mode) -> Result<Retrieval> {
     let retrieve_cfg = cached_retrieve_config(&store.path).await;
+    let rerank_cfg = crate::config::RerankConfig::load_or_default(&store.path).await;
     let vectors = vector_col_from_config(&store.path).await;
     match mode {
         Mode::Zero => {
             Retriever::new(store)
                 .with_vector_store(vectors)
                 .with_markdown_boost(retrieve_cfg.rerank_markdown_boost)
+                .with_rerank(rerank_cfg.clone())
                 .recall(&q)
                 .await
         }
@@ -114,6 +117,7 @@ pub async fn recall(store: StoreRoot, q: Query, mode: Mode) -> Result<Retrieval>
             let synth: Option<Arc<dyn Synthesizer>> = synthesizer.map(Arc::from);
             Retriever::with_full(store, vectors, synth)
                 .with_markdown_boost(retrieve_cfg.rerank_markdown_boost)
+                .with_rerank(rerank_cfg.clone())
                 .recall_full(&q)
                 .await
         }

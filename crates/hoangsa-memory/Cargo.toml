@@ -17,6 +17,7 @@ hoangsa-memory-core     = { workspace = true }
 hoangsa-memory-parse    = { workspace = true }
 hoangsa-memory-store    = { workspace = true }
 hoangsa-memory-retrieve = { workspace = true }
+hoangsa-memory-policy   = { workspace = true }
 hoangsa-memory-mcp      = { workspace = true }
 
 tokio                = { workspace = true, features = ["signal", "process", "io-std", "net"] }

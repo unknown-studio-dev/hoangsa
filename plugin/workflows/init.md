@@ -112,21 +112,32 @@ Present the 3 profiles with cost context:
 ```
 Model Profiles:
 
-┌─────────────┬────────────┬────────────┬────────────┐
-│ Role        │ quality    │ balanced   │ budget     │
-├─────────────┼────────────┼────────────┼────────────┤
-│ researcher  │ opus       │ sonnet     │ haiku      │
-│ designer    │ opus       │ opus       │ sonnet     │
-│ planner     │ opus       │ sonnet     │ haiku      │
-│ orchestrator│ opus       │ opus       │ haiku      │
-│ worker      │ opus       │ sonnet     │ haiku      │
-│ reviewer    │ opus       │ sonnet     │ haiku      │
-│ tester      │ sonnet     │ haiku      │ haiku      │
-│ committer   │ sonnet     │ haiku      │ haiku      │
-├─────────────┼────────────┼────────────┼────────────┤
-│ Cost        │ $$$        │ $$         │ $          │
-│ Quality     │ Best       │ Good       │ OK         │
-└─────────────┴────────────┴────────────┴────────────┘
+┌─────────────┬────────────┬────────────┬────────────┬────────────┐
+│ Role        │ quality    │ balanced   │ budget     │ minimal    │
+├─────────────┼────────────┼────────────┼────────────┼────────────┤
+│ researcher  │ opus       │ sonnet     │ haiku      │ haiku      │
+│ designer    │ opus       │ opus       │ sonnet     │ sonnet     │
+│ planner     │ opus       │ sonnet     │ haiku      │ haiku      │
+│ orchestrator│ opus       │ opus       │ haiku      │ sonnet     │
+│ worker      │ opus       │ sonnet     │ haiku      │ haiku      │
+│ reviewer    │ opus       │ sonnet     │ haiku      │ haiku      │
+│ tester      │ sonnet     │ haiku      │ haiku      │ haiku      │
+│ committer   │ sonnet     │ haiku      │ haiku      │ haiku      │
+│ simplify    │ opus       │ sonnet     │ haiku      │ haiku      │
+├─────────────┼────────────┼────────────┼────────────┼────────────┤
+│ Cost        │ $$$        │ $$         │ $          │ $          │
+│ Quality     │ Best       │ Good       │ OK         │ OK         │
+└─────────────┴────────────┴────────────┴────────────┴────────────┘
+
+On Codex (`"harness": "codex"`) these tiers become reasoning efforts instead —
+fable/opus → `high`, sonnet → `medium`, haiku → `low` — and the Codex session
+model is left untouched. The profile choice below applies either way.
+
+`minimal` differs from `budget` in exactly one role: the orchestrator stays on
+sonnet instead of dropping to haiku. The orchestrator decides what every worker
+is told to build, so it is the one seat where the cheap tier tends to cost more
+in rework than it saves in tokens — which also makes `minimal` slightly more
+expensive than `budget`, despite the name.
 
 Roles:
   researcher   — research agents (codebase analysis, web search)
@@ -147,7 +158,8 @@ Use AskUserQuestion:
   options:
     - label: "balanced (recommended)", description: "Opus cho design, Sonnet cho code, Haiku cho ops — cân bằng chất lượng/chi phí"
     - label: "quality", description: "Opus cho hầu hết — chất lượng cao nhất, tốn token nhất"
-    - label: "budget", description: "Haiku/Sonnet — tiết kiệm token, phù hợp task đơn giản"
+    - label: "budget", description: "Haiku gần như toàn bộ (designer giữ Sonnet) — rẻ nhất, hợp task đơn giản"
+    - label: "minimal", description: "Như budget nhưng orchestrator giữ Sonnet — rẻ mà vẫn điều phối tỉnh táo"
   multiSelect: false
 
 ### 2c. Per-role overrides (optional)
@@ -375,7 +387,7 @@ If "Sửa ..." → jump back to the relevant step, re-run from there.
 After user confirms config, offer addon customization. Auto-detected addons may miss frameworks (e.g., NestJS detected only as "typescript"). This step lets users add/remove addons before saving.
 
 ```bash
-ADDON_LIST=$("$HOANGSA_ROOT/bin/hoangsa-cli" addon list .)
+ADDON_LIST=$("$HOANGSA_BIN" addon list .)
 ```
 
 Parse available addons and the auto-detected active list. Show:
@@ -408,7 +420,7 @@ If "Thêm addons" → show multi-select of inactive addons:
 
   For selected addons:
   ```bash
-  "$HOANGSA_ROOT/bin/hoangsa-cli" addon add . '["addon1","addon2"]'
+  "$HOANGSA_BIN" addon add . '["addon1","addon2"]'
   ```
 
 If "Bỏ addons" → show multi-select of active addons:
@@ -420,7 +432,7 @@ If "Bỏ addons" → show multi-select of active addons:
 
   For selected addons:
   ```bash
-  "$HOANGSA_ROOT/bin/hoangsa-cli" addon remove . '["addon1"]'
+  "$HOANGSA_BIN" addon remove . '["addon1"]'
   ```
 
 After changes, show updated addon list and proceed to Step 5.
@@ -432,7 +444,7 @@ After changes, show updated addon list and proceed to Step 5.
 Write `.hoangsa/config.json`:
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" config set . '<full config JSON>'
+"$HOANGSA_BIN" config set . '<full config JSON>'
 ```
 
 After config save, verify by reading back `.hoangsa/config.json`:
@@ -468,19 +480,19 @@ Full config structure:
         "name": "api",
         "path": "packages/api",
         "stack": "typescript",
+        "frameworks": ["nestjs"],
         "build": "npm run build",
         "test": "npx jest",
-        "lint": "npx eslint .",
-        "dev": "npm run dev"
+        "lint": "npx eslint ."
       },
       {
         "name": "ml-service",
         "path": "packages/ml",
         "stack": "python",
+        "frameworks": [],
         "build": null,
         "test": "pytest",
-        "lint": "ruff check .",
-        "dev": null
+        "lint": "ruff check ."
       }
     ],
     "ci": "github-actions",
@@ -557,9 +569,9 @@ If "Tuỳ chỉnh" → ask each one individually.
 Otherwise → save based on choice.
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . auto_taste true
-"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . auto_plate false
-"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . auto_serve false
+"$HOANGSA_BIN" pref set . auto_taste true
+"$HOANGSA_BIN" pref set . auto_plate false
+"$HOANGSA_BIN" pref set . auto_serve false
 ```
 
 ---
@@ -568,7 +580,7 @@ Otherwise → save based on choice.
 
 Configure quality and optimization settings that control cook/fix/menu/prepare workflows.
 
-These 6 settings are the same keys controlled by `pref set . profile <name>` presets. Init lets the user pick a preset or customize individually.
+These 6 settings are the same keys controlled by `pref set . workflow_profile <full|balanced|minimal>`. Init lets the user pick a preset or customize individually. Note this is **not** the top-level `profile` key from Step 2b — that one routes models (`quality|balanced|budget|minimal`) and must not be written here.
 
 Use AskUserQuestion:
   question: "Cấu hình quality & optimization cho workflow?"
@@ -580,7 +592,7 @@ Use AskUserQuestion:
     - label: "Tuỳ chỉnh", description: "Chọn on/off cho từng setting"
   multiSelect: false
 
-Preset values (save each via `"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . <key> <value>`):
+Preset values (save each via `"$HOANGSA_BIN" pref set . <key> <value>`):
 
 | Key | Recommended | Strict | Minimal |
 |-----|-------------|--------|---------|
@@ -632,7 +644,7 @@ Use AskUserQuestion:
        - label: "Off (recommended)", description: "hoangsa-memory là khuyến khích, worker có thể skip để tiết kiệm token"
        - label: "On", description: "Bắt buộc memory_impact/memory_recall trước mỗi edit — an toàn hơn, tốn token"
 
-Save each setting via `"$HOANGSA_ROOT/bin/hoangsa-cli" pref set .` accordingly.
+Save each setting via `"$HOANGSA_BIN" pref set .` accordingly.
 
 ---
 
@@ -650,7 +662,7 @@ Use AskUserQuestion:
   multiSelect: false
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" pref set . research_scope "<chosen value>"
+"$HOANGSA_BIN" pref set . research_scope "<chosen value>"
 ```
 
 ---
@@ -695,7 +707,7 @@ replaces the block between `<!-- hoangsa-memory-start -->` / `<!-- hoangsa-memor
 markers without touching anything else.
 
 ```bash
-"$HOANGSA_ROOT/bin/hoangsa-cli" memory-guidance sync .
+"$HOANGSA_BIN" memory-guidance sync .
 ```
 
 Run in both Flow A and Flow B — an empty project still benefits from the

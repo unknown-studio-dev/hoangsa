@@ -148,7 +148,9 @@ most "verified" features are actually caught broken.
 
 **Web:**
 ```bash
-npm run dev &            # or the project's dev script; note the URL/port
+npm run dev &            # read the real script name from the package's own
+                         # manifest (package.json "scripts"), not from memory;
+                         # note the URL/port it prints
 # Then drive it with Playwright (headed or screenshot) and read the screenshot back:
 npx playwright test --headed          # if E2E specs exist
 # or a one-off screenshot script — see references/web-testing.md "observe" section

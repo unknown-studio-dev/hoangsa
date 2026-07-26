@@ -76,15 +76,35 @@ pub fn default_hoangsa_home() -> Result<PathBuf, RegistryError> {
         .ok_or(RegistryError::NoHome)
 }
 
-/// True when `<root>/graph.redb` exists and is larger than a fresh empty
-/// redb file (~4 KiB header).
+/// True when this root holds a real index — i.e. something was actually
+/// indexed here, not merely opened.
+///
+/// This used to compare `graph.redb` against a "~4 KiB header" and was
+/// therefore always true: a freshly-created, zero-row redb measures
+/// **1,056,768 bytes**. So the stale-local detection this function exists for
+/// never fired — one misrouted `index` in a subdirectory left an empty root
+/// that shadowed the real global one for every later command, which then
+/// answered "no matches" forever.
+///
+/// The honest signal is tantivy: it writes segment files only once documents
+/// have been committed, so their presence means indexed content. `graph.redb`
+/// alone proves only that a store was opened.
 pub fn is_populated_root(root: &Path) -> bool {
-    let graph = root.join("graph.redb");
-    match std::fs::metadata(&graph) {
-        Ok(m) => m.is_file() && m.len() > 4096,
-        Err(_) => false,
-    }
+    let Ok(entries) = std::fs::read_dir(root.join("fts.tantivy")) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        e.path()
+            .extension()
+            .and_then(|x| x.to_str())
+            .is_some_and(|ext| SEGMENT_EXTS.contains(&ext))
+    })
 }
+
+/// Tantivy segment components. Any one of them means a commit happened;
+/// `meta.json` and lock files exist from the moment the index is created and
+/// prove nothing.
+const SEGMENT_EXTS: &[&str] = &["store", "idx", "term", "pos", "fast", "fieldnorm"];
 
 /// Resolve the `.hoangsa/memory/` data root via a 4-step chain:
 ///
@@ -220,6 +240,26 @@ impl Registry {
         crate::io::atomic_write(&path, &json).map_err(|source| RegistryError::Io {
             path: path.clone(),
             source,
+        })
+    }
+
+    /// Load → mutate → save under an exclusive lock on the registry file.
+    ///
+    /// Every `hoangsa-memory` invocation auto-registers its cwd, so hook-fired
+    /// CLIs, bootstrap workers and MCP spawns all race here. Unlocked, 40
+    /// concurrent registrations silently lost 20 projects — and a lost slug is
+    /// not cosmetic: the service daemon's registry watcher reads the removal
+    /// as a de-registration and unlinks that project's live socket.
+    pub fn update<T>(
+        hoangsa_home: &Path,
+        f: impl FnOnce(&mut Self) -> T,
+    ) -> Result<T, RegistryError> {
+        let path = registry_path(hoangsa_home);
+        crate::io::with_file_lock(&path, std::time::Duration::from_secs(5), || {
+            let mut registry = Self::load(hoangsa_home)?;
+            let out = f(&mut registry);
+            registry.save(hoangsa_home)?;
+            Ok(out)
         })
     }
 
@@ -440,5 +480,30 @@ mod tests {
         let sorted = reg.sorted();
         assert_eq!(sorted[0].slug, "new");
         assert_eq!(sorted[1].slug, "old");
+    }
+
+    /// The old heuristic compared `graph.redb` to a "~4 KiB header"; a fresh
+    /// zero-row redb is over 1 MB, so it answered `true` for every root that
+    /// had merely been opened — and the stale-local detection never fired.
+    #[test]
+    fn populated_root_needs_a_committed_segment_not_just_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        assert!(!is_populated_root(root), "empty dir is not populated");
+
+        // A store that was opened but never indexed: big redb, tantivy dir
+        // with only its metadata.
+        std::fs::create_dir_all(root.join("fts.tantivy")).unwrap();
+        std::fs::write(root.join("graph.redb"), vec![0u8; 2 * 1024 * 1024]).unwrap();
+        std::fs::write(root.join("fts.tantivy/meta.json"), "{}").unwrap();
+        std::fs::write(root.join("fts.tantivy/.tantivy-writer.lock"), "").unwrap();
+        assert!(
+            !is_populated_root(root),
+            "a 2 MB redb and a meta.json prove nothing was indexed"
+        );
+
+        // One committed segment is the signal.
+        std::fs::write(root.join("fts.tantivy/abc123.store"), "x").unwrap();
+        assert!(is_populated_root(root), "a segment file means indexed content");
     }
 }

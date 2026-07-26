@@ -20,10 +20,15 @@ On first run: auto-discovers MCP servers, prompts user to select a task manager,
 </objective>
 
 <execution_context>
-Resolve HOANGSA install path — check local first, then global:
-1. `${CLAUDE_PLUGIN_ROOT}/workflows/serve.md`
-2. `${CLAUDE_PLUGIN_ROOT}/workflows/serve.md`
-Read the first path that exists.
+Load the workflow:
+
+```bash
+hoangsa-cli workflow show serve
+```
+
+Its stdout IS the workflow — follow it. The command searches the
+project-local install, `$CLAUDE_CONFIG_DIR`, then the default profile,
+and lists every path it tried if nothing matched.
 </execution_context>
 
 <process>

@@ -61,6 +61,13 @@ impl RhaiRuntime {
     pub fn new() -> Self {
         let handlers: Arc<Mutex<Vec<RhaiHandler>>> = Arc::new(Mutex::new(Vec::new()));
         let mut engine = Engine::new();
+        // Bound the interpreter. A user handler with `loop { i += 1; }` had no
+        // ceiling at all, so it hung every tool call for that command with no
+        // diagnostic — the crate's fail-open promise covers handler *errors*,
+        // not non-termination. 10M ops is far above any realistic filter and
+        // still trips in well under a second.
+        engine.set_max_operations(10_000_000);
+        engine.set_max_call_levels(64);
         engine.register_static_module("proxy", build_proxy_module().into());
         Self {
             engine,

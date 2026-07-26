@@ -378,7 +378,15 @@ fn cmd_hook_rewrite(codex: bool) -> ExitCode {
         return ExitCode::from(0);
     }
 
-    let rewritten = format!("hsp {command}");
+    // `hsp` must go AFTER any leading `VAR=value` assignments, not before
+    // them. `hsp FOO=1 cargo test` makes the shell exec a program literally
+    // named `FOO=1` — every such tool call died with 127. Keeping the
+    // assignments in front lets the shell apply them to `hsp`, which passes
+    // its environment to the child, so the semantics are preserved.
+    let rewritten = match split_env_prefix(&command) {
+        ("", rest) => format!("hsp {rest}"),
+        (prefix, rest) => format!("{prefix} hsp {rest}"),
+    };
     let out = if codex {
         serde_json::json!({
             "hookSpecificOutput": {
@@ -466,17 +474,46 @@ fn has_shell_composition(command: &str) -> bool {
     false
 }
 
+/// Split leading `VAR=value` assignments from the rest of the command.
+///
+/// `FOO=1 BAR=2 cargo test` → `("FOO=1 BAR=2", "cargo test")`.
+/// No assignments → `("", cmd)`. Uses the same token test as
+/// [`first_command_token`] so the two can never disagree about where the
+/// command actually starts.
+fn split_env_prefix(cmd: &str) -> (&str, &str) {
+    let mut rest = cmd.trim_start();
+    let consumed_from = rest;
+    let mut assigned = 0usize;
+    while let Some(tok) = rest.split_whitespace().next() {
+        if !is_env_assignment(tok) {
+            break;
+        }
+        let after = rest[tok.len()..].trim_start();
+        assigned = consumed_from.len() - after.len();
+        rest = after;
+    }
+    if assigned == 0 {
+        return ("", cmd.trim_start());
+    }
+    (consumed_from[..assigned].trim_end(), rest)
+}
+
+/// `FOO=bar` style leading assignment (uppercase or `_` first char, has `=`,
+/// not a flag).
+fn is_env_assignment(tok: &str) -> bool {
+    tok.contains('=')
+        && !tok.starts_with('-')
+        && tok
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_uppercase() || c == '_')
+}
+
 /// Pull the first non-assignment, non-flag token out of a Bash command
 /// string. `FOO=bar BAZ=qux git log` → `git`.
 fn first_command_token(cmd: &str) -> Option<String> {
     for tok in cmd.split_whitespace() {
-        if tok.contains('=')
-            && !tok.starts_with('-')
-            && tok
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_uppercase() || c == '_')
-        {
+        if is_env_assignment(tok) {
             continue;
         }
         return Some(

@@ -130,19 +130,25 @@ pub fn run_with_cap(
     #[cfg(unix)]
     ACTIVE_CHILD_PID.store(0, Ordering::SeqCst);
 
-    // Reader threads exit naturally when the child closes the pipe, but
-    // join anyway so we can unwrap the state after the child is reaped.
-    let _ = out_handle.join();
-    let _ = err_handle.join();
+    // Reader threads normally exit when the child closes the pipe — but a
+    // grandchild that inherited stdout (a backgrounded watcher, a daemon
+    // spawned by an npm script) holds the write end open after the child is
+    // reaped, and an unbounded join hangs the tool call until THAT process
+    // dies. Wait briefly, then take what we have.
+    let drained = join_with_timeout(out_handle, READER_DRAIN_TIMEOUT)
+        && join_with_timeout(err_handle, READER_DRAIN_TIMEOUT);
+    if !drained {
+        eprintln!(
+            "[hsp] a background process still holds the output pipe; \
+             reporting what the command produced so far"
+        );
+    }
 
-    let out = Arc::try_unwrap(out_state)
-        .expect("reader holds last ref")
-        .into_inner()
-        .expect("stdout state lock");
-    let err = Arc::try_unwrap(err_state)
-        .expect("reader holds last ref")
-        .into_inner()
-        .expect("stderr state lock");
+    // `try_unwrap` only succeeds once the reader threads are gone. If one is
+    // still parked on a pipe we cannot take ownership, so clone the state out
+    // from behind the lock instead of panicking.
+    let out = take_state(out_state, "stdout");
+    let err = take_state(err_state, "stderr");
 
     let exit = exit_code(&status);
 
@@ -213,7 +219,7 @@ extern "C" fn forward_signal(sig: i32) {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct StreamState {
     buf: Vec<u8>,
     total: usize,
@@ -268,4 +274,41 @@ fn exit_code(status: &std::process::ExitStatus) -> i32 {
         }
     }
     1
+}
+
+/// How long to wait for a reader thread after the child has exited. Generous
+/// enough for a normal pipe flush, short enough that a leaked grandchild
+/// cannot pin a tool call.
+const READER_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Join `handle`, giving up after `timeout`. Returns `true` when the thread
+/// finished. `JoinHandle` has no timed join, so poll `is_finished`.
+fn join_with_timeout(handle: std::thread::JoinHandle<()>, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while !handle.is_finished() {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let _ = handle.join();
+    true
+}
+
+/// Take the captured state whether or not the reader thread has exited.
+///
+/// `Arc::try_unwrap` only succeeds once the reader is gone; with the bounded
+/// join above that is no longer guaranteed, so fall back to cloning out from
+/// behind the lock rather than panicking on a leaked grandchild.
+fn take_state(state: Arc<Mutex<StreamState>>, which: &str) -> StreamState {
+    match Arc::try_unwrap(state) {
+        Ok(cell) => cell.into_inner().unwrap_or_else(|e| e.into_inner().clone()),
+        Err(shared) => match shared.lock() {
+            Ok(g) => g.clone(),
+            Err(poisoned) => {
+                eprintln!("[hsp] {which} reader panicked; reporting partial output");
+                poisoned.into_inner().clone()
+            }
+        },
+    }
 }

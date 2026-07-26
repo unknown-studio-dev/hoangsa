@@ -134,18 +134,48 @@ const DEFAULT_CONFIG_TOML: &str = r#"# hoangsa-memory config. All fields are opt
 # Default: false.
 # grounding_check = false
 
-# How new facts and lessons land in memory:
-#   "auto"   — writes go straight to MEMORY.md / LESSONS.md (default).
-#   "review" — writes land in *.pending.md; a human must `memory_promote`
-#              (or the CLI equivalent) before they stick.
-# memory_mode = "auto"
-
 # Lessons whose failure ratio exceeds this (once they have at least
 # `quarantine_min_attempts` attempts) are moved to LESSONS.quarantined.md
 # during the forget pass. Default: 0.66 (≈ twice as many failures as
 # successes).
 # quarantine_failure_ratio = 0.66
 # quarantine_min_attempts  = 5
+
+[dream]
+# The dream pass: while the daemon is idle, a model re-reads MEMORY.md /
+# LESSONS.md / USER.md and consolidates them — merging duplicates, rewriting
+# stale entries, dropping ones that are wrong or obsolete. This is the half
+# the forget pass can't do: TTL and counters can't tell that a fact stopped
+# being true. Run it by hand with `hoangsa-memory memory dream`.
+#
+# Off by default — it spends tokens.
+# enabled = false
+
+# What the pass may do with its verdicts:
+#   "review" — proposals go to DREAM.md and nothing else is touched (default).
+#   "auto"   — verdicts are applied. Dropped entries are archived to
+#              <SURFACE>.dropped.md with the model's reason, and every op is
+#              logged to memory-history.jsonl, so nothing vanishes silently.
+# Anything not recognised as "auto" is treated as review.
+# mode = "review"
+
+# Don't dream until the project has been untouched this long (minutes),
+# and never more often than this many hours apart.
+# idle_minutes       = 20
+# min_interval_hours = 12
+
+# Skip the pass when the three surfaces hold fewer entries than this —
+# there's nothing to consolidate yet.
+# min_entries = 8
+
+# Wall-clock limit for the model subprocess, in seconds.
+# timeout_secs = 300
+
+# Explicit argv for the model. The prompt is appended as the final argument.
+# Empty (the default) means auto-detect: `claude -p`, then `codex exec`.
+# The subprocess runs in the project root, so the model can verify a claim
+# against the actual code before calling it stale.
+# command = ["claude", "-p", "--model", "claude-sonnet-5"]
 
 [output]
 # Recall/impact text-rendering budgets. Structured JSON (`--json` /

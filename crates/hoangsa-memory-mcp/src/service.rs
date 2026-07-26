@@ -47,6 +47,12 @@ pub const DEFAULT_IDLE_EVICTION: Duration = Duration::from_secs(30 * 60);
 /// crossing the threshold gets dropped within one sweep.
 pub const DEFAULT_EVICTION_SCAN: Duration = Duration::from_secs(5 * 60);
 
+/// Cadence for the dream sweep. Deliberately slow: the pass itself is
+/// rate-limited by `[dream].min_interval_hours` (default 12h) and gated on
+/// `[dream].idle_minutes`, so a tight scan would only burn wakeups deciding
+/// to do nothing.
+pub const DEFAULT_DREAM_SCAN: Duration = Duration::from_secs(15 * 60);
+
 /// Default idle window before the shared `TextEmbedding` (ONNX session +
 /// tokenizer + its CPU memory arena, ~150-300 MB once arena ratchets up)
 /// is dropped. Short and eager: most callers do a burst of embeds and
@@ -159,18 +165,29 @@ impl ServiceState {
         let Some((_, slot)) = self.projects.remove(slug) else {
             return false;
         };
-        if let Ok(mut g) = slot.listener.lock()
-            && let Some(handle) = g.take() {
-                handle.abort();
-            }
+        // Only OUR listener handle proves we own the socket file. When
+        // `spawn_listener` skipped the bind because a stdio instance already
+        // owned it, the slot has no handle — unlinking then pulls the socket
+        // out from under a live process, and the next spawn for that project
+        // sees no socket, opens the store directly, and hits redb's lock: the
+        // crash loop the relay exists to prevent.
+        let we_bound_it = slot
+            .listener
+            .lock()
+            .ok()
+            .and_then(|mut g| g.take())
+            .map(|handle| handle.abort())
+            .is_some();
         if let Some(server) = slot.server.get() {
             server.abort_watcher();
         }
-        let sock = project_socket_path(&self.hoangsa_home, slug);
-        if let Err(e) = std::fs::remove_file(&sock)
-            && e.kind() != std::io::ErrorKind::NotFound {
-                warn!(slug, sock = %sock.display(), error = %e, "removing socket file failed");
-            }
+        if we_bound_it {
+            let sock = project_socket_path(&self.hoangsa_home, slug);
+            if let Err(e) = std::fs::remove_file(&sock)
+                && e.kind() != std::io::ErrorKind::NotFound {
+                    warn!(slug, sock = %sock.display(), error = %e, "removing socket file failed");
+                }
+        }
         info!(slug, "unregistered");
         true
     }
@@ -373,6 +390,11 @@ pub async fn run_multi_listener(state: Arc<ServiceState>) -> anyhow::Result<()> 
         run_eviction_loop(evict_state, DEFAULT_IDLE_EVICTION, DEFAULT_EVICTION_SCAN).await;
     });
 
+    let dream_state = state.clone();
+    supervisor.spawn(async move {
+        run_dream_loop(dream_state, DEFAULT_DREAM_SCAN).await;
+    });
+
     let embedder = state.embedder.clone();
     supervisor.spawn(async move {
         run_embedder_eviction_loop(
@@ -395,13 +417,27 @@ pub async fn run_multi_listener(state: Arc<ServiceState>) -> anyhow::Result<()> 
         _ = tokio::signal::ctrl_c() => {
             info!("ctrl-c received; shutting down");
         }
-        Some(res) = supervisor.join_next() => {
-            if let Err(e) = res {
-                warn!(error = %e, "control task panicked");
-            }
+        // A control task ending is NOT a shutdown signal. This arm used to
+        // return on the first one, so a registry watcher that failed to arm
+        // (unwritable ~/.hoangsa, or inotify watch limits on Linux — routine
+        // on a dev box) took down every bound project listener and exited 0
+        // with nothing but a warn line. Drain them instead and keep serving.
+        _ = drain_control_tasks(&mut supervisor) => {
+            warn!("all control tasks ended; shutting down");
         }
     }
     Ok(())
+}
+
+/// Await every control task, logging each exit. Returns only when the set is
+/// empty — i.e. when there is genuinely nothing left supervising.
+async fn drain_control_tasks(supervisor: &mut JoinSet<()>) {
+    while let Some(res) = supervisor.join_next().await {
+        match res {
+            Ok(()) => warn!("a control task exited; project listeners keep serving"),
+            Err(e) => warn!(error = %e, "a control task panicked; project listeners keep serving"),
+        }
+    }
 }
 
 /// Watch `~/.hoangsa/projects.json` for new entries and bind a listener for
@@ -480,6 +516,35 @@ async fn reconcile_registry(state: &Arc<ServiceState>) -> anyhow::Result<()> {
         }
     }
 
+    // Retry: slugs we registered but never bound — `spawn_listener` returns
+    // Ok(()) with no handle when another process owned the socket, and the
+    // add-loop above skips anything already `known`, so without this the slot
+    // stayed listener-less for the daemon's whole lifetime even after the
+    // other process exited. Every CLI for that project then falls back to
+    // direct mode and re-contends on the store lock.
+    for slug in &known {
+        if !registry_slugs.contains(slug) {
+            continue;
+        }
+        let unbound = state
+            .projects
+            .get(slug)
+            .map(|r| {
+                r.value()
+                    .listener
+                    .lock()
+                    .map(|g| g.is_none())
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+        if !unbound {
+            continue;
+        }
+        if let Err(e) = spawn_listener(state, slug).await {
+            debug!(slug, error = %e, "rebind attempt failed; will retry on next reconcile");
+        }
+    }
+
     // Remove: slugs we have bound but that no longer exist in the
     // registry. Orphan-with-data-dir entries (registered with no
     // source_path) are *not* removed — only registry-driven slugs go.
@@ -519,6 +584,87 @@ pub async fn run_eviction_loop(state: Arc<ServiceState>, idle: Duration, scan: D
         for (slug, server) in state.opened_servers() {
             if server.last_access_unix() <= cutoff && server.evict_resources().await {
                 debug!(slug, idle_secs = now - server.last_access_unix(), "evicted");
+            }
+        }
+    }
+}
+
+/// Background memory-maintenance sweep: for every project that has gone
+/// quiet, run the deterministic forget pass and then the LLM dream pass.
+///
+/// Ordering matters. The forget pass is cheap and deterministic — TTL,
+/// capacity, decay, confidence — so it runs first and shrinks the surface
+/// the dream pass has to reason about. The dream pass then handles what
+/// clocks and counters cannot see: duplicates, contradictions, and facts
+/// that quietly stopped being true.
+///
+/// Everything here is best-effort. A project whose memory store won't open,
+/// or whose model subprocess fails, gets a warning and is retried on the
+/// next sweep — memory maintenance must never take the daemon down.
+///
+/// Both passes are self-gating: `forget_pass` no-ops when nothing is past
+/// its threshold, and `dream_pass` returns a skip unless `[dream].enabled`
+/// is set and `min_interval_hours` has elapsed. Dreaming is opt-in per
+/// project, so on a default install this loop only ever checks the clock.
+pub async fn run_dream_loop(state: Arc<ServiceState>, scan: Duration) {
+    loop {
+        tokio::time::sleep(scan).await;
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+
+        for (slug, server) in state.opened_servers() {
+            let root = server.inner.root.clone();
+            let cfg = hoangsa_memory_policy::DreamConfig::load_or_default(&root).await;
+            if !cfg.enabled {
+                continue;
+            }
+            // Stay off the critical path: only sweep a project the user
+            // has stopped touching.
+            let idle_secs = now.saturating_sub(server.last_access_unix());
+            if idle_secs < (cfg.idle_minutes as i64) * 60 {
+                continue;
+            }
+            // Cheap check before doing anything expensive — avoids opening
+            // the episode log 96 times a day for a project that dreams once.
+            if !hoangsa_memory_policy::dream::interval_elapsed(&root, cfg.min_interval_hours).await
+            {
+                continue;
+            }
+
+            match hoangsa_memory_policy::MemoryManager::open(&root).await {
+                Ok(mgr) => match mgr.forget_pass().await {
+                    Ok(r) => debug!(
+                        slug,
+                        lessons_dropped = r.lessons_dropped,
+                        lessons_quarantined = r.lessons_quarantined,
+                        "dream loop: forget pass done"
+                    ),
+                    Err(e) => warn!(slug, error = %e, "dream loop: forget pass failed"),
+                },
+                Err(e) => {
+                    warn!(slug, error = %e, "dream loop: could not open memory manager");
+                    continue;
+                }
+            }
+
+            match hoangsa_memory_policy::dream_pass(
+                &root,
+                hoangsa_memory_policy::DreamOpts::default(),
+            )
+            .await
+            {
+                Ok(r) if r.was_skipped() => {
+                    debug!(slug, reason = ?r.skipped, "dream loop: skipped");
+                }
+                Ok(r) => info!(
+                    slug,
+                    reviewed = r.entries_reviewed,
+                    dropped = r.dropped,
+                    merged = r.merged,
+                    rewritten = r.rewritten,
+                    applied = r.applied,
+                    "dream loop: pass complete"
+                ),
+                Err(e) => warn!(slug, error = %e, "dream loop: dream pass failed"),
             }
         }
     }
@@ -797,6 +943,14 @@ mod tests {
         pin_test_install_root();
         let mem_root = project_memory_root(home.path(), "alpha");
         std::fs::create_dir_all(&mem_root).unwrap();
+        // The vector store is opt-in (default `enabled = false`), and this
+        // test is about EVICTION, not about the default — so turn it on
+        // explicitly rather than relying on whatever the default happens to be.
+        std::fs::write(
+            mem_root.join("config.toml"),
+            "[vector_store]\nenabled = true\n",
+        )
+        .unwrap();
 
         let state = ServiceState::new(home.path().to_path_buf());
         state.register("alpha".into(), mem_root, None);
@@ -805,7 +959,7 @@ mod tests {
         let _vs = server
             .get_vector_store()
             .await
-            .expect("vector store should open with default config");
+            .expect("vector store opens when explicitly enabled");
         assert!(server.vector_store_is_warm().await, "warm-up populated the slot");
 
         assert!(server.evict_resources().await, "first evict reports work");

@@ -31,6 +31,7 @@ rusqlite     = { workspace = true }
 # via `ort`) and stored as BLOBs in the per-project vectors SQLite file.
 # Replaces the old ChromaDB Python sidecar — see the `vector` module.
 fastembed    = { workspace = true }
+ort          = { workspace = true }
 
 [dev-dependencies]
 tokio     = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }

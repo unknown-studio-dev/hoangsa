@@ -2,8 +2,8 @@
 //! messages, drive `Server::handle` directly, and assert on the result
 //! payload shape. No real stdio involved.
 
-use serde_json::{Value, json};
 use hoangsa_memory_mcp::{Server, proto::RpcIncoming};
+use serde_json::{Value, json};
 
 async fn open(tmp: &tempfile::TempDir) -> Server {
     Server::open(tmp.path()).await.expect("server opens")
@@ -119,8 +119,14 @@ async fn resources_list_and_read_markdown_files() {
         .iter()
         .map(|r| r["uri"].as_str().unwrap().to_string())
         .collect();
-    assert!(uris.iter().any(|u| u == "hoangsa-memory://memory/MEMORY.md"));
-    assert!(uris.iter().any(|u| u == "hoangsa-memory://memory/LESSONS.md"));
+    assert!(
+        uris.iter()
+            .any(|u| u == "hoangsa-memory://memory/MEMORY.md")
+    );
+    assert!(
+        uris.iter()
+            .any(|u| u == "hoangsa-memory://memory/LESSONS.md")
+    );
 
     let resp = srv
         .handle(req(
@@ -717,10 +723,108 @@ pub fn generic<T: Into<Config>>(t: T) {}
             callers.push(n["fqn"].as_str().expect("fqn").to_string());
         }
     }
-    for expected in ["m::direct", "m::in_ref", "m::in_vec", "m::returns", "m::generic"] {
+    for expected in [
+        "m::direct",
+        "m::in_ref",
+        "m::in_vec",
+        "m::returns",
+        "m::generic",
+    ] {
         assert!(
             callers.iter().any(|f| f == expected),
             "missing {expected} in impact(Config, up): {callers:?}"
         );
     }
+}
+
+/// Hostile numeric arguments must be clamped, not honoured.
+///
+/// Every one of these came from a real fuzz run that pegged the machine at
+/// 890% CPU. `top_k` reached `TopDocs::with_limit(k)` / `Vec::with_capacity(k)`
+/// and, in the archive path, `k as i64` turned `usize::MAX` into `-1` — which
+/// SQLite reads as "no limit" and dumps the whole store. The graph traversals
+/// took depth and node budgets straight from the client while their sibling
+/// tools in the same file already clamped.
+#[tokio::test]
+async fn oversized_numeric_arguments_are_clamped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let srv = open(&tmp).await;
+
+    let hostile = [
+        (
+            "memory_recall",
+            json!({ "query": "x", "top_k": 1_000_000_000u64 }),
+        ),
+        (
+            "memory_turns_search",
+            json!({ "query": "a", "top_k": u64::MAX }),
+        ),
+        (
+            "memory_archive_search",
+            json!({ "query": "a", "top_k": u64::MAX }),
+        ),
+        (
+            "memory_graph_query",
+            json!({ "start": ["a"], "max_nodes": 100_000_000u64, "max_depth": 1_000_000u64 }),
+        ),
+        (
+            "memory_taint_paths",
+            json!({ "sources": [""], "max_depth": u64::MAX, "max_findings": u64::MAX }),
+        ),
+        (
+            "memory_graph_processes",
+            json!({ "entry_globs": ["*"], "max_depth": u64::MAX }),
+        ),
+    ];
+
+    for (tool, args) in hostile {
+        let r = srv
+            .handle(req(
+                1,
+                "tools/call",
+                json!({ "name": tool, "arguments": args }),
+            ))
+            .await;
+        assert!(r.is_some(), "{tool} produced no response at all");
+    }
+}
+
+/// Text that crosses the archive's display truncations must not panic — and
+/// must not be *persisted* in a state that re-crashes every later search.
+#[tokio::test]
+async fn multibyte_text_survives_archive_truncation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let srv = open(&tmp).await;
+
+    // 'あ' is 3 bytes, so byte 7 of the sha and byte 500 of the content both
+    // land inside a character.
+    let save = srv
+        .handle(req(
+            1,
+            "tools/call",
+            json!({
+                "name": "memory_turn_save",
+                "arguments": {
+                    "session_id": "セッションいろは",
+                    "role": "user",
+                    "content": "あ".repeat(400),
+                    "commit_sha": "日本語テストああ",
+                }
+            }),
+        ))
+        .await;
+    assert!(save.is_some(), "turn_save panicked on multibyte input");
+
+    // The poisoned-store case: searching must not re-crash on what we stored.
+    let search = srv
+        .handle(req(
+            2,
+            "tools/call",
+            json!({ "name": "memory_turns_search", "arguments": { "query": "あ" } }),
+        ))
+        .await;
+    assert!(
+        search.is_some(),
+        "turns_search panicked on stored multibyte text"
+    );
 }

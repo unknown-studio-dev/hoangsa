@@ -8,7 +8,11 @@
 #
 # Usage:
 #   scripts/install-local.sh [--global|--local] [--dry-run]
-#                            [--skip-build] [-- extra args forwarded to CLI]
+#                            [--skip-build] [--no-embed|--embed]
+#                            [-- extra args forwarded to CLI]
+#
+#   --no-embed  disable semantic embeddings and write a sticky marker
+#   --embed     clear that marker and pre-download the weights
 #
 # Environment variables:
 #   HOANGSA_INSTALL_DIR  Install root for all binaries (default: $HOME/.hoangsa)
@@ -36,6 +40,7 @@ IS_GLOBAL=0
 PASSTHROUGH=""
 HAS_MODE_FLAG=0
 SKIP_EMBED=0
+FORCE_EMBED=0
 
 append_arg() {
     quoted=$(printf "%s" "$1" | sed "s/'/'\\\\''/g")
@@ -53,6 +58,7 @@ for arg in "$@"; do
         --global) IS_GLOBAL=1; HAS_MODE_FLAG=1; append_arg "$arg" ;;
         --local)  HAS_MODE_FLAG=1; append_arg "$arg" ;;
         --no-embed) SKIP_EMBED=1 ;;
+        --embed) FORCE_EMBED=1 ;;
         -h|--help)
             sed -n '2,15p' "$0"
             exit 0
@@ -474,13 +480,24 @@ section "vector store"
 # --no-embed writes a `no-embed` marker under the install dir; the runtime
 # bins read it and force the vector store off, so the model is never fetched
 # lazily either. Skipping the prefetch alone would only defer the download.
+#
+# The marker is STICKY. A re-install without the flag used to silently delete
+# it and download ~400 MB — reverting a decision the user made on a previous
+# install, with no prompt and no mention in the summary. Semantic retrieval is
+# opt-in now anyway ([vector_store] enabled defaults to false), so there is
+# nothing to gain from clearing it behind their back. Pass --embed to turn it
+# back on deliberately.
 _embed_marker="$HOANGSA_INSTALL_DIR/no-embed"
-if [ "$SKIP_EMBED" -eq 0 ]; then
-    rm -f "$_embed_marker"
-    prefetch_embed_model
-else
+if [ "$SKIP_EMBED" -eq 1 ]; then
     : > "$_embed_marker"
     info "--no-embed — embeddings disabled (BM25 + graph only); model download skipped"
+elif [ "$FORCE_EMBED" -eq 1 ]; then
+    rm -f "$_embed_marker"
+    prefetch_embed_model
+elif [ -f "$_embed_marker" ]; then
+    info "no-embed marker present from a previous install — keeping it; pass --embed to re-enable"
+else
+    prefetch_embed_model
 fi
 
 # --- Hand off to the CLI ----------------------------------------------------

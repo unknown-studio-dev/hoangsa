@@ -26,11 +26,15 @@ Commands:
   /hoangsa:qc        QC from a spec — design test cases, execute, evidence-backed verdicts
   /hoangsa:fix       Hotfix — analyze bug → fix → auto-test
   /hoangsa:plate     Commit completed work with conventional message
+  /hoangsa:ship      Ship — code + security review, then push or open a PR
   /hoangsa:check     Show session progress overview
   /hoangsa:research  Deep research — codebase + external → RESEARCH.md
   /hoangsa:audit     Audit codebase — code smells, security, tech debt → AUDIT-REPORT.md
   /hoangsa:serve     Sync task status to external task manager
+  /hoangsa:rule      Manage project enforcement rules
+  /hoangsa:addon     Manage framework-specific worker-rule addons
   /hoangsa:index     Re-index codebase with hoangsa-memory
+  /hoangsa:blame     Something the agent did wasted your time — record why, so it stops
   /hoangsa:help      Show this help
   /hoangsa:update    Update HOANGSA to latest version
 
@@ -44,7 +48,7 @@ How it works:
 Key concepts:
   • Context engineering — each task gets fresh 200k context (no context rot)
   • Wave execution — DAG-aware parallel execution
-  • Model routing — 8 roles × 3 profiles, per-role overrides
+  • Model routing — 9 roles × 4 profiles, per-role overrides
   • Atomic commits — each task gets its own commit
   • 3-tier verification — static + behavioral ×3 + semantic review
   • Escalation ladder — retry → enrich → model escalate → human

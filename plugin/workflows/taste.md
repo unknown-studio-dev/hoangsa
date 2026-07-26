@@ -11,9 +11,9 @@ Independently verify what cook produced: run every task's acceptance, judge test
 `session latest` → `$SESSION_DIR/plan.json` (tasks + acceptance commands). No session → send the user to `/hoangsa:prepare`, stop.
 
 ```bash
-MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model tester)
-INTERACTION=$("$HOANGSA_ROOT/bin/hoangsa-cli" pref get . interaction_level)
-CONFIG=$("$HOANGSA_ROOT/bin/hoangsa-cli" config get .)
+MODEL=$("$HOANGSA_BIN" resolve-model tester)
+INTERACTION=$("$HOANGSA_BIN" pref get . interaction_level)
+CONFIG=$("$HOANGSA_BIN" config get .)
 ```
 
 `codebase.testing` / `codebase.packages[].test` are the fallback when a task's `acceptance` is missing or generic. `interaction_level`: detailed → full output per task; concise → pass/fail, expand failures only.
@@ -38,16 +38,28 @@ Never mark a task failed→passed (or skip one) without the user's explicit say-
 ## Verification passes
 
 **1. Acceptance per task** — run `acceptance`, record pass/fail with output.
-**Inheritance (no double-run):** if state.json has `verified_head` equal to the
-current `git rev-parse HEAD` and `tier2` starting with "pass", cook already
-ran the full suite at this exact commit — inherit that as Gate 1 (record
-`inherited from cook @ <head>` per task) and skip re-running acceptance.
-HEAD differs, record missing, or tier2 not pass → run everything as usual.
-Inheritance never covers passes 2–4: quality gate, change-aware targeting,
-and visual verification are taste's own work — that's where the independence
-lives, not in repeating identical commands at an identical commit.
+**Inheritance (no double-run) — narrow, and never silent:** cook's Tier 2 runs
+a *suite* (`cargo test -p <pkg>`); Gate 1 is a *per-task `acceptance`
+command*. Those are not the same check, so cook's result may only be inherited
+for a task whose `acceptance` is byte-identical to a command cook actually ran
+at this commit.
 
-**2. Change-aware targeting** — `memory_detect_changes({diff: "$(git diff main...HEAD)"})`: verify tests exercise the changed symbols themselves (not adjacent code); flag any changed symbol with d=1 dependents and zero coverage; feed into pass 3.
+Inherit only when ALL hold:
+- `state.json.verified_head` == `git rev-parse HEAD`, and `tier2` starts with "pass", and
+- the task's `acceptance` string appears verbatim in cook's recorded Tier 2 commands.
+
+Otherwise **run it**. Anything inherited is reported as
+`inherited from cook @ <head>` in the per-task line AND counted in the summary
+(`Gate 1: N run, M inherited`) — a reader must be able to see how much of the
+verification was actually re-derived.
+
+Since cook auto-chains here (`auto_taste`), HEAD almost always matches; a blanket
+inheritance therefore skipped the only gate in this phase that has a real command
+behind it, on every normal run, while this file claims independence twice.
+Inheritance never covers passes 2–4: quality gate, change-aware targeting, and
+visual verification are taste's own work.
+
+**2. Change-aware targeting** — `memory_detect_changes({diff: "$(git diff \"$BASE_BRANCH\"...HEAD)"})` (resolve `$BASE_BRANCH` via `git-context.md` Part A1 — hardcoding `main` yields an empty diff on any repo whose default branch is `master`/`develop`, so the whole pass silently no-ops): verify tests exercise the changed symbols themselves (not adjacent code); flag any changed symbol with d=1 dependents and zero coverage; feed into pass 3.
 
 **3. Test Quality Gate** (per task that passed acceptance; prompt-based — read test + production files side by side, no analysis tools):
 - *Fake-test patterns → FAIL:* test reproduces >3 lines of production logic verbatim; inline stubs where the framework has mocking utilities; assertions on hardcoded literals that never exercise production code; mocking the very function under test.

@@ -54,13 +54,16 @@ pub async fn run_query(
     let vectors = open_vector_store(&store).await;
 
     let retrieve_cfg = RetrieveConfig::load_or_default(root).await;
+    let rerank_cfg = hoangsa_memory_retrieve::config::RerankConfig::load_or_default(root).await;
     let r = if is_full {
         Retriever::with_full(store, vectors, synth)
             .with_markdown_boost(retrieve_cfg.rerank_markdown_boost)
+            .with_rerank(rerank_cfg.clone())
     } else {
         Retriever::new(store)
             .with_vector_store(vectors)
             .with_markdown_boost(retrieve_cfg.rerank_markdown_boost)
+            .with_rerank(rerank_cfg.clone())
     };
 
     let q = Query {

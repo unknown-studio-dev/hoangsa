@@ -331,8 +331,33 @@ pub(super) fn evaluate_reflect_prompt(cwd: &str, stdin_raw: &str) -> ReflectOutc
     // an Edit/Write that produced a drift event this session. That's the
     // cheapest "real work happened" signal available without reading
     // episodes.db or shelling out to git.
-    let has_work = fs::metadata(enforcement_events_path(cwd))
-        .map(|m| m.len() > 0)
+    // File non-empty is NOT enough: `graph-affordance` appends a
+    // `code_search` line for every Grep/Glob, so a read-only session that
+    // grepped once looked like it had done real work and could not stop
+    // without a reflect round-trip. Only events that imply the agent
+    // actually engaged with the code count.
+    // Enumerated from what the hook handlers actually write, not from memory:
+    // `code_search` is deliberately absent (that is the whole point), and so
+    // are `override` / `lesson_surfaced`, which say something happened TO the
+    // agent rather than that it did work.
+    const WORK_EVENTS: &[&str] = &[
+        "impact",
+        "recall",
+        "detect_changes",
+        "drift_warn",
+        "lesson_saved",
+        "frustration",
+        "test",
+    ];
+    let has_work = fs::read_to_string(enforcement_events_path(cwd))
+        .map(|text| {
+            text.lines().any(|line| {
+                serde_json::from_str::<serde_json::Value>(line)
+                    .ok()
+                    .and_then(|v| v.get("event").and_then(|e| e.as_str()).map(str::to_string))
+                    .is_some_and(|e| WORK_EVENTS.contains(&e.as_str()))
+            })
+        })
         .unwrap_or(false);
     if !has_work {
         return ReflectOutcome::Skip;
@@ -376,7 +401,10 @@ pub(super) fn evaluate_reflect_prompt(cwd: &str, stdin_raw: &str) -> ReflectOutc
         // Binary missing or subcommand absent → silently skip, never panic.
         // Interface: hoangsa-memory --root <root> memory lesson-feedback success|failure <TRIGGER>...
         if let Some(memory_bin) = find_memory_bin() {
-            let memory_root = Path::new(cwd).join(".hoangsa").join("memory");
+            // Same resolver as the guard above — a hardcoded local path
+            // sends the feedback to a root that does not exist on migrated
+            // projects, so every counter update was silently dropped.
+            let memory_root = hoangsa_memory_core::resolve_root(Path::new(cwd), None);
             let kind = if has_frustration { "failure" } else { "success" };
             for trigger in &surfaced_triggers {
                 let _ = std::process::Command::new(&memory_bin)
@@ -819,13 +847,38 @@ fn spawn_detached_ingest() -> bool {
     let Some(bin) = find_memory_bin() else {
         return false;
     };
-    Command::new(bin)
-        .args(["archive", "ingest", "--refresh"])
+    // Detached background maintenance: it must never outbid the editor, the
+    // compiler, or the agent for CPU. Two levers, because either alone is not
+    // enough — `nice` alone still lets it take every core when the machine is
+    // otherwise idle-ish, and the thread cap alone still competes at normal
+    // priority. Observed before this: 770% CPU from a process with no console
+    // and no obvious parent.
+    let mut cmd = if which_nice() {
+        let mut c = Command::new("nice");
+        c.args(["-n", "10"]).arg(&bin);
+        c
+    } else {
+        Command::new(&bin)
+    };
+    cmd.args(["archive", "ingest", "--refresh"])
+        .env("HOANGSA_ONNX_THREADS", "2")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .is_ok()
+}
+
+/// `nice(1)` is POSIX and present on macOS and every Linux distro we target,
+/// but probe rather than assume — a missing `nice` must degrade to spawning
+/// the binary directly, not to spawning nothing.
+fn which_nice() -> bool {
+    std::env::var_os("PATH")
+        .map(|p| {
+            std::env::split_paths(&p)
+                .any(|dir| dir.join("nice").is_file())
+        })
+        .unwrap_or(false)
 }
 
 fn cooldown_stamp_path() -> Option<std::path::PathBuf> {

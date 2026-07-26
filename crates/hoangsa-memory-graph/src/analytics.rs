@@ -233,7 +233,11 @@ fn is_entry_point(fqn: &str, globs: &[String]) -> bool {
 fn glob_matches(glob: &str, s: &str) -> bool {
     match (glob.starts_with('*'), glob.ends_with('*')) {
         (true, true) => {
-            let inner = &glob[1..glob.len() - 1];
+            // `*` and `**` are both leading- and trailing-star, but have no
+            // inner text — `glob[1..len-1]` is an inverted range on `*` and
+            // panicked. An empty inner matches everything, which is what a
+            // caller passing `*` means.
+            let inner = glob.get(1..glob.len().saturating_sub(1)).unwrap_or("");
             s.contains(inner)
         }
         (true, false) => s.ends_with(&glob[1..]),
@@ -270,6 +274,7 @@ fn common_prefix_name(members: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::glob_matches;
     use crate::{Edge, EdgeKind, Graph, Node};
     use hoangsa_memory_store::KvStore;
     use std::path::PathBuf;
@@ -499,5 +504,24 @@ mod tests {
         // Edge 1: run -> helper
         assert_eq!(flows[0].chain[1].from, "crate::run");
         assert_eq!(flows[0].chain[1].to, "crate::helper");
+    }
+
+    /// `entry_globs` comes straight from MCP args and the tool schema
+    /// advertises `*` prefix/suffix support, so `"*"` is the most natural
+    /// thing a caller sends — it used to slice `1..0` and panic.
+    #[test]
+    fn glob_star_matches_everything_without_panicking() {
+        assert!(glob_matches("*", "anything::at::all"));
+        assert!(glob_matches("*", ""));
+        assert!(glob_matches("**", "anything"));
+
+        // The ordinary forms still behave.
+        assert!(glob_matches("*main", "crate::main"));
+        assert!(!glob_matches("*main", "main::helper"));
+        assert!(glob_matches("crate::*", "crate::main"));
+        assert!(!glob_matches("crate::*", "other::main"));
+        assert!(glob_matches("*::main::*", "a::main::b"));
+        assert!(glob_matches("exact", "exact"));
+        assert!(!glob_matches("exact", "exactly"));
     }
 }

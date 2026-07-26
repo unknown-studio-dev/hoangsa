@@ -22,6 +22,7 @@
 
 pub mod cap;
 pub mod config;
+pub mod dream;
 pub mod manager;
 pub mod text_sim;
 
@@ -30,7 +31,8 @@ pub use cap::{
     CapExceededError, ContentPolicyError, GuardedAppendError, MarkdownStoreMemoryExt,
     MemoryEntryPreview, MemoryKind, check_content_policy,
 };
-pub use config::{CurationConfig, MemoryConfig};
+pub use config::{CurationConfig, DreamConfig, MemoryConfig};
+pub use dream::{dream_pass, DreamOpts, DreamReport};
 pub use manager::{ForgetReport, MemoryManager};
 
 use time::OffsetDateTime;

@@ -15,10 +15,15 @@ Loads the latest session from `.hoangsa/sessions/`, validates specs, creates pla
 </objective>
 
 <execution_context>
-Resolve HOANGSA install path — check local first, then global:
-1. `./.claude/hoangsa/workflows/prepare.md`
-2. `~/.claude/hoangsa/workflows/prepare.md`
-Read the first path that exists.
+Load the workflow:
+
+```bash
+hoangsa-cli workflow show prepare
+```
+
+Its stdout IS the workflow — follow it. The command searches the
+project-local install, `$CLAUDE_CONFIG_DIR`, then the default profile,
+and lists every path it tried if nothing matched.
 </execution_context>
 
 <process>

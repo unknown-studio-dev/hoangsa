@@ -21,10 +21,15 @@ Faster than the full menu → prepare → cook flow — designed for hotfixes an
 </objective>
 
 <execution_context>
-Resolve HOANGSA install path — check local first, then global:
-1. `./.claude/hoangsa/workflows/fix.md`
-2. `~/.claude/hoangsa/workflows/fix.md`
-Read the first path that exists.
+Load the workflow:
+
+```bash
+hoangsa-cli workflow show fix
+```
+
+Its stdout IS the workflow — follow it. The command searches the
+project-local install, `$CLAUDE_CONFIG_DIR`, then the default profile,
+and lists every path it tried if nothing matched.
 </execution_context>
 
 <process>

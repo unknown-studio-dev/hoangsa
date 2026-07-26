@@ -27,7 +27,7 @@ Find the real root cause of a bug (which is often in a different layer than the 
 | 2 | Plan valid | `validate plan "$SESSION_DIR/plan.json"` passes; 1–3 tasks, each with runnable `acceptance` |
 | 3 | Contract inherited | tasks fixing a taste-failed task carry that task's `test_cases`, `edge_cases`, `ui` flag verbatim |
 | 4 | Per-task acceptance | `acceptance` passes before commit; max 3 worker retries |
-| 5 | Minimal scope | `memory_detect_changes` on each commit shows only expected symbols |
+| 5 | Minimal scope | `validate scope "$SESSION_DIR" "<task.id>" --rev <commit>` clean, and `memory_detect_changes` on each commit shows only expected symbols |
 | 6 | UI evidence | a `ui: true` fix has re-rendered screenshots in `$SESSION_DIR/evidence/<task.id>/` |
 
 ## Analysis — root cause before plan
@@ -62,15 +62,15 @@ Session: `session latest`, or auto-create `session init fix "$SLUG"` (slug = 2-4
 
 Write `$SESSION_DIR/plan.json`: `task_type: "fix"`, `status: "cooking"`, 1–3 tasks, each independently verifiable, <10k tokens, zero scope creep. Cross-layer order: root cause → contracts/types → symptom layer (only if a separate patch is needed).
 
-**Inherit the spec contract (Gate 3).** If this fix targets a task that failed taste, copy that task's `test_cases`, `edge_cases`, and `ui` flag into the fix task verbatim, plus taste's visual failure detail for UI tasks — a fix worker that never sees the edge cases will re-break them.
+**Inherit the spec contract (Gate 3).** If this fix targets a task that failed taste, copy that task's `test_cases`, `edge_cases`, `behavior`, and `ui` flag into the fix task verbatim, plus taste's visual failure detail for UI tasks — a fix worker that never sees the edge cases will re-break them. Then extend `behavior` with the corrected logic from the root-cause analysis (the condition that was wrong and what it must be instead); a fix worker handed a symptom and no corrected contract patches the symptom.
 
 Show the plan (root cause, tasks + acceptance commands); proceed only on user confirmation.
 
 ## Execute
 
 ```bash
-MODEL=$("$HOANGSA_ROOT/bin/hoangsa-cli" resolve-model worker)
-PROMPT=$("$HOANGSA_ROOT/bin/hoangsa-cli" envelope "$SESSION_DIR" "<task.id>" --kind fix --memory-status "<MEMORY_STATUS>")
+MODEL=$("$HOANGSA_BIN" resolve-model worker)
+PROMPT=$("$HOANGSA_BIN" envelope "$SESSION_DIR" "<task.id>" --kind fix --memory-status "<MEMORY_STATUS>")
 ```
 
 `envelope --kind fix` emits the complete worker prompt (composed rules, task envelope with inherited contract, lessons, skills, fix instructions) with one placeholder: replace the `<BUG_CONTEXT …>` line with the root-cause summary and cross-layer notes from your analysis. Do NOT hand-assemble the prompt. Spawn one subagent per task (Task tool, `MODEL`).

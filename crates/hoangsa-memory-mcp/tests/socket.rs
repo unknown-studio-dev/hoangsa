@@ -100,7 +100,6 @@ async fn memory_call_returns_structured_tool_output() {
     );
     assert_eq!(result["data"]["text"], "sockets close after one response");
     assert_eq!(result["data"]["tags"], json!(["mcp", "transport"]));
-    assert_eq!(result["data"]["staged"], false);
     assert!(
         result["data"]["path"]
             .as_str()
