@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-27
+
+### Security
+
+- **`hoangsa-cli hook enforce` now fails closed.** An unreadable rules layer
+  was treated as "no rules", so a corrupt or permission-denied file silently
+  disabled every gate it carried.
+- **`pre_invoke_gate` is gone.** Addons could ship a shell command that the
+  envelope executed on every worker spawn — a repository-supplied gate was
+  arbitrary code execution by design. Replaced with declarative
+  `requires_pref`, which `rules compose` evaluates without a shell.
+- **`update` builds its installer invocation as argv** instead of a shell
+  string, and rejects release tags that are not `v<semver>`.
+
+### Fixed
+
+- **The seeded `config.toml` contradicted the code it configures.** The
+  `[vector_store]` block documented `Default: true`; `VectorStoreConfig::enabled`
+  derives `false` and is opt-in. Stores seeded by any earlier version tell
+  their owner semantic retrieval is on while recall runs BM25 + graph only —
+  edit the block by hand, or set `enabled = true` if you want the vector lane.
+  The model-cache figure is corrected from `~118 MB` to `~465 MB` in the
+  template, `prefetch-embed --help`, and the vector-store failure hint.
+- **One source file could occupy two stored paths.** `Indexer::index_path`
+  recorded the root exactly as spelled, so `index .` wrote `./crates/x.rs`
+  while the session-start bootstrap's `index /abs/proj` wrote the absolute
+  form. Both survived every reindex — purge-before-write only clears the
+  flavour it was handed — and both competed for the same recall slots. Roots
+  are canonicalised now. **Existing stores keep their duplicate rows: delete
+  `graph.redb` and `fts.tantivy` under the project store and reindex to clear
+  them.**
+- **`detect_changes` resolves needles the way the indexer stores them** for
+  absolute paths, and deliberately leaves relative ones alone — canonicalising
+  a repo-relative diff path against the daemon's cwd (one directory shared by
+  every project in service mode) could name a file in an unrelated repo.
+- **The addon migration could lose entries.** `active_addons` is written
+  before the rename, so a process killed mid-migration cannot drop them.
+- **Addons are no longer copied into the project tier**; existing copies
+  migrate to `.bak`, and `verify.rs` self-tests follow the no-copy contract.
+- **Six `rule` dispatch arms swallowed their errors**; `cmd_rule_list` and
+  `cmd_rule_gate` are fallible so the documented error paths hold.
+- **The MCP daemon stopped reaping idle socket connections.**
+
+### Changed
+
+- Rule regexes compile once at load; the 8-positional-parameter rule builder
+  is gone.
+- `config get` and `pref get` share one `default_task_manager()`.
+
+### Tests
+
+- Test suites for the rule engine, addon migration, `enforce`, `update`, and
+  the installer argv path, driven end to end through the built binary.
+- `cli_rule_success_paths_unchanged` compares stdout as JSON documents rather
+  than bytes: `hoangsa-proxy` enables serde_json's `preserve_order` and cargo
+  unifies features across a workspace build, so key order differed between
+  `cargo test -p hoangsa-cli` and `cargo test --workspace` — the suite passed
+  alone and failed in CI.
+
 ## [0.6.0] - 2026-07-26
 
 ### Added
