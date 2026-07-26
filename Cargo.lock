@@ -1550,7 +1550,7 @@ dependencies = [
 
 [[package]]
 name = "hoangsa-memory"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1571,7 +1571,7 @@ dependencies = [
 
 [[package]]
 name = "hoangsa-memory-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1585,7 +1585,7 @@ dependencies = [
 
 [[package]]
 name = "hoangsa-memory-graph"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "hoangsa-memory-core",
  "hoangsa-memory-parse",
@@ -1598,7 +1598,7 @@ dependencies = [
 
 [[package]]
 name = "hoangsa-memory-mcp"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -1623,7 +1623,7 @@ dependencies = [
 
 [[package]]
 name = "hoangsa-memory-parse"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -1645,7 +1645,7 @@ dependencies = [
 
 [[package]]
 name = "hoangsa-memory-policy"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "hoangsa-memory-core",
  "hoangsa-memory-store",
@@ -1662,7 +1662,7 @@ dependencies = [
 
 [[package]]
 name = "hoangsa-memory-retrieve"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1686,7 +1686,7 @@ dependencies = [
 
 [[package]]
 name = "hoangsa-memory-store"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "criterion",
