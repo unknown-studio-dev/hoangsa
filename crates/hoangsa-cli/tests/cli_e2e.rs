@@ -9,8 +9,13 @@
 //!
 //! Asserting only on the skipped list would pass even if the command had run,
 //! so every case checks the sentinel first.
+//!
+//! The file also carries `cli_config_and_pref_agree_on_task_manager`, which
+//! shares the same process harness for a different reason: two commands that
+//! must emit the same bootstrap block can only be compared by running both.
 
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -150,13 +155,9 @@ impl Fixture {
         );
     }
 
-    /// Drive the built binary. stdout/stderr go to files rather than pipes so
-    /// the deadline poll below can never deadlock on a full pipe buffer.
     fn compose(&self) -> Run {
-        let out_path = self.io.join("stdout.txt");
-        let err_path = self.io.join("stderr.txt");
-        let mut child = Command::new(env!("CARGO_BIN_EXE_hoangsa-cli"))
-            .args([
+        run_cli(
+            &[
                 "rules",
                 "compose",
                 self.project.to_str().expect("project path is utf-8"),
@@ -164,36 +165,52 @@ impl Fixture {
                 "impl",
                 "--role",
                 "impl",
-            ])
-            .env("HOANGSA_ROOT", &self.root)
-            .stdin(Stdio::null())
-            .stdout(Stdio::from(
-                fs::File::create(&out_path).expect("create stdout file"),
-            ))
-            .stderr(Stdio::from(
-                fs::File::create(&err_path).expect("create stderr file"),
-            ))
-            .spawn()
-            .expect("spawn hoangsa-cli");
+            ],
+            &self.root,
+            &self.io,
+        )
+    }
+}
 
-        let deadline = Instant::now() + RUN_TIMEOUT;
-        let status = loop {
-            match child.try_wait().expect("poll hoangsa-cli") {
-                Some(status) => break status,
-                None if Instant::now() >= deadline => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    panic!("`rules compose` did not exit within {RUN_TIMEOUT:?} — hung");
-                }
-                None => std::thread::sleep(Duration::from_millis(10)),
+/// Drive the built binary. stdout/stderr go to files rather than pipes so the
+/// deadline poll below can never deadlock on a full pipe buffer, and the wait
+/// is bounded so a hung child fails the test instead of blocking the suite.
+fn run_cli(args: &[&str], root: &Path, io: &Path) -> Run {
+    let out_path = io.join("stdout.txt");
+    let err_path = io.join("stderr.txt");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_hoangsa-cli"))
+        .args(args)
+        .env("HOANGSA_ROOT", root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(
+            fs::File::create(&out_path).expect("create stdout file"),
+        ))
+        .stderr(Stdio::from(
+            fs::File::create(&err_path).expect("create stderr file"),
+        ))
+        .spawn()
+        .expect("spawn hoangsa-cli");
+
+    let deadline = Instant::now() + RUN_TIMEOUT;
+    let status = loop {
+        match child.try_wait().expect("poll hoangsa-cli") {
+            Some(status) => break status,
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!(
+                    "`hoangsa-cli {}` did not exit within {RUN_TIMEOUT:?} — hung",
+                    args.join(" ")
+                );
             }
-        };
-
-        Run {
-            code: status.code(),
-            stdout: fs::read_to_string(&out_path).expect("read stdout file"),
-            stderr: fs::read_to_string(&err_path).expect("read stderr file"),
+            None => std::thread::sleep(Duration::from_millis(10)),
         }
+    };
+
+    Run {
+        code: status.code(),
+        stdout: fs::read_to_string(&out_path).expect("read stdout file"),
+        stderr: fs::read_to_string(&err_path).expect("read stderr file"),
     }
 }
 
@@ -265,4 +282,79 @@ fn cli_refuses_root_tier_stale_gate_end_to_end() {
 
     let run = fx.compose();
     assert_refused_and_nothing_executed(&fx, &run, "root tier");
+}
+
+/// The `task_manager` block of `v`, keyed into a `BTreeMap` so the comparison
+/// is key-sorted regardless of how either side happened to order its object.
+/// Panics rather than defaulting: two missing blocks would compare equal and
+/// the assertion below would prove nothing.
+fn task_manager_block(v: &Value, src: &str) -> BTreeMap<String, Value> {
+    let obj = v
+        .get("task_manager")
+        .unwrap_or_else(|| panic!("{src} has no `task_manager` key: {v}"))
+        .as_object()
+        .unwrap_or_else(|| panic!("{src}: `task_manager` is not an object: {v}"));
+    assert!(
+        !obj.is_empty(),
+        "{src}: `task_manager` is empty — the equality below would be vacuous"
+    );
+    obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+}
+
+/// REQ-06 — `config get` and `pref get` both bootstrap a missing config, and
+/// each writes the `task_manager` defaults. CLI-5 collapsed their duplicated
+/// literals into `helpers::default_task_manager`, but a fourth verbatim copy
+/// still lives in `tests/integration_pref.rs`, and nothing stops one command
+/// from being edited back to its own inline literal. The compiler cannot catch
+/// that drift; running both as real processes and diffing what they emit can.
+///
+/// Each command gets its own scratch project so neither reads a config the
+/// other wrote. `config get` prints the whole config, so its block comes from
+/// stdout. `pref get` prints only the `preferences` object, so its block comes
+/// from the `config.json` it just bootstrapped — that file is its emission.
+#[test]
+fn cli_config_and_pref_agree_on_task_manager() {
+    let cfg_fx = Fixture::new();
+    let pref_fx = Fixture::new();
+
+    let cfg_dir = cfg_fx.project.to_str().expect("project path is utf-8");
+    let cfg_run = run_cli(&["config", "get", cfg_dir], &cfg_fx.root, &cfg_fx.io);
+    assert_eq!(
+        cfg_run.code,
+        Some(0),
+        "`config get` must exit 0\n  stdout: {}\n  stderr: {}",
+        cfg_run.stdout,
+        cfg_run.stderr
+    );
+    let cfg_json: Value = serde_json::from_str(&cfg_run.stdout).unwrap_or_else(|e| {
+        panic!(
+            "`config get` stdout is not JSON ({e})\n  stdout: {}\n  stderr: {}",
+            cfg_run.stdout, cfg_run.stderr
+        )
+    });
+
+    let pref_dir = pref_fx.project.to_str().expect("project path is utf-8");
+    let pref_run = run_cli(&["pref", "get", pref_dir], &pref_fx.root, &pref_fx.io);
+    assert_eq!(
+        pref_run.code,
+        Some(0),
+        "`pref get` must exit 0\n  stdout: {}\n  stderr: {}",
+        pref_run.stdout,
+        pref_run.stderr
+    );
+    let pref_config_file = pref_fx.project.join(".hoangsa/config.json");
+    assert!(
+        pref_config_file.exists(),
+        "`pref get` did not bootstrap {} — there is nothing to compare",
+        pref_config_file.display()
+    );
+    let pref_json: Value =
+        serde_json::from_str(&fs::read_to_string(&pref_config_file).expect("read pref config.json"))
+            .expect("`pref get` wrote a config.json that is not JSON");
+
+    assert_eq!(
+        task_manager_block(&cfg_json, "`config get` stdout"),
+        task_manager_block(&pref_json, "`pref get` config.json"),
+        "`config get` and `pref get` disagree on the bootstrapped task_manager block"
+    );
 }
